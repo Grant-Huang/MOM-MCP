@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MOM-MCP 为 AgentNexus 提供离散制造场景、模拟业务动作与可复现的制造实绩。">
+  <title>MOM-MCP · 制造场景模拟</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #edf3ef;
+      --quiet: #aebeb5;
+      --accent: #bdf479;
+      --surface: #151f1b;
+      --line: #354741;
+      font-family: system-ui, sans-serif;
+      background: #101815;
+      color: var(--ink);
+      line-height: 1.65;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    a { color: var(--accent); text-underline-offset: .23em; }
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+    .wrap { width: min(1080px, calc(100% - 40px)); margin-inline: auto; }
+    header { border-bottom: 1px solid var(--line); }
+    .bar, nav { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; align-items: center; }
+    .bar { justify-content: space-between; padding-block: 1.2rem; }
+    .bar > a { font-weight: 800; letter-spacing: .07em; text-decoration: none; }
+    nav a { color: var(--ink); }
+    .hero { padding-block: clamp(3rem, 8vw, 7rem); }
+    h1, h2, h3 { line-height: 1.2; margin: 0 0 1rem; }
+    h1 { font-size: clamp(2.3rem, 6vw, 4.7rem); max-width: 16em; letter-spacing: -.045em; }
+    h2 { font-size: clamp(1.65rem, 3vw, 2.6rem); }
+    h3 { font-size: 1.05rem; }
+    p { max-width: 65ch; margin: 0 0 1rem; color: var(--quiet); }
+    .hero p { font-size: 1.1rem; }
+    .primary { display: inline-block; background: var(--accent); color: #17220f; font-weight: 750; padding: .7rem 1rem; margin-top: .6rem; text-decoration: none; border-radius: .25rem; }
+    section { padding-block: 2.25rem; border-top: 1px solid var(--line); }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+    article, pre { background: var(--surface); border: 1px solid var(--line); padding: 1rem; border-radius: .35rem; }
+    article p { margin: 0; }
+    ol, ul { padding-left: 1.5rem; }
+    li + li { margin-top: .45rem; }
+    code { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    footer { padding-block: 1.5rem 2rem; border-top: 1px solid var(--line); }
+    @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap bar">
+      <a href="#main">MOM-MCP</a>
+      <nav aria-label="页面导航">
+        <a href="#principles">设计原则</a>
+        <a href="#scenarios">行业场景</a>
+        <a href="#usage">使用说明</a>
+        <a href="#docs">项目文档</a>
+      </nav>
+    </div>
+  </header>
+  <main id="main" class="wrap">
+    <div class="hero">
+      <h1>为 AgentNexus 模拟离散制造现场</h1>
+      <p>在可重复运行的制造场景中，让 Agent 查找工具、理解工况、执行模拟动作，并通过工单、库存、质量和追溯数据检查结果。</p>
+      <p>当前可查看设计和验收规范。MCP 服务及行业场景按实施计划交付。</p>
+      <a class="primary" href="#usage">查看 MCP 调用流程</a>
+    </div>
+
+    <section id="principles">
+      <h2>设计原则</h2>
+      <div class="grid">
+        <article><h3>业务操作通过 MCP</h3><p>Agent 按当前场景搜索工具、查看输入输出契约，再调用模拟查询或业务动作。</p></article>
+        <article><h3>服务端共享仿真时钟</h3><p>同一运行实例共享一条时间线。场景提交规则和种子，DES 推导实际事件发生时间。</p></article>
+        <article><h3>结果可验证和重放</h3><p>用同一份初始状态和事件记录生成业务结果。固定版本、种子及动作序列即可复跑。</p></article>
+      </div>
+    </section>
+
+    <section id="scenarios">
+      <h2>行业场景规划</h2>
+      <div class="grid">
+        <article><h3>汽车零部件 CNC</h3><p>从泵体报工与终检延伸到振动取证、批次隔离和维修干预。</p></article>
+        <article><h3>电子装联 SMT</h3><p>按料卷上料记录跨工单追溯受影响板卡，处理隔离、返工与复检。</p></article>
+        <article><h3>工业设备按单装配</h3><p>检查齐套与合格替代件，调整派工并完成终测放行。</p></article>
+      </div>
+      <p style="margin-top: 1rem">后续扩展钣金余料追溯与线束端子替代、复测。</p>
+    </section>
+
+    <section id="usage">
+      <h2>使用说明</h2>
+      <p>以下为计划中的调用流程。AgentNexus 的实际接入配置与启动命令将在 P0 接入验证后补充。</p>
+      <ol>
+        <li>通过 stdio 将 MOM-MCP 注册为 AgentNexus 的 MCP 服务。</li>
+        <li>调用 <code>list_scenarios</code> 查看场景，再通过 <code>open_scenario</code> 传入场景标识与可选种子，记录返回的 <code>run_id</code>。</li>
+        <li>按 <code>run_id</code> 调用 <code>search_tools</code> 搜索业务动作，并用 <code>describe_tool</code> 获取输入、前置条件和错误码。</li>
+        <li>用 <code>call_tool</code> 查询或执行。写操作按契约提供幂等键，随后重新查询验证结果。</li>
+        <li>打开另一场景即可获取第二个 <code>run_id</code>。后续请求传入目标 ID 即可切换。</li>
+      </ol>
+      <h3>搜索参数示例</h3>
+      <pre><code>{
+  "run_id": "&lt;open_scenario 返回的 ID&gt;",
+  "query": "质量冻结"
+}</code></pre>
+    </section>
+
+    <section id="docs">
+      <h2>项目文档</h2>
+      <ul>
+        <li><a href="docs/FEATURES.md">需求与特性清单</a></li>
+        <li><a href="docs/DESIGN.md">架构设计</a></li>
+        <li><a href="docs/IMPLEMENTATION_PLAN.md">实施计划</a></li>
+        <li><a href="docs/acceptance/README.md">分阶段验收规范</a></li>
+      </ul>
+    </section>
+  </main>
+  <footer><div class="wrap">MOM-MCP · AgentNexus 制造业 mock MCP</div></footer>
+</body>
+</html>
