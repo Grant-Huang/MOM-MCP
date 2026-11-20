@@ -1,0 +1,11 @@
+{
+  "name": "mom-mcp-acceptance",
+  "private": true,
+  "scripts": {
+    "acceptance": "node scripts/acceptance.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "smol-toml": "1.4.2"
+  }
+}
