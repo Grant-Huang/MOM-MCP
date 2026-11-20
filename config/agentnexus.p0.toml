@@ -1,0 +1,19 @@
+# Merge into the AgentNexus config and replace /path/to/MOM-MCP with an absolute path.
+[[mcp.servers]]
+id = "mom_probe"
+transport = "stdio"
+command = "/path/to/MOM-MCP/.venv/bin/python"
+args = ["/path/to/MOM-MCP/mom_mcp.py", "--db", "/path/to/MOM-MCP/probe.sqlite3"]
+timeout_ms = 5000
+
+[[mcp.servers.tools]]
+name = "get_probe"
+capability_id = "mom.probe.read"
+description = "Read the synthetic value and revision"
+effect = "read_only"
+
+[[mcp.servers.tools]]
+name = "set_probe"
+capability_id = "mom.probe.write"
+description = "Set the synthetic value with a stable idempotency key"
+effect = "workspace_write"

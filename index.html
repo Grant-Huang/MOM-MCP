@@ -64,7 +64,7 @@
     <div class="hero">
       <h1>为 AgentNexus 模拟离散制造现场</h1>
       <p>在可重复运行的制造场景中，让 Agent 查找工具、理解工况、执行模拟动作，并通过工单、库存、质量和追溯数据检查结果。</p>
-      <p>当前可查看设计和验收规范。MCP 服务及行业场景按实施计划交付。</p>
+      <p>当前可查看设计和验收规范，并运行 P0 stdio 接入探针。行业场景按实施计划交付。</p>
       <a class="primary" href="#usage">查看 MCP 调用流程</a>
     </div>
 
@@ -89,7 +89,7 @@
 
     <section id="usage">
       <h2>使用说明</h2>
-      <p>以下为计划中的调用流程。AgentNexus 的实际接入配置与启动命令将在 P0 接入验证后补充。</p>
+      <p>可先按 <a href="README.md">P0 探针使用说明</a> 启动 stdio 服务。以下为行业场景交付后的调用流程。</p>
       <ol>
         <li>通过 stdio 将 MOM-MCP 注册为 AgentNexus 的 MCP 服务。</li>
         <li>调用 <code>list_scenarios</code> 查看场景，再通过 <code>open_scenario</code> 传入场景标识与可选种子，记录返回的 <code>run_id</code>。</li>
