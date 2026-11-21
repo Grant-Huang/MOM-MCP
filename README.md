@@ -100,3 +100,20 @@ MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P3 --gate
 ```sh
 MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P4 --gate
 ```
+
+## P5 工业设备按单装配
+
+在场景验收台使用 `assembly@2` 走正常装配，或用 `assembly-shortage@1` 验证缺料和返修。两张工单具有不同交期与工位能力要求。写操作需提供 `idempotency_key`。
+
+| 流程 | 工具 |
+|---|---|
+| 齐套及装配 | `assembly_kit`、`assembly_substitute`、`assembly_dispatch`、`assembly_build` |
+| 终测资源 | `assembly_priority` 调整队列，`assembly_start_test` 占用唯一测试台 |
+| 返修及交付 | 评测控制推进服务器时钟后，调用 `assembly_finish_test`。失败时返修并重新测试，合格后调用 `assembly_deliver` |
+| 可追溯性 | `assembly_trace` 按工单、序列号或零件查询实装、更换资格、终测区间及交付反馈 |
+
+`assembly_start_test` 只负责安排模拟完成事件，耗时由 DES 抽样。工具不会接受调用方提交的终测结果。夹具共用一座测试台，终测队列按优先级、交期与工单 ID 排序。
+
+```sh
+MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P5 --gate
+```

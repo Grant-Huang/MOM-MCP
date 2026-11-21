@@ -1371,3 +1371,392 @@ async fn p4_03_smt_rework_retest_scrap_and_replay() {
     .await
     .unwrap();
 }
+
+async fn open_assembly(client: &RunningService<RoleClient, ()>, normal: bool) -> Value {
+    let (id, version) = if normal {
+        ("assembly", 2)
+    } else {
+        ("assembly-shortage", 1)
+    };
+    let value = call(
+        client,
+        "open_scenario",
+        json!({"scenario_id":id,"version":version,"seed":42}),
+    )
+    .await;
+    assert_eq!(value["ok"], true, "{value}");
+    value["run_id"].clone()
+}
+
+async fn assembly_action(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    action: &str,
+    order: &str,
+    key: &str,
+    args: Value,
+) -> Value {
+    let mut payload = args.as_object().unwrap().clone();
+    payload.insert("work_order".into(), order.into());
+    payload.insert("idempotency_key".into(), key.into());
+    business(client, run, action, Value::Object(payload)).await
+}
+
+async fn build_assembly(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+    cell: &str,
+) {
+    for (tool, args) in [
+        ("assembly_dispatch", json!({"cell":cell})),
+        ("assembly_build", json!({})),
+    ] {
+        let result =
+            assembly_action(client, run, tool, order, &format!("{order}-{tool}"), args).await;
+        assert_eq!(result["ok"], true, "{tool}: {result}");
+    }
+}
+
+async fn assembly_kit(client: &RunningService<RoleClient, ()>, run: &Value, order: &str) -> Value {
+    business(client, run, "assembly_kit", json!({"work_order":order})).await
+}
+
+#[tokio::test]
+async fn p5_01_assembly_kit_build_test_and_delivery() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT, async {
+        let run = open_assembly(&client, true).await;
+        let kit = assembly_kit(&client, &run, "WO-E").await;
+        assert_eq!(kit["ready"], true);
+        assert_eq!(kit["bom"], json!({"DRIVE-STD":1,"FRAME":1}));
+        assert_eq!(kit["due_in_minutes"], 35);
+        assert_eq!(
+            assembly_action(
+                &client,
+                &run,
+                "assembly_dispatch",
+                "WO-E",
+                "wrong-cell",
+                json!({"cell":"CELL-B"})
+            )
+            .await["code"],
+            "CELL_NOT_CAPABLE"
+        );
+        build_assembly(&client, &run, "WO-E", "CELL-A").await;
+        assert_eq!(
+            assembly_kit(&client, &run, "WO-E").await["stock"]["FRAME"],
+            1
+        );
+        let started = assembly_action(
+            &client,
+            &run,
+            "assembly_start_test",
+            "WO-E",
+            "start",
+            json!({}),
+        )
+        .await;
+        assert_eq!(started["occupied_by"], "WO-E");
+        assert_eq!(
+            assembly_action(
+                &client,
+                &run,
+                "assembly_finish_test",
+                "WO-E",
+                "finish",
+                json!({})
+            )
+            .await["code"],
+            "TEST_NOT_READY"
+        );
+        advance(&client, &run, 10).await;
+        let passed = assembly_action(
+            &client,
+            &run,
+            "assembly_finish_test",
+            "WO-E",
+            "finish",
+            json!({}),
+        )
+        .await;
+        assert_eq!(passed["state"]["tests"][0]["result"], "pass");
+        assert_eq!(passed["occupied_by"], Value::Null);
+        let delivery = assembly_action(
+            &client,
+            &run,
+            "assembly_deliver",
+            "WO-E",
+            "deliver",
+            json!({}),
+        )
+        .await;
+        assert_eq!(delivery["state"]["delivery"]["serial"], "UNIT-E-01");
+        let trace = business(
+            &client,
+            &run,
+            "assembly_trace",
+            json!({"subject":"UNIT-E-01"}),
+        )
+        .await;
+        assert_eq!(trace["links"][0]["installed"], kit["bom"]);
+        assert_eq!(trace["links"][0]["work_cell"], "CELL-A");
+        assert_eq!(trace["links"][0]["delivery"]["status"], "delivered");
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p5_02_shortage_qualified_substitution_and_priority() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT, async {
+        let run = open_assembly(&client, false).await;
+        let initial = assembly_kit(&client, &run, "WO-E").await;
+        assert_eq!(initial["ready"], false);
+        assert_eq!(initial["missing"], json!({"DRIVE-STD":1}));
+        assert_eq!(
+            assembly_action(
+                &client,
+                &run,
+                "assembly_substitute",
+                "WO-E",
+                "unqualified",
+                json!({"part":"DRIVE-BAD"})
+            )
+            .await["code"],
+            "SUBSTITUTE_NOT_QUALIFIED"
+        );
+        assert_eq!(initial, assembly_kit(&client, &run, "WO-E").await);
+        assert_eq!(
+            assembly_action(
+                &client,
+                &run,
+                "assembly_dispatch",
+                "WO-E",
+                "missing-stock",
+                json!({"cell":"CELL-A"})
+            )
+            .await["code"],
+            "MATERIAL_SHORTAGE"
+        );
+        assert_eq!(
+            assembly_action(
+                &client,
+                &run,
+                "assembly_substitute",
+                "WO-E",
+                "qualified",
+                json!({"part":"DRIVE-ALT"})
+            )
+            .await["qualification"],
+            "QA-DRIVE-017"
+        );
+        build_assembly(&client, &run, "WO-E", "CELL-A").await;
+        advance(&client, &run, 10).await;
+        advance(&client, &run, 10).await;
+        assert_eq!(
+            assembly_kit(&client, &run, "WO-L").await["stock"]["DRIVE-STD"],
+            1
+        );
+        build_assembly(&client, &run, "WO-L", "CELL-B").await;
+        let trace = business(
+            &client,
+            &run,
+            "assembly_trace",
+            json!({"subject":"DRIVE-ALT"}),
+        )
+        .await;
+        assert_eq!(trace["links"][0]["installed"]["DRIVE-ALT"], 1);
+        assert_eq!(
+            trace["links"][0]["substitution_qualification"],
+            "QA-DRIVE-017"
+        );
+        assert_eq!(trace["queue"], json!(["WO-E", "WO-L"]));
+        let priority = assembly_action(
+            &client,
+            &run,
+            "assembly_priority",
+            "WO-L",
+            "urgent",
+            json!({"priority":5}),
+        )
+        .await;
+        assert_eq!(priority["queue"], json!(["WO-L", "WO-E"]));
+        assert_eq!(
+            assembly_action(
+                &client,
+                &run,
+                "assembly_start_test",
+                "WO-E",
+                "queue",
+                json!({})
+            )
+            .await["code"],
+            "TEST_PRIORITY_BLOCKED"
+        );
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p5_03_shared_bench_failure_repair_and_retest() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (client, _a) = connect_options(&db, "0", true, true).await;
+    let (other, _b) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        let run = open_assembly(&client, false).await;
+        assert_eq!(
+            assembly_action(
+                &client,
+                &run,
+                "assembly_substitute",
+                "WO-E",
+                "sub",
+                json!({"part":"DRIVE-ALT"})
+            )
+            .await["ok"],
+            true
+        );
+        build_assembly(&client, &run, "WO-E", "CELL-A").await;
+        advance(&client, &run, 10).await;
+        build_assembly(&client, &run, "WO-L", "CELL-B").await;
+        let first = assembly_action(
+            &client,
+            &run,
+            "assembly_start_test",
+            "WO-E",
+            "start-e",
+            json!({}),
+        )
+        .await;
+        assert_eq!(first["occupied_by"], "WO-E");
+        assert_eq!(
+            assembly_action(
+                &other,
+                &run,
+                "assembly_start_test",
+                "WO-E",
+                "start-e",
+                json!({})
+            )
+            .await,
+            first
+        );
+        assert_eq!(
+            assembly_action(
+                &other,
+                &run,
+                "assembly_start_test",
+                "WO-L",
+                "start-l",
+                json!({})
+            )
+            .await["code"],
+            "TEST_BENCH_BUSY"
+        );
+        advance(&client, &run, 10).await;
+        let failed = assembly_action(
+            &other,
+            &run,
+            "assembly_finish_test",
+            "WO-E",
+            "finish-e",
+            json!({}),
+        )
+        .await;
+        assert_eq!(failed["state"]["phase"], "failed");
+        assert_eq!(
+            assembly_action(
+                &client,
+                &run,
+                "assembly_deliver",
+                "WO-E",
+                "deliver",
+                json!({})
+            )
+            .await["code"],
+            "TEST_PASS_REQUIRED"
+        );
+        assert_eq!(
+            assembly_action(
+                &client,
+                &run,
+                "assembly_repair",
+                "WO-E",
+                "repair",
+                json!({"reason":"re-seat drive connector"})
+            )
+            .await["state"]["phase"],
+            "queued"
+        );
+        assert_eq!(
+            assembly_action(
+                &other,
+                &run,
+                "assembly_start_test",
+                "WO-E",
+                "retry",
+                json!({})
+            )
+            .await["ok"],
+            true
+        );
+        advance(&client, &run, 10).await;
+        let passed = assembly_action(
+            &other,
+            &run,
+            "assembly_finish_test",
+            "WO-E",
+            "retest",
+            json!({}),
+        )
+        .await;
+        let tests = &passed["state"]["tests"];
+        assert_eq!(tests[1]["result"], "pass");
+        assert!(
+            tests[1]["start_minute"].as_u64().unwrap() >= tests[0]["end_minute"].as_u64().unwrap()
+        );
+        assert_eq!(
+            assembly_action(
+                &other,
+                &run,
+                "assembly_deliver",
+                "WO-E",
+                "deliver",
+                json!({})
+            )
+            .await["state"]["phase"],
+            "delivered"
+        );
+        assert_eq!(
+            assembly_action(
+                &other,
+                &run,
+                "assembly_start_test",
+                "WO-L",
+                "start-l",
+                json!({})
+            )
+            .await["occupied_by"],
+            "WO-L"
+        );
+        let replay = call(&client, "inspect_run", json!({"run_id":run})).await;
+        assert_eq!(replay["replay_verified"], true);
+        assert_eq!(
+            replay["replay"]["timeline"]["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|event| event["kind"] == "assembly_test_complete")
+                .count(),
+            2
+        );
+    })
+    .await
+    .unwrap();
+}
