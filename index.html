@@ -64,7 +64,7 @@
     <div class="hero">
       <h1>为 AgentNexus 模拟离散制造现场</h1>
       <p>在可重复运行的制造场景中，让 Agent 查找工具、理解工况、执行模拟动作，并通过工单、库存、质量和追溯数据检查结果。</p>
-      <p>当前可体验 Rust MCP 接入探针和三种行业的场景夹具。事件推演与完整制造流程按实施计划交付。</p>
+      <p>三行业基线支持 CNC、SMT 和按单装配。可在验收台运行正常流程与异常处置。</p>
       <a class="primary" href="#usage">查看 MCP 调用流程</a>
       <a href="/acceptance">打开接入验收台</a>
       <a href="/scenarios">打开场景验收台</a>
@@ -80,7 +80,7 @@
     </section>
 
     <section id="scenarios">
-      <h2>行业场景规划</h2>
+      <h2>三行业场景</h2>
       <div class="grid">
         <article><h3>汽车零部件 CNC</h3><p>从泵体报工与终检延伸到振动取证、批次隔离和维修干预。</p></article>
         <article><h3>电子装联 SMT</h3><p>按料卷上料记录跨工单追溯受影响板卡，处理隔离、返工与复检。</p></article>
@@ -91,10 +91,10 @@
 
     <section id="usage">
       <h2>使用说明</h2>
-      <p>可先按 <a href="README.md">P0 探针使用说明</a> 启动 stdio 服务。以下为行业场景交付后的调用流程。</p>
+      <p>按 <a href="docs/RELEASE.md">基线部署说明</a> 启动服务，或下载 <a href="config/agentnexus.p1.toml">AgentNexus stdio 配置</a>。</p>
       <ol>
         <li>通过 stdio 将 MOM-MCP 注册为 AgentNexus 的 MCP 服务。</li>
-        <li>调用 <code>list_scenarios</code> 查看场景，再通过 <code>open_scenario</code> 传入场景标识与可选种子，记录返回的 <code>run_id</code>。</li>
+        <li>调用 <code>list_scenarios</code> 查看场景，再通过 <code>open_scenario</code> 传入场景标识、版本与可选种子，记录返回的 <code>run_id</code>。</li>
         <li>按 <code>run_id</code> 调用 <code>search_tools</code> 搜索业务动作，并用 <code>describe_tool</code> 获取输入、前置条件和错误码。</li>
         <li>用 <code>call_tool</code> 查询或执行。写操作按契约提供幂等键，随后重新查询验证结果。</li>
         <li>打开另一场景即可获取第二个 <code>run_id</code>。后续请求传入目标 ID 即可切换。</li>
@@ -111,6 +111,7 @@
       <ul>
         <li><a href="docs/FEATURES.md">需求与特性清单</a></li>
         <li><a href="docs/DESIGN.md">架构设计</a></li>
+        <li><a href="docs/RELEASE.md">三行业基线部署</a></li>
         <li><a href="docs/IMPLEMENTATION_PLAN.md">实施计划</a></li>
         <li><a href="docs/acceptance/README.md">分阶段验收规范</a></li>
         <li><a href="docs/TEST_AND_MOCK_PLAN.md">前端验收与 Mock 替换计划</a></li>

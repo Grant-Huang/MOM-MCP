@@ -3,6 +3,7 @@ import { defineConfig } from "@playwright/test";
 const baseURL = "http://127.0.0.1:4173";
 export default defineConfig({
   testDir: "./tests/browser",
+  outputDir: "test-results/playwright",
   reporter: [["list"], ["json", { outputFile: "test-results/browser.json" }]],
   use: {
     baseURL,
