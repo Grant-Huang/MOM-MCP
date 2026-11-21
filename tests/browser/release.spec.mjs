@@ -17,7 +17,7 @@ test("P6-04 keyboard navigation on desktop and mobile", async ({ page }) => {
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/#usage$/);
     await expect(page.getByRole("heading", { name: "服务端共享仿真时钟" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "三行业场景" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "五行业场景" })).toBeVisible();
     await expect(page.locator("pre code")).toContainText("run_id");
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
     const deployment = await page.request.get("/docs/RELEASE.md");

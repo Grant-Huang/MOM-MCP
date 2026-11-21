@@ -103,6 +103,7 @@ async fn forward(bridge: Bridge, request: Call, scenarios: bool) -> Reply {
 
 async fn document(Path(path): Path<String>) -> impl IntoResponse {
     let text = match path.as_str() {
+        "MES_SCOPE.md" => include_str!("../docs/MES_SCOPE.md"),
         "RELEASE.md" => include_str!("../docs/RELEASE.md"),
         "DESIGN.md" => include_str!("../docs/DESIGN.md"),
         "FEATURES.md" => include_str!("../docs/FEATURES.md"),

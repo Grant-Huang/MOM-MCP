@@ -1761,7 +1761,7 @@ async fn p5_03_shared_bench_failure_repair_and_retest() {
     .unwrap();
 }
 
-fn p6_evidence(name: &str, evidence: Value) {
+fn write_acceptance_evidence(name: &str, evidence: Value) {
     if let Some(directory) = std::env::var_os("MOM_ACCEPTANCE_RESULTS") {
         let path = std::path::PathBuf::from(directory).join(name);
         std::fs::write(path, serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
@@ -1899,7 +1899,7 @@ async fn p6_02_multi_seed_business_invariants() {
             assert_eq!(traces[0]["business"],traces[2]["business"]);
             report.push(json!({"scenario":scenario,"version":version,"variants":traces}));
         }
-        p6_evidence("industry-replay.json",json!(report));
+        write_acceptance_evidence("industry-replay.json",json!(report));
     }).await.unwrap();
 }
 
@@ -1986,9 +1986,315 @@ async fn p6_03_restart_budget_and_run_lifecycle() {
             call(&agent, "close_run", json!({"run_id":independent})).await["closed"],
             true
         );
-        p6_evidence(
+        write_acceptance_evidence(
             "restart-recovery.json",
             json!({"before_restart":test,"after_restart":events,"independent":still_open}),
+        );
+    })
+    .await
+    .unwrap();
+}
+
+async fn shop_action(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    name: &str,
+    key: &str,
+    arguments: Value,
+) -> Value {
+    let mut arguments = arguments.as_object().unwrap().clone();
+    arguments.insert("idempotency_key".into(), key.into());
+    business(client, run, name, Value::Object(arguments)).await
+}
+
+async fn finish_sheet(client: &RunningService<RoleClient, ()>, run: &Value) {
+    for (name, args) in [
+        ("sheet_form", json!({})),
+        ("sheet_inspect", json!({"result":"pass"})),
+        ("sheet_return", json!({})),
+    ] {
+        let result = shop_action(client, run, name, name, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+    }
+}
+
+#[tokio::test]
+async fn p7_01_sheet_area_conservation_and_remnant_lineage() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT, async {
+        let run = open(&client, "sheet-metal").await;
+        advance(&client, &run, 10).await;
+        assert_eq!(
+            shop_action(
+                &client,
+                &run,
+                "sheet_issue",
+                "issue",
+                json!({"stock":"SHEET-FULL"})
+            )
+            .await["code"],
+            "STOCK_UNAVAILABLE"
+        );
+        assert_eq!(
+            shop_action(
+                &client,
+                &run,
+                "sheet_issue",
+                "issue",
+                json!({"stock":"REM-OK"})
+            )
+            .await["ok"],
+            true
+        );
+        assert_eq!(
+            shop_action(&client, &run, "sheet_nest", "nest", json!({})).await["ok"],
+            true
+        );
+        assert_eq!(
+            shop_action(
+                &client,
+                &run,
+                "sheet_cut",
+                "cut",
+                json!({"machine":"LASER-B"})
+            )
+            .await["ok"],
+            true
+        );
+        finish_sheet(&client, &run).await;
+        let history = business(&client, &run, "sheet_trace", json!({"subject":"LOT-AL-2"})).await;
+        let cut = &history["ledger"][0];
+        let number = |field: &str| cut[field].as_u64().unwrap();
+        assert_eq!(
+            number("input_mm2"),
+            number("product_mm2") + number("scrap_mm2") + number("remnant_mm2")
+        );
+        assert_eq!(history["area_unit"], "mm2");
+        assert_eq!(history["phase"], "complete");
+        let returned = &history["stock"]["REM-RETURN"];
+        assert_eq!(returned["area_mm2"], 300);
+        assert_eq!(returned["parent"], "REM-OK");
+        assert_eq!(history["stock"]["REM-OK"]["parent"], "SHEET-AL-2");
+        assert_eq!(returned["lot"], "LOT-AL-2");
+        let normal = open(&client, "sheet-metal").await;
+        for (name, args) in [
+            ("sheet_issue", json!({"stock":"SHEET-FULL"})),
+            ("sheet_nest", json!({})),
+            ("sheet_cut", json!({"machine":"LASER-A"})),
+        ] {
+            assert_eq!(
+                shop_action(&client, &normal, name, name, args).await["ok"],
+                true
+            );
+        }
+        finish_sheet(&client, &normal).await;
+        let original = business(
+            &client,
+            &normal,
+            "sheet_trace",
+            json!({"subject":"LOT-AL-1"}),
+        )
+        .await;
+        assert_eq!(original["stock"]["REM-RETURN"]["area_mm2"], 1100);
+        for completed in [&run, &normal] {
+            assert_eq!(
+                call(&client, "close_run", json!({"run_id":completed})).await["closed"],
+                true
+            );
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p7_02_invalid_stock_and_sheet_machine_reroute() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT, async {
+        let run = open(&client, "sheet-metal").await;
+        let before = business(&client, &run, "sheet_trace", json!({"subject":"WO-SHEET"})).await;
+        for (stock, code) in [
+            ("REM-BAD", "STOCK_INELIGIBLE"),
+            ("REM-SMALL", "INSUFFICIENT_AREA"),
+        ] {
+            assert_eq!(
+                shop_action(
+                    &client,
+                    &run,
+                    "sheet_issue",
+                    "issue",
+                    json!({"stock":stock})
+                )
+                .await["code"],
+                code
+            );
+        }
+        assert_eq!(
+            business(&client, &run, "sheet_trace", json!({"subject":"WO-SHEET"})).await,
+            before
+        );
+        advance(&client, &run, 10).await;
+        assert_eq!(
+            shop_action(
+                &client,
+                &run,
+                "sheet_issue",
+                "issue",
+                json!({"stock":"REM-OK"})
+            )
+            .await["ok"],
+            true
+        );
+        assert_eq!(
+            shop_action(&client, &run, "sheet_nest", "nest", json!({})).await["ok"],
+            true
+        );
+        let before_cut =
+            business(&client, &run, "sheet_trace", json!({"subject":"WO-SHEET"})).await;
+        for (machine, code) in [
+            ("PRESS-1", "MACHINE_NOT_CAPABLE"),
+            ("LASER-A", "MACHINE_UNAVAILABLE"),
+        ] {
+            assert_eq!(
+                shop_action(
+                    &client,
+                    &run,
+                    "sheet_cut",
+                    "cut",
+                    json!({"machine":machine})
+                )
+                .await["code"],
+                code
+            );
+        }
+        assert_eq!(
+            business(&client, &run, "sheet_trace", json!({"subject":"WO-SHEET"})).await,
+            before_cut
+        );
+        let cut = shop_action(
+            &client,
+            &run,
+            "sheet_cut",
+            "cut",
+            json!({"machine":"LASER-B"}),
+        )
+        .await;
+        assert_eq!(cut["phase"], "cut");
+        assert_eq!(
+            shop_action(
+                &client,
+                &run,
+                "sheet_cut",
+                "cut",
+                json!({"machine":"LASER-B"})
+            )
+            .await,
+            cut
+        );
+        finish_sheet(&client, &run).await;
+        assert_eq!(
+            business(&client, &run, "sheet_trace", json!({"subject":"LOT-AL-2"})).await["ledger"]
+                [0]["machine"],
+            "LASER-B"
+        );
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p7_03_harness_sample_rework_and_terminal_genealogy() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT,async {
+        let run=open(&client,"wire-harness").await;
+        for (serial,terminal) in [("WIRE-01","TERM-ALT"),("WIRE-02","TERM-STD")] {
+            assert_eq!(shop_action(&client,&run,"harness_cut",&format!("{serial}-cut"),json!({"serial":serial})).await["phase"],"cut");
+            assert_eq!(shop_action(&client,&run,"harness_crimp",&format!("{serial}-crimp"),json!({"serial":serial,"terminal_batch":terminal})).await["phase"],"crimped");
+        }
+        assert_eq!(shop_action(&client,&run,"harness_test","baseline",json!({"serial":"WIRE-01","result":"pass"})).await["phase"],"passed");
+        advance(&client,&run,10).await;
+        let event=delivered(&client,&run).await["events"][0].clone();
+        assert_eq!(event["kind"],"harness_sample_failed");
+        assert_eq!(shop_action(&client,&run,"harness_sample","sample",json!({"event_cursor":event["cursor"]})).await["affected"],json!(["WIRE-01"]));
+        assert_eq!(shop_action(&client,&run,"harness_release","early",json!({"serial":"WIRE-01"})).await["code"],"TEST_PASS_REQUIRED");
+        assert_eq!(shop_action(&client,&run,"harness_test","clean-test",json!({"serial":"WIRE-02","result":"pass"})).await["phase"],"passed");
+        assert_eq!(shop_action(&client,&run,"harness_release","clean-release",json!({"serial":"WIRE-02"})).await["phase"],"released");
+        assert_eq!(shop_action(&client,&run,"harness_rework","reject",json!({"serial":"WIRE-01","terminal_batch":"TERM-ALT","reason":"hold"})).await["code"],"TERMINAL_QUALITY_HOLD");
+        assert_eq!(shop_action(&client,&run,"harness_rework","rework",json!({"serial":"WIRE-01","terminal_batch":"TERM-STD","reason":"replace suspect terminal"})).await["phase"],"reworked");
+        assert_eq!(shop_action(&client,&run,"harness_release","early",json!({"serial":"WIRE-01"})).await["code"],"TEST_PASS_REQUIRED");
+        assert_eq!(shop_action(&client,&run,"harness_test","retest",json!({"serial":"WIRE-01","result":"pass"})).await["phase"],"passed");
+        assert_eq!(shop_action(&client,&run,"harness_release","finish",json!({"serial":"WIRE-01"})).await["phase"],"released");
+        let history=business(&client,&run,"harness_trace",json!({"subject":"WIRE-01"})).await;
+        let records=history["units"]["WIRE-01"]["history"].as_array().unwrap();
+        assert!(records.iter().any(|record|record["operation"]=="crimp" && record["terminal_batch"]=="TERM-ALT" &&
+            record["qualification"]=="QA-TERMINAL-12"));
+        assert!(records.iter().any(|record|record["operation"]=="rework" && record["previous_terminal"]=="TERM-ALT" &&
+            record["terminal_batch"]=="TERM-STD" && record["process_revision"]=="HARNESS-2"));
+        for terminal in ["TERM-ALT","TERM-STD"] {
+            assert!(business(&client,&run,"harness_trace",json!({"subject":terminal})).await["units"].get("WIRE-01").is_some());
+        }
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn p7_04_five_industry_catalog_and_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT, async {
+        let mut counts = Vec::new();
+        let mut business_tools = std::collections::BTreeSet::new();
+        for (scenario, version, count, tool) in [
+            ("cnc", 2, 16, "mes_status"),
+            ("smt", 2, 13, "smt_trace"),
+            ("assembly", 2, 11, "assembly_kit"),
+            ("sheet-metal", 1, 7, "sheet_trace"),
+            ("wire-harness", 1, 7, "harness_trace"),
+        ] {
+            let mut traces = Vec::new();
+            for _ in 0..2 {
+                let opened = call(
+                    &client,
+                    "open_scenario",
+                    json!({"scenario_id":scenario,"version":version,"seed":42}),
+                )
+                .await;
+                assert_eq!(opened["ok"], true);
+                let run = &opened["run_id"];
+                let found = call(&client, "search_tools", json!({"run_id":run})).await;
+                let tools = found["tools"].as_array().unwrap();
+                assert_eq!(tools.len(), count);
+                assert!(tools.iter().any(|entry| entry["name"] == tool));
+                for entry in tools {
+                    business_tools.insert(entry["name"].as_str().unwrap().to_owned());
+                }
+                advance(&client, run, 10).await;
+                traces.push(delivered(&client, run).await);
+                assert_eq!(
+                    call(&client, "inspect_run", json!({"run_id":run})).await["replay_verified"],
+                    true
+                );
+                assert_eq!(
+                    call(&client, "close_run", json!({"run_id":run})).await["closed"],
+                    true
+                );
+            }
+            assert_eq!(traces[0], traces[1], "{scenario}");
+            counts.push(json!({"scenario":scenario,"version":version,"tools":count}));
+        }
+        assert_eq!(business_tools.len(), 52);
+        let (agent,_child)=connect_mode(&dir.path().join("runs.sqlite3"),"0",true).await;
+        let methods: Vec<_> = agent.peer().list_tools(None).await.unwrap().tools.into_iter()
+            .filter(|tool| !matches!(tool.name.as_ref(),"get_probe"|"set_probe"))
+            .map(|tool|tool.name).collect();
+        assert_eq!(methods.len(),8);
+        assert!(methods.iter().any(|name|name=="read_events"));
+        assert!(!methods.iter().any(|name|name=="inspect_run"));
+        write_acceptance_evidence(
+            "five-industry-catalog.json",
+            json!({"scenarios":counts,"unique_business_tools":business_tools.len(),"agent_mcp_methods":methods}),
         );
     })
     .await

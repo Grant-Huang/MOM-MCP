@@ -20,6 +20,14 @@ pub fn load_model(
             mom_model_assembly::Assembly::load(Value::Object(parameters.clone()))
                 .map(|model| Box::new(model) as Box<dyn Model>)
         }
+        id if matches!(
+            id,
+            mom_model_fabrication::SHEET | mom_model_fabrication::HARNESS
+        ) && version == mom_model_fabrication::VERSION =>
+        {
+            mom_model_fabrication::Fabrication::load(id, Value::Object(parameters.clone()))
+                .map(|model| Box::new(model) as Box<dyn Model>)
+        }
         id if mom_model_fixture::IDS.contains(&id) && version == mom_model_fixture::VERSION => {
             if !parameters.is_empty() {
                 return Err("fixture does not accept model parameters".into());

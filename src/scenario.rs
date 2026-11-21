@@ -26,6 +26,8 @@ pub struct Definition {
     smt: Option<crate::smt::Setup>,
     #[serde(default)]
     assembly: Option<crate::assembly::Setup>,
+    #[serde(default)]
+    fabrication: Option<crate::fabrication::Setup>,
     #[serde(default = "model_version")]
     model_version: u32,
     #[serde(default)]
@@ -206,6 +208,22 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                 .any(|action| crate::assembly::TOOLS.iter().any(|tool| tool.0 == *action)),
         "assembly capabilities require assembly setup"
     );
+    if let Some(setup) = definition.fabrication {
+        anyhow::ensure!(
+            setup.model() == definition.model,
+            "fabrication setup requires its registered model"
+        );
+    }
+    for action in &definition.capabilities {
+        if crate::fabrication::tools().any(|tool| tool.0 == *action) {
+            anyhow::ensure!(
+                definition
+                    .fabrication
+                    .is_some_and(|setup| setup.valid(&definition.model, *action)),
+                "fabrication capability does not match setup"
+            );
+        }
+    }
     Ok(definition)
 }
 
@@ -226,6 +244,7 @@ impl Scenarios {
                  run TEXT NOT NULL, batch TEXT NOT NULL, reason TEXT NOT NULL,
                  PRIMARY KEY (run, batch)
              );
+             CREATE TABLE IF NOT EXISTS fabrication_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS assembly_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS smt_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS mes_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
@@ -245,6 +264,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly.json"),
             include_str!("../fixtures/assembly-production.json"),
             include_str!("../fixtures/assembly-shortage.json"),
+            include_str!("../fixtures/sheet-metal.json"),
+            include_str!("../fixtures/wire-harness.json"),
         ] {
             let definition = parse_definition(source)?;
             conn.execute(
@@ -515,6 +536,23 @@ impl Scenarios {
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if crate::fabrication::tools().any(|tool| tool.0 == action) {
+            let Some(setup) = definition
+                .fabrication
+                .filter(|setup| setup.valid(&definition.model, action))
+            else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            let events = stored
+                .as_ref()
+                .map_or(&[][..], |state| state.timeline.events.as_slice());
+            let (response, changed) =
+                crate::fabrication::invoke(&tx, run, setup, action, parameters, cursor, events)?;
+            if changed {
+                tx.commit()?;
+            }
+            return Ok(Ok(response));
         }
         if crate::assembly::TOOLS.iter().any(|tool| tool.0 == action) {
             let Some(setup) = &definition.assembly else {

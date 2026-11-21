@@ -1,0 +1,23 @@
+{
+  "scenario_id": "sheet-metal",
+  "version": 1,
+  "title": "钣金加工 · 面积平衡与余料",
+  "model": "sheet_metal",
+  "model_parameters": {
+    "mean_minutes": 12.0
+  },
+  "work_orders": [
+    "WO-SHEET"
+  ],
+  "materials": {},
+  "capabilities": [
+    "sheet_issue",
+    "sheet_nest",
+    "sheet_cut",
+    "sheet_form",
+    "sheet_inspect",
+    "sheet_return",
+    "sheet_trace"
+  ],
+  "fabrication": "sheet_metal"
+}

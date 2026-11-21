@@ -61,7 +61,7 @@ function run(command, commandArgs, env = process.env) {
 if (!cargo.length || !browser.length) throw new Error("No integration or browser test selected");
 const resultsDir = resolve("test-results");
 mkdirSync(resultsDir, { recursive: true });
-for (const file of ["industry-replay.json", "restart-recovery.json", "agentnexus-industries.json"]) {
+for (const file of ["industry-replay.json", "restart-recovery.json", "agentnexus-industries.json", "five-industry-catalog.json"]) {
   rmSync(join(resultsDir,file), { force: true });
 }
 for (const [id, test] of cargo) {

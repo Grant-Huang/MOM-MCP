@@ -45,6 +45,20 @@ pub enum Action {
     AssemblyRepair,
     AssemblyDeliver,
     AssemblyTrace,
+    SheetIssue,
+    SheetNest,
+    SheetCut,
+    SheetForm,
+    SheetInspect,
+    SheetReturn,
+    SheetTrace,
+    HarnessCut,
+    HarnessCrimp,
+    HarnessSample,
+    HarnessTest,
+    HarnessRework,
+    HarnessRelease,
+    HarnessTrace,
 }
 
 pub struct Gateway {
@@ -87,6 +101,7 @@ impl Action {
                     .iter()
                     .chain(crate::smt::TOOLS)
                     .chain(crate::assembly::TOOLS)
+                    .chain(crate::fabrication::tools())
                     .find(|tool| tool.1 == name)
                     .map(|tool| tool.0)
             })
@@ -102,6 +117,7 @@ impl Action {
                     .iter()
                     .chain(crate::smt::TOOLS)
                     .chain(crate::assembly::TOOLS)
+                    .chain(crate::fabrication::tools())
                     .find(|tool| tool.0 == self)
                     .unwrap()
                     .1
@@ -167,6 +183,9 @@ impl Action {
             }
             _ if crate::assembly::TOOLS.iter().any(|tool| tool.0 == self) => {
                 return crate::assembly::spec(self);
+            }
+            _ if crate::fabrication::tools().any(|tool| tool.0 == self) => {
+                return crate::fabrication::spec(self);
             }
             _ => return crate::mes::spec(self),
         };
