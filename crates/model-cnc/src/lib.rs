@@ -9,6 +9,7 @@ pub const VERSION: u32 = 1;
 #[serde(default, deny_unknown_fields)]
 pub struct Cnc {
     alarm_mean_minutes: f64,
+    alarm_enabled: bool,
     repair_mean_minutes: f64,
     wear_per_minute: f64,
 }
@@ -17,6 +18,7 @@ impl Default for Cnc {
     fn default() -> Self {
         Self {
             alarm_mean_minutes: 24.0,
+            alarm_enabled: true,
             repair_mean_minutes: 5.0,
             wear_per_minute: 0.03,
         }
@@ -60,12 +62,16 @@ impl Cnc {
 
 impl Model for Cnc {
     fn initial(&self) -> Vec<Candidate> {
-        vec![self.alarm(0)]
+        if self.alarm_enabled {
+            vec![self.alarm(0)]
+        } else {
+            vec![]
+        }
     }
 
     fn on_event(&self, event: &mut Event) -> Vec<Candidate> {
         match event.kind.as_str() {
-            "cnc_repair_completed" => vec![self.alarm(event.minute)],
+            "cnc_repair_completed" if self.alarm_enabled => vec![self.alarm(event.minute)],
             "cnc_vibration" => {
                 // Mock wear and process capability are derived from time since maintenance.
                 let age = event.minute
@@ -108,7 +114,11 @@ impl Model for Cnc {
     }
 
     fn diagnosis(&self) -> Value {
-        json!({"root_cause":"spindle_wear","asset":"CNC-1"})
+        if self.alarm_enabled {
+            json!({"root_cause":"spindle_wear","asset":"CNC-1"})
+        } else {
+            json!({"root_cause":"incoming_material","batch":"LOT-1"})
+        }
     }
 }
 

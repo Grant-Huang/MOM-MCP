@@ -46,6 +46,12 @@ impl Delay {
 pub struct Rule {
     pub event: String,
     pub delay: Delay,
+    #[serde(default = "repeat_by_default")]
+    pub repeat: bool,
+}
+
+fn repeat_by_default() -> bool {
+    true
 }
 
 pub enum Candidate {
@@ -214,7 +220,9 @@ impl Timeline {
                 payload: pending.payload,
             };
             if let Some(index) = pending.rule {
-                self.schedule_rule(index, &rules[index]);
+                if rules[index].repeat {
+                    self.schedule_rule(index, &rules[index]);
+                }
             } else {
                 self.schedule_all(model.on_event(&mut event));
             }

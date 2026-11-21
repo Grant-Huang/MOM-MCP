@@ -10,6 +10,19 @@ pub enum Action {
     GetWorkOrder,
     GetMaterial,
     HoldMaterial,
+    MesStatus,
+    ReleaseOrder,
+    ReviseRoute,
+    SetEquipment,
+    DispatchOperation,
+    IssueMaterial,
+    StartOperation,
+    ReportOperation,
+    InspectUnits,
+    Disposition,
+    CloseOrder,
+    Trace,
+    ReverseReport,
 }
 
 pub struct Gateway {
@@ -22,23 +35,23 @@ pub struct Gateway {
 
 #[derive(Serialize)]
 pub struct Spec {
-    name: &'static str,
-    description: &'static str,
-    domain: &'static str,
-    effect: &'static str,
+    pub(crate) name: &'static str,
+    pub(crate) description: &'static str,
+    pub(crate) domain: &'static str,
+    pub(crate) effect: &'static str,
     pub input: Value,
-    output: Value,
-    preconditions: &'static [&'static str],
-    side_effect: &'static str,
-    errors: &'static [&'static str],
-    visibility: &'static str,
+    pub(crate) output: Value,
+    pub(crate) preconditions: &'static [&'static str],
+    pub(crate) side_effect: &'static str,
+    pub(crate) errors: &'static [&'static str],
+    pub(crate) visibility: &'static str,
 }
 
-fn object(required: &[&str], properties: Value) -> Value {
+pub(crate) fn object(required: &[&str], properties: Value) -> Value {
     json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
 }
 
-fn text() -> Value {
+pub(crate) fn text() -> Value {
     json!({"type":"string","minLength":1,"maxLength":256})
 }
 
@@ -47,6 +60,12 @@ impl Action {
         [Self::GetWorkOrder, Self::GetMaterial, Self::HoldMaterial]
             .into_iter()
             .find(|action| action.name() == name)
+            .or_else(|| {
+                crate::mes::TOOLS
+                    .iter()
+                    .find(|tool| tool.1 == name)
+                    .map(|tool| tool.0)
+            })
     }
 
     fn name(self) -> &'static str {
@@ -54,6 +73,13 @@ impl Action {
             Self::GetWorkOrder => "get_work_order",
             Self::GetMaterial => "get_material",
             Self::HoldMaterial => "hold_material",
+            _ => {
+                crate::mes::TOOLS
+                    .iter()
+                    .find(|tool| tool.0 == self)
+                    .unwrap()
+                    .1
+            }
         }
     }
 
@@ -69,6 +95,7 @@ impl Action {
                 "quality hold",
                 "quarantine",
             ],
+            _ => &[],
         }
     }
 
@@ -109,6 +136,7 @@ impl Action {
                     "IDEMPOTENCY_CONFLICT",
                 ][..],
             ),
+            _ => return crate::mes::spec(self),
         };
         let mut fields = fields.as_object().unwrap().clone();
         fields.insert("ok".into(), json!({"const":true}));

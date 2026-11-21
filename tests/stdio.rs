@@ -671,3 +671,379 @@ async fn p2_06_control_visibility() {
     .await
     .unwrap();
 }
+
+async fn cnc(client: &RunningService<RoleClient, ()>) -> Value {
+    let state = call(
+        client,
+        "open_scenario",
+        json!({"scenario_id":"cnc","version":2,"seed":42}),
+    )
+    .await;
+    assert_eq!(state["ok"], true);
+    state["run_id"].clone()
+}
+
+async fn mes(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    tool: &str,
+    order: &str,
+    key: &str,
+    extra: Value,
+) -> Value {
+    let mut args = extra.as_object().unwrap().clone();
+    args.insert("work_order".into(), order.into());
+    args.insert("idempotency_key".into(), key.into());
+    business(client, run, tool, Value::Object(args)).await
+}
+
+async fn mes_status(client: &RunningService<RoleClient, ()>, run: &Value) -> Value {
+    business(client, run, "mes_status", json!({"work_order":"WO-1"})).await
+}
+
+async fn ready_for_report(client: &RunningService<RoleClient, ()>, run: &Value, order: &str) {
+    for (name, key, args) in [
+        ("release_order", "release", json!({})),
+        (
+            "dispatch_operation",
+            "dispatch",
+            json!({"operation":"machining"}),
+        ),
+        ("issue_material", "issue", json!({"batch":"LOT-1"})),
+        ("start_operation", "start", json!({"operation":"machining"})),
+    ] {
+        let response = mes(client, run, name, order, &format!("{order}-{key}"), args).await;
+        assert_eq!(response["ok"], true, "{name}: {response}");
+    }
+}
+
+async fn machining(client: &RunningService<RoleClient, ()>, run: &Value) -> Value {
+    ready_for_report(client, run, "WO-1").await;
+    let response = mes(
+        client,
+        run,
+        "report_operation",
+        "WO-1",
+        "machining-report",
+        json!({"operation":"machining"}),
+    )
+    .await;
+    assert_eq!(response["ok"], true, "{response}");
+    response
+}
+
+async fn inspect_cnc(client: &RunningService<RoleClient, ()>, run: &Value, result: &str) {
+    machining(client, run).await;
+    for (name, key, parameters) in [
+        (
+            "dispatch_operation",
+            "dispatch-assembly",
+            json!({"operation":"assembly"}),
+        ),
+        (
+            "start_operation",
+            "start-assembly",
+            json!({"operation":"assembly"}),
+        ),
+        (
+            "report_operation",
+            "report-assembly",
+            json!({"operation":"assembly"}),
+        ),
+        (
+            "dispatch_operation",
+            "dispatch-inspection",
+            json!({"operation":"inspection"}),
+        ),
+        ("inspect_units", "inspect", json!({"result":result})),
+    ] {
+        let response = mes(client, run, name, "WO-1", key, parameters).await;
+        assert_eq!(response["ok"], true, "{name}: {response}");
+    }
+}
+
+#[tokio::test]
+async fn p3_01_shortage_receipt_and_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT,async {
+        let run=open(&client,"cnc-shortage").await;
+        let release=|key| mes(&client,&run,"release_order","WO-1",key,json!({}));
+        let refusal=release("release").await;
+        assert_eq!(refusal,json!({"ok":false,"code":"MATERIAL_SHORTAGE","batch":"LOT-1","missing":10,"location":"RAW-01"}));
+        advance(&client,&run,1).await;
+        assert_eq!(mes_status(&client,&run).await["on_hand"],10);
+        assert_eq!(mes_status(&client,&run).await["cursor"],1);
+        assert_eq!(mes_status(&client,&run).await["available_actions"],json!(["release_order"]));
+        assert_eq!(release("release").await["state"]["route_version"],"route-1");
+        assert_eq!(business(&client,&run,"revise_route",json!({"route_version":"route-2","idempotency_key":"revised"})).await["ok"],true);
+        let status=mes_status(&client,&run).await;
+        assert_eq!(status["route_master"],"route-2");
+        assert_eq!(status["state"]["route_version"],"route-1");
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn p3_02_sequence_and_normal_production() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let run = cnc(&client).await;
+        assert_eq!(
+            mes(
+                &client,
+                &run,
+                "start_operation",
+                "WO-1",
+                "skip",
+                json!({"operation":"assembly"})
+            )
+            .await["code"],
+            "OPERATION_OUT_OF_SEQUENCE"
+        );
+        assert_eq!(
+            mes(
+                &client,
+                &run,
+                "release_order",
+                "WO-1",
+                "stale",
+                json!({"expected_cursor":99})
+            )
+            .await["code"],
+            "VERSION_CONFLICT"
+        );
+        let equipment = |state, key| {
+            business(
+                &client,
+                &run,
+                "set_equipment",
+                json!({"equipment_state":state,"idempotency_key":key}),
+            )
+        };
+        assert_eq!(equipment("down", "down").await["equipment_down"], true);
+        assert_eq!(
+            mes(
+                &client,
+                &run,
+                "release_order",
+                "WO-2",
+                "prepare-other",
+                json!({})
+            )
+            .await["ok"],
+            true
+        );
+        assert_eq!(
+            mes(
+                &client,
+                &run,
+                "dispatch_operation",
+                "WO-2",
+                "dispatch-other",
+                json!({"operation":"machining"})
+            )
+            .await["ok"],
+            true
+        );
+        assert_eq!(
+            mes(
+                &client,
+                &run,
+                "start_operation",
+                "WO-2",
+                "start-other",
+                json!({"operation":"machining"})
+            )
+            .await["code"],
+            "EQUIPMENT_UNAVAILABLE"
+        );
+        assert_eq!(
+            equipment("available", "available").await["equipment_down"],
+            false
+        );
+        inspect_cnc(&client, &run, "pass").await;
+        assert_eq!(
+            mes(&client, &run, "close_order", "WO-1", "finish", json!({})).await["state"]["phase"],
+            "closed"
+        );
+        let status = mes_status(&client, &run).await;
+        assert_eq!(status["on_hand"], 0);
+        assert_eq!(status["state"]["units"].as_array().unwrap().len(), 10);
+        assert_eq!(status["state"]["inspection"], "pass");
+        assert_eq!(
+            status["ledger"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["kind"] == "consumption")
+                .unwrap()["delta"],
+            -10
+        );
+        assert_eq!(
+            business(
+                &client,
+                &run,
+                "get_work_order",
+                json!({"work_order":"WO-1"})
+            )
+            .await["status"],
+            "closed"
+        );
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p3_03_idempotent_retry_and_parallel_stock() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    let (other, _other_child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        let run = cnc(&client).await;
+        for order in ["WO-1", "WO-2"] {
+            ready_for_report(&client, &run, order).await;
+        }
+        let args = json!({"operation":"machining"});
+        let (a, b) = tokio::join!(
+            mes(
+                &client,
+                &run,
+                "report_operation",
+                "WO-1",
+                "report-a",
+                args.clone()
+            ),
+            mes(
+                &other,
+                &run,
+                "report_operation",
+                "WO-2",
+                "report-b",
+                args.clone()
+            ),
+        );
+        let (winner, key, first, second) = if a["ok"] == true {
+            ("WO-1", "report-a", a, b)
+        } else {
+            ("WO-2", "report-b", b, a)
+        };
+        assert_eq!(first["ok"], true);
+        assert_eq!(second["code"], "MATERIAL_SHORTAGE");
+        assert_eq!(
+            mes(&other, &run, "report_operation", winner, key, args).await,
+            first
+        );
+        assert_eq!(
+            mes(
+                &other,
+                &run,
+                "report_operation",
+                winner,
+                key,
+                json!({"operation":"assembly"})
+            )
+            .await["code"],
+            "IDEMPOTENCY_CONFLICT"
+        );
+        let status = mes_status(&client, &run).await;
+        assert_eq!(status["on_hand"], 0);
+        assert_eq!(status["ledger"].as_array().unwrap().len(), 1);
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p3_04_rollback_and_receipt_deduplication() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (client, _child) = connect_options(&db, "0", true, true).await;
+    timeout(WAIT,async {
+        let run=open(&client,"cnc-shortage").await;
+        advance(&client,&run,3).await;
+        advance(&client,&run,3).await;
+        assert_eq!(mes_status(&client,&run).await["on_hand"],10);
+        assert_eq!(mes_status(&client,&run).await["ledger"].as_array().unwrap().len(),1);
+        ready_for_report(&client,&run,"WO-1").await;
+        let sql=rusqlite::Connection::open(&db).unwrap();
+        sql.execute_batch("CREATE TRIGGER fail_report BEFORE INSERT ON scenario_requests
+            WHEN NEW.key='report-fault' BEGIN SELECT RAISE(ABORT,'test injection'); END;").unwrap();
+        let arguments=json!({"run_id":run,"name":"report_operation","arguments":{"work_order":"WO-1","idempotency_key":"report-fault","operation":"machining"}});
+        let result=client.peer().call_tool(CallToolRequestParams::new("call_tool").with_arguments(arguments.as_object().unwrap().clone())).await;
+        assert!(result.is_err());
+        let status=mes_status(&client,&run).await;
+        assert_eq!(status["on_hand"],10);
+        assert_eq!(status["reports"],json!([]));
+        assert_eq!(business(&client,&run,"trace",json!({"subject":"LOT-1"})).await["links"],json!([]));
+        sql.execute_batch("DROP TRIGGER fail_report").unwrap();
+        let posted=mes(&client,&run,"report_operation","WO-1","report-fault",json!({"operation":"machining"})).await;
+        assert_eq!(posted["ok"],true);
+        assert_eq!(mes_status(&client,&run).await["on_hand"],0);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn p3_05_quality_disposition_and_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT,async {
+        for (run,cause,event,disposition) in [
+            (cnc(&client).await,"spindle_wear","cnc_vibration","pass"),
+            (open(&client,"cnc-lot").await,"incoming_material","incoming_lot_drift","scrap")
+        ] {
+            inspect_cnc(&client,&run,"fail").await;
+            advance(&client,&run,1).await;
+            let evidence=delivered(&client,&run).await;
+            assert_eq!(evidence["events"][0]["kind"],event);
+            assert_eq!(call(&client,"inspect_run",json!({"run_id":run})).await["diagnosis"]["root_cause"],cause);
+            if cause == "spindle_wear" {
+                assert_eq!(call(&client,"intervene_run",json!({"run_id":run,"action":"maintenance"})).await["ok"],true);
+                advance(&client,&run,5).await;
+            }
+            assert_eq!(business(&client,&run,"hold_material",json!({"batch":"LOT-1","reason":"investigation","idempotency_key":"hold"})).await["held"],true);
+            assert_eq!(mes(&client,&run,"close_order","WO-1","close",json!({})).await["code"],"QUALITY_HOLD");
+            assert_eq!(mes(&client,&run,"disposition","WO-1","resolve",json!({"result":disposition,"reason":"reviewed evidence"})).await["state"]["inspection"],disposition);
+            assert_eq!(mes(&client,&run,"close_order","WO-1","close",json!({})).await["ok"],true);
+        }
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn p3_06_genealogy_and_report_reversal() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let run = cnc(&client).await;
+        let report = machining(&client, &run).await;
+        let from_batch = business(&client, &run, "trace", json!({"subject":"LOT-1"})).await;
+        assert_eq!(
+            from_batch["links"][0]["serial_numbers"],
+            report["serial_numbers"]
+        );
+        let from_unit = business(&client, &run, "trace", json!({"subject":"WO-1-01"})).await;
+        assert_eq!(from_unit["links"][0]["batch"], "LOT-1");
+        let reversed = mes(
+            &client,
+            &run,
+            "reverse_report",
+            "WO-1",
+            "reverse",
+            json!({"report_id":report["report"]["id"],"reason":"duplicate recording"}),
+        )
+        .await;
+        assert_eq!(reversed["ok"], true);
+        let status = mes_status(&client, &run).await;
+        assert_eq!(status["on_hand"], 10);
+        assert_eq!(status["reports"][0]["reversed"], true);
+        assert_eq!(status["ledger"][1]["report_id"], report["report"]["id"]);
+        assert_eq!(
+            business(&client, &run, "trace", json!({"subject":"WO-1-01"})).await["links"],
+            json!([])
+        );
+    })
+    .await
+    .unwrap();
+}
