@@ -227,6 +227,32 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     Ok(definition)
 }
 
+fn read_work_order(
+    tx: &rusqlite::Transaction<'_>,
+    run: &str,
+    definition: &Definition,
+    order: &str,
+) -> anyhow::Result<Option<Value>> {
+    if !definition.work_orders.iter().any(|id| id == order) {
+        return Ok(None);
+    }
+    if let Some(setup) = &definition.assembly {
+        return crate::assembly::status(tx, run, setup, order);
+    }
+    if let Some(setup) = &definition.smt {
+        let status = crate::smt::work_order_status(tx, run, setup, order)?;
+        return Ok(Some(
+            json!({"ok":true,"run_id":run,"work_order":order,"status":status}),
+        ));
+    }
+    if let Some(setup) = &definition.manufacturing {
+        return crate::mes::order_status(tx, run, setup, &definition.work_orders, order);
+    }
+    Ok(Some(
+        json!({"ok":true,"run_id":run,"work_order":order,"status":"planned"}),
+    ))
+}
+
 impl Scenarios {
     pub fn new(db: PathBuf) -> anyhow::Result<Self> {
         let store = Self { db };
@@ -257,13 +283,17 @@ impl Scenarios {
         for source in [
             include_str!("../fixtures/cnc.json"),
             include_str!("../fixtures/cnc-manufacturing.json"),
+            include_str!("../fixtures/cnc-public-orders.json"),
             include_str!("../fixtures/cnc-shortage.json"),
             include_str!("../fixtures/cnc-lot.json"),
             include_str!("../fixtures/smt.json"),
             include_str!("../fixtures/smt-production.json"),
             include_str!("../fixtures/assembly.json"),
             include_str!("../fixtures/assembly-production.json"),
+            include_str!("../fixtures/assembly-public-orders.json"),
             include_str!("../fixtures/assembly-shortage.json"),
+            include_str!("../fixtures/assembly-release-readiness.json"),
+            include_str!("../fixtures/assembly-shortage-readiness.json"),
             include_str!("../fixtures/sheet-metal.json"),
             include_str!("../fixtures/wire-harness.json"),
         ] {
@@ -542,6 +572,17 @@ impl Scenarios {
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
         }
+        if action == Action::GetReleaseReadiness {
+            if let Some(setup) = &definition.assembly {
+                return Ok(Ok(crate::assembly::release_readiness(
+                    &tx,
+                    run,
+                    setup,
+                    parameters["work_order"].as_str().unwrap(),
+                    cursor,
+                )?));
+            }
+        }
         if crate::fabrication::tools().any(|tool| tool.0 == action) {
             let Some(setup) = definition
                 .fabrication
@@ -626,40 +667,41 @@ impl Scenarios {
         }
         if action == Action::GetWorkOrder {
             let order = parameters["work_order"].as_str().unwrap();
-            if let Some(setup) = &definition.assembly {
-                return Ok(crate::assembly::status(&tx, run, setup, order)?
-                    .ok_or_else(|| reject("WORK_ORDER_NOT_FOUND", "work_order")));
-            }
-            if let Some(setup) = &definition.smt {
-                if !definition.work_orders.iter().any(|id| id == order) {
-                    return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
-                }
-                let status = crate::smt::work_order_status(&tx, run, setup, order)?;
-                return Ok(Ok(
-                    json!({"ok":true,"run_id":run,"work_order":order,"status":status}),
-                ));
-            }
-            if let Some(setup) = &definition.manufacturing {
-                return Ok(crate::mes::order_status(
-                    &tx,
-                    run,
-                    setup,
-                    &definition.work_orders,
-                    order,
-                )?
+            return Ok(read_work_order(&tx, run, &definition, order)?
                 .ok_or_else(|| reject("WORK_ORDER_NOT_FOUND", "work_order")));
+        }
+        if action == Action::ListWorkOrders {
+            let limit = parameters
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(50) as usize;
+            let after = parameters.get("after_work_order").and_then(Value::as_str);
+            let status = parameters.get("status").and_then(Value::as_str);
+            let mut ids: Vec<_> = definition.work_orders.iter().map(String::as_str).collect();
+            ids.sort_unstable();
+            let mut orders = Vec::new();
+            let mut next = None;
+            for id in ids
+                .into_iter()
+                .filter(|id| after.is_none_or(|after| *id > after))
+            {
+                let Some(order) = read_work_order(&tx, run, &definition, id)? else {
+                    continue;
+                };
+                if status.is_some_and(|status| order["status"] != status) {
+                    continue;
+                }
+                if orders.len() == limit {
+                    next = orders
+                        .last()
+                        .and_then(|order: &Value| order["work_order"].as_str());
+                    break;
+                }
+                orders.push(json!({"work_order":id,"status":order["status"]}));
             }
-            return Ok(
-                if definition
-                    .work_orders
-                    .iter()
-                    .any(|candidate| candidate == order)
-                {
-                    Ok(json!({"ok":true,"run_id":run,"work_order":order,"status":"planned"}))
-                } else {
-                    Err(reject("WORK_ORDER_NOT_FOUND", "work_order"))
-                },
-            );
+            return Ok(Ok(
+                json!({"ok":true,"run_id":run,"orders":orders,"next_after_work_order":next}),
+            ));
         }
         let batch = parameters["batch"].as_str().unwrap();
         let Some(order) = definition.materials.get(batch) else {
