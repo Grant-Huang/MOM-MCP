@@ -337,3 +337,19 @@ spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
 tests = { playwright = "P7-UI sheet and harness exception flows share the scenario console" }
+
+[[case]]
+id = "P8-01"
+phase = "P8"
+spec = "acceptance/P8.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p8_01_partial_reporting_reversal_and_dependencies" }
+
+[[case]]
+id = "P8-UI"
+phase = "P8"
+spec = "acceptance/P8.md"
+features = ["F09", "F10", "F11", "F15"]
+layers = ["playwright"]
+tests = { playwright = "P8-UI CNC partial reporting and reversal" }

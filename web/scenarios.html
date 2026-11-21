@@ -54,6 +54,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 <section>
 <h2>调用与复查</h2>
 <details><summary>CNC 泵体生产示例</summary><p>打开「汽车零部件 CNC · 泵体生产」。搜索全部工具，按下达、派工、领料、开工、报工推进机加工，再派工、开工和报工装配，最后派工、终检并关单。使用 WO-1、LOT-1，写操作提供不同的幂等键。关单后可按批次或序列号追溯。</p></details>
+<p>部分报工可在 report_operation 参数中填写 quantity。工序达标后才推进。查询实绩后可用 reverse_report 冲销尚无下游依赖的最新报工。</p>
 <details><summary>SMT 召回与返工示例</summary><p>打开「电子装联 SMT · 贴装与召回」。下达 WO-A，给 F1 上料 REEL-R，贴装 P-A，进行 AOI 并分板。推进并读取供应商召回事件，按事件游标隔离。使用 REEL-C 为 A-01 返工，复检后放行，并按单板或料卷追溯。</p></details>
 <details><summary>按单装配终测与交付示例</summary><p>打开「工业设备按单装配 · 缺料与返修」。检查 WO-E 齐套，选用 DRIVE-ALT，在 CELL-A 派工和装配。占用 TEST-1 后推进时钟，收集终测结果。失败后返修并重新排队，复测合格后按 UNIT-E-01 查交付和实装记录。</p></details>
 <details><summary>钣金余料和线束复测示例</summary><p>钣金使用 REM-OK 套料，设备停机时可选 LASER-B。完工后按 LOT-AL-2 核对面积与余料。线束将 TERM-ALT 压接到 WIRE-01，推进并读取抽检事件，隔离后使用 TERM-STD 返工，复测合格才能放行。</p></details>

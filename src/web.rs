@@ -104,6 +104,7 @@ async fn forward(bridge: Bridge, request: Call, scenarios: bool) -> Reply {
 async fn document(Path(path): Path<String>) -> impl IntoResponse {
     let text = match path.as_str() {
         "MES_SCOPE.md" => include_str!("../docs/MES_SCOPE.md"),
+        "MES_EXPANSION_PLAN.md" => include_str!("../docs/MES_EXPANSION_PLAN.md"),
         "RELEASE.md" => include_str!("../docs/RELEASE.md"),
         "DESIGN.md" => include_str!("../docs/DESIGN.md"),
         "FEATURES.md" => include_str!("../docs/FEATURES.md"),
@@ -118,6 +119,7 @@ async fn document(Path(path): Path<String>) -> impl IntoResponse {
         "acceptance/P4.md" => include_str!("../docs/acceptance/P4.md"),
         "acceptance/P5.md" => include_str!("../docs/acceptance/P5.md"),
         "acceptance/P6.md" => include_str!("../docs/acceptance/P6.md"),
+        "acceptance/P8.md" => include_str!("../docs/acceptance/P8.md"),
         "acceptance/P7.md" => include_str!("../docs/acceptance/P7.md"),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };

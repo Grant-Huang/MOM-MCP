@@ -2300,3 +2300,49 @@ async fn p7_04_five_industry_catalog_and_replay() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn p8_01_partial_reporting_reversal_and_dependencies() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT,async {
+        let run=cnc(&client).await;
+        ready_for_report(&client,&run,"WO-1").await;
+        let request=json!({"operation":"machining","quantity":4});
+        let first=mes(&client,&run,"report_operation","WO-1","first",request.clone()).await;
+        assert_eq!(first["remaining"],6);
+        assert_eq!(first["report"]["serial_numbers"],json!(["WO-1-01","WO-1-02","WO-1-03","WO-1-04"]));
+        assert_eq!(mes_status(&client,&run).await["state"]["phase"],"running");
+        assert_eq!(mes(&client,&run,"report_operation","WO-1","first",request).await,first);
+        let before=mes_status(&client,&run).await;
+        assert_eq!(before["on_hand"],6);
+        let out_of_sequence=mes(&client,&run,"dispatch_operation","WO-1","skip",json!({"operation":"assembly"})).await;
+        assert_eq!(out_of_sequence["code"],"OPERATION_OUT_OF_SEQUENCE");
+        let too_many=mes(&client,&run,"report_operation","WO-1","too-many",json!({"operation":"machining","quantity":7})).await;
+        assert_eq!(too_many,json!({"ok":false,"code":"REPORT_EXCEEDS_REMAINING","remaining":6}));
+        assert_eq!(mes_status(&client,&run).await,before);
+
+        let second=mes(&client,&run,"report_operation","WO-1","second",json!({"operation":"machining","quantity":2})).await;
+        assert_eq!(second["reported_quantity"],6);
+        let blocked=mes(&client,&run,"reverse_report","WO-1","old",json!({"report_id":first["report"]["id"],"reason":"correction"})).await;
+        assert_eq!(blocked["code"],"REPORT_HAS_DEPENDENCIES");
+        let reverse_args=json!({"report_id":second["report"]["id"],"reason":"entry error"});
+        let reversed=mes(&client,&run,"reverse_report","WO-1","reverse-second",reverse_args.clone()).await;
+        assert_eq!(reversed["state"]["units"].as_array().unwrap().len(),4);
+        assert_eq!(mes(&client,&run,"reverse_report","WO-1","reverse-second",reverse_args).await,reversed);
+        assert_eq!(mes_status(&client,&run).await["on_hand"],6);
+        assert_eq!(business(&client,&run,"trace",json!({"subject":"WO-1-05"})).await["links"],json!([]));
+
+        let completed=mes(&client,&run,"report_operation","WO-1","remaining",json!({"operation":"machining"})).await;
+        assert_eq!(completed["remaining"],0);
+        assert_eq!(completed["report"]["serial_numbers"][0],"WO-1-07");
+        let state=mes_status(&client,&run).await;
+        assert_eq!(state["state"]["phase"],"ready");
+        assert_eq!(state["on_hand"],0);
+        assert_eq!(state["ledger"].as_array().unwrap().iter().map(|entry|entry["delta"].as_i64().unwrap()).sum::<i64>(),-10);
+        assert_eq!(state["reports"][1]["reversed"],true);
+        assert_eq!(business(&client,&run,"trace",json!({"subject":"LOT-1"})).await["links"][0]["serial_numbers"].as_array().unwrap().len(),10);
+        assert_eq!(mes(&client,&run,"dispatch_operation","WO-1","assembly-dispatch",json!({"operation":"assembly"})).await["ok"],true);
+        assert_eq!(call(&client,"close_run",json!({"run_id":run})).await["closed"],true);
+    }).await.unwrap();
+}
