@@ -292,6 +292,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-production.json"),
             include_str!("../fixtures/assembly-public-orders.json"),
             include_str!("../fixtures/assembly-shortage.json"),
+            include_str!("../fixtures/assembly-release-readiness.json"),
+            include_str!("../fixtures/assembly-shortage-readiness.json"),
             include_str!("../fixtures/sheet-metal.json"),
             include_str!("../fixtures/wire-harness.json"),
         ] {
@@ -569,6 +571,17 @@ impl Scenarios {
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if action == Action::GetReleaseReadiness {
+            if let Some(setup) = &definition.assembly {
+                return Ok(Ok(crate::assembly::release_readiness(
+                    &tx,
+                    run,
+                    setup,
+                    parameters["work_order"].as_str().unwrap(),
+                    cursor,
+                )?));
+            }
         }
         if crate::fabrication::tools().any(|tool| tool.0 == action) {
             let Some(setup) = definition

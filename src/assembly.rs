@@ -361,6 +361,45 @@ pub fn status(
         .map(|order| json!({"ok":true,"run_id":run,"work_order":id,"status":order.phase})))
 }
 
+pub fn release_readiness(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    id: &str,
+    cursor: i64,
+) -> anyhow::Result<Value> {
+    let state = load(tx, run, setup)?;
+    let Some(order) = state.orders.get(id) else {
+        return Ok(failure("WORK_ORDER_NOT_FOUND"));
+    };
+    let cells: Vec<_> = setup
+        .cells
+        .iter()
+        .filter(|(_, configurations)| configurations.contains(&setup.orders[id].configuration))
+        .map(|(cell, _)| cell)
+        .collect();
+    let shortages = missing(&required(setup, order), &state.stock);
+    let result = dispatch_blocker(order, !cells.is_empty(), &shortages);
+    Ok(json!({"ok":true,"work_order":id,"ready":result.is_none(),
+        "blocking":result,"cursor":cursor,"eligible_cells":cells,"missing":shortages}))
+}
+
+fn dispatch_blocker(
+    order: &Order,
+    capable: bool,
+    shortages: &BTreeMap<String, usize>,
+) -> Option<&'static str> {
+    if order.phase != Phase::Planned {
+        Some("INVALID_STATE")
+    } else if !capable {
+        Some("CELL_NOT_CAPABLE")
+    } else if !shortages.is_empty() {
+        Some("MATERIAL_SHORTAGE")
+    } else {
+        None
+    }
+}
+
 pub fn invoke(
     tx: &Transaction<'_>,
     run: &str,
@@ -486,16 +525,18 @@ fn apply(
             order.substitute = Some(part.into());
             return json!({"ok":true,"part":part,"qualification":qualification});
         }
-        Action::AssemblyDispatch if order.phase == Phase::Planned => {
+        Action::AssemblyDispatch => {
             let cell = args["cell"].as_str().unwrap();
-            if !setup.cells.get(cell).is_some_and(|configurations| {
+            let capable = setup.cells.get(cell).is_some_and(|configurations| {
                 configurations.contains(&setup.orders[id].configuration)
-            }) {
-                return failure("CELL_NOT_CAPABLE");
-            }
+            });
             let shortages = missing(&required(setup, order), &state.stock);
-            if !shortages.is_empty() {
-                return json!({"ok":false,"code":"MATERIAL_SHORTAGE","missing":shortages});
+            if let Some(code) = dispatch_blocker(order, capable, &shortages) {
+                return if code == "MATERIAL_SHORTAGE" {
+                    json!({"ok":false,"code":code,"missing":shortages})
+                } else {
+                    failure(code)
+                };
             }
             order.cell = Some(cell.into());
             order.phase = Phase::Dispatched;

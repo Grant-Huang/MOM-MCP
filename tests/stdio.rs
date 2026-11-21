@@ -2494,3 +2494,86 @@ async fn p8b_01_public_order_reads() {
         assert_eq!(contracts[0], contracts[1]);
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8b_02_assembly_release_readiness() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let mut contracts = Vec::new();
+        for (scenario, version) in [("cnc", 3), ("assembly", 4), ("assembly-shortage", 2)] {
+            let opened = call(
+                &client,
+                "open_scenario",
+                json!({"scenario_id":scenario,"version":version}),
+            )
+            .await;
+            assert_eq!(opened["ok"], true, "{opened}");
+            let run = &opened["run_id"];
+            contracts.push(
+                call(
+                    &client,
+                    "describe_tool",
+                    json!({"run_id":run,"name":"get_release_readiness"}),
+                )
+                .await,
+            );
+            if scenario == "cnc" {
+                continue;
+            }
+            let invoke = |name: &str, arguments| {
+                call(
+                    &client,
+                    "call_tool",
+                    json!({"run_id":run,"name":name,"arguments":arguments}),
+                )
+            };
+            let readiness = || invoke("get_release_readiness", json!({"work_order":"WO-E"}));
+            let before = readiness().await;
+            assert_eq!(before["eligible_cells"], json!(["CELL-A"]));
+            assert_eq!(readiness().await, before);
+            if scenario == "assembly-shortage" {
+                let rejected = invoke(
+                    "assembly_dispatch",
+                    json!({"work_order":"WO-E","cell":"CELL-A","idempotency_key":"shortage"}),
+                )
+                .await;
+                assert_eq!(before["ready"], false);
+                assert_eq!(before["blocking"], "MATERIAL_SHORTAGE");
+                assert_eq!(before["blocking"], rejected["code"]);
+                assert_eq!(before["missing"], rejected["missing"]);
+                assert_eq!(readiness().await, before);
+                let replaced = invoke(
+                    "assembly_substitute",
+                    json!({"work_order":"WO-E","part":"DRIVE-ALT","idempotency_key":"substitute"}),
+                )
+                .await;
+                assert_eq!(replaced["ok"], true, "{replaced}");
+            }
+            let ready = readiness().await;
+            assert_eq!(ready["ready"], true);
+            let rejected = invoke(
+                "assembly_dispatch",
+                json!({"work_order":"WO-E","cell":"CELL-B","idempotency_key":"wrong-cell"}),
+            )
+            .await;
+            assert_eq!(rejected["code"], "CELL_NOT_CAPABLE");
+            assert_eq!(readiness().await, ready);
+            let dispatched = invoke(
+                "assembly_dispatch",
+                json!({"work_order":"WO-E","cell":"CELL-A","idempotency_key":"dispatch"}),
+            )
+            .await;
+            assert_eq!(dispatched["ok"], true, "{dispatched}");
+            let after = readiness().await;
+            assert_eq!(after["blocking"], "INVALID_STATE");
+            assert_eq!(after["cursor"], dispatched["cursor"]);
+            assert_eq!(after["cursor"], ready["cursor"].as_i64().unwrap() + 1);
+        }
+        assert_eq!(contracts[0]["ok"], true);
+        assert_eq!(contracts[0], contracts[1]);
+        assert_eq!(contracts[0], contracts[2]);
+    })
+    .await
+    .unwrap();
+}

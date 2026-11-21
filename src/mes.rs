@@ -147,6 +147,29 @@ pub fn spec(action: Action) -> Spec {
             json!({"type":"integer","minimum":0,"maximum":i64::MAX}),
         );
     }
+    if action == Action::GetReleaseReadiness {
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: "read",
+            input: object(required, Value::Object(fields)),
+            output: json!({"oneOf":[
+                object(&["ok","work_order","ready","blocking","cursor"], json!({
+                    "ok":{"const":true},"work_order":text(),"ready":{"type":"boolean"},
+                    "blocking":{"enum":[null,"INVALID_STATE","MATERIAL_SHORTAGE","MATERIAL_HELD","CELL_NOT_CAPABLE"]},
+                    "cursor":{"type":"integer","minimum":0},"route_version":text(),
+                    "eligible_cells":{"type":"array","items":text()},
+                    "missing":{"type":"object","additionalProperties":{"type":"integer","minimum":1}}
+                })),
+                object(&["ok","code"],json!({"ok":{"const":false},"code":text(),"field":text()}))
+            ]}),
+            preconditions: &["run_open", "tool_enabled_in_scenario"],
+            side_effect: "none",
+            errors: &["INVALID_ARGUMENT", "WORK_ORDER_NOT_FOUND"],
+            visibility: "run",
+        };
+    }
     Spec {
         name,
         description,
