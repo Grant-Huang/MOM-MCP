@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parse } from "smol-toml";
 
 const args = process.argv.slice(2);
@@ -59,8 +59,15 @@ function run(command, commandArgs, env = process.env) {
 }
 
 if (!cargo.length || !browser.length) throw new Error("No integration or browser test selected");
+const resultsDir = resolve("test-results");
+mkdirSync(resultsDir, { recursive: true });
+for (const file of ["industry-replay.json", "restart-recovery.json", "agentnexus-industries.json"]) {
+  rmSync(join(resultsDir,file), { force: true });
+}
 for (const [id, test] of cargo) {
-  const stdout = run("cargo", ["test", "--locked", "--test", "stdio", test, "--", "--exact"]);
+  const stdout = run("cargo", ["test", "--locked", "--test", "stdio", test, "--", "--exact"], {
+    ...process.env, MOM_ACCEPTANCE_RESULTS: resultsDir,
+  });
   if (!stdout.includes(`test ${test} ... ok`)) throw new Error(`Missing successful test for ${id}`);
 }
 const directory = mkdtempSync(join(tmpdir(), "mom-acceptance-"));
@@ -88,7 +95,9 @@ try {
   rmSync(directory, { recursive: true, force: true });
 }
 if (upstream.length) {
-  const stdout = run("bash", ["scripts/check-agentnexus.sh", process.env.MOM_AGENTNEXUS]);
+  const stdout = run("bash", ["scripts/check-agentnexus.sh", process.env.MOM_AGENTNEXUS], {
+    ...process.env, MOM_ACCEPTANCE_PHASE: phase,
+  });
   for (const [id, test] of upstream) {
     if (!stdout.includes(`test ${test} ... ok`)) throw new Error(`Missing successful upstream evidence for ${id}`);
   }

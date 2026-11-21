@@ -1760,3 +1760,237 @@ async fn p5_03_shared_bench_failure_repair_and_retest() {
     .await
     .unwrap();
 }
+
+fn p6_evidence(name: &str, evidence: Value) {
+    if let Some(directory) = std::env::var_os("MOM_ACCEPTANCE_RESULTS") {
+        let path = std::path::PathBuf::from(directory).join(name);
+        std::fs::write(path, serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn p6_01_cross_industry_catalog_and_isolation() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let cnc = cnc(&client).await;
+        let smt = smt(&client).await;
+        let assembly = open_assembly(&client, true).await;
+        for (run, own, foreign) in [
+            (&cnc, "mes_status", "smt_status"),
+            (&smt, "smt_status", "assembly_kit"),
+            (&assembly, "assembly_kit", "mes_status"),
+        ] {
+            let found = call(&client, "search_tools", json!({"run_id":run})).await;
+            let tools = found["tools"].as_array().unwrap();
+            assert!(tools.iter().any(|tool| tool["name"] == own));
+            assert!(!tools.iter().any(|tool| tool["name"] == foreign));
+            assert_eq!(
+                business(&client, run, foreign, json!({})).await["code"],
+                "TOOL_UNAVAILABLE"
+            );
+        }
+        assert_eq!(
+            business(
+                &client,
+                &cnc,
+                "hold_material",
+                json!({"batch":"LOT-1","reason":"test","idempotency_key":"cross"})
+            )
+            .await["held"],
+            true
+        );
+        assert_eq!(
+            smt_action(
+                &client,
+                &smt,
+                "smt_release",
+                "cross",
+                json!({"work_order":"WO-A"})
+            )
+            .await["ok"],
+            true
+        );
+        assert_eq!(
+            assembly_action(
+                &client,
+                &assembly,
+                "assembly_priority",
+                "WO-E",
+                "cross",
+                json!({"priority":4})
+            )
+            .await["ok"],
+            true
+        );
+        for run in [&cnc, &smt, &assembly] {
+            let view = call(&client, "get_run", json!({"run_id":run})).await;
+            assert_eq!(view["cursor"], 1);
+            assert_eq!(view["clock"], 0);
+            assert_eq!(
+                call(&client, "close_run", json!({"run_id":run})).await["closed"],
+                true
+            );
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p6_02_multi_seed_business_invariants() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT,async {
+        let mut report=Vec::new();
+        for (scenario,version) in [("cnc",2),("smt",2),("assembly-shortage",1)] {
+            let mut traces=Vec::new();
+            for seed in [42,42,17] {
+                let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version,"seed":seed})).await;
+                assert_eq!(opened["ok"],true);
+                let run=&opened["run_id"];
+                let evidence=match scenario {
+                    "cnc" => {
+                        inspect_cnc(&client,run,"fail").await;
+                        advance(&client,run,10).await;
+                        assert_eq!(mes(&client,run,"close_order","WO-1","blocked",json!({})).await["code"],"QUALITY_HOLD");
+                        assert_eq!(mes(&client,run,"disposition","WO-1","retest",json!({"result":"pass","reason":"reviewed"})).await["ok"],true);
+                        assert_eq!(mes(&client,run,"close_order","WO-1","close",json!({})).await["ok"],true);
+                        let status=mes_status(&client,run).await;
+                        assert_eq!(status["on_hand"],0);
+                        status["state"].clone()
+                    }
+                    "smt" => {
+                        smt_population(&client,run).await;
+                        let event=smt_recall(&client,run).await;
+                        let isolation=smt_action(&client,run,"smt_isolate","isolate",json!({"event_cursor":event["cursor"]})).await;
+                        assert_eq!(isolation["affected"],json!(["A-01","A-02","B-01","B-02"]));
+                        assert_eq!(smt_action(&client,run,"smt_scrap","scrap",json!({"serial":"A-01","reason":"hold"})).await["ok"],true);
+                        assert_eq!(smt_action(&client,run,"smt_finish","clean",json!({"serial":"C-01"})).await["finished"],true);
+                        isolation["affected"].clone()
+                    }
+                    _ => {
+                        assert_eq!(assembly_action(&client,run,"assembly_substitute","WO-E","sub",json!({"part":"DRIVE-ALT"})).await["ok"],true);
+                        build_assembly(&client,run,"WO-E","CELL-A").await;
+                        for (prefix,expected) in [("first","fail"),("retry","pass")] {
+                            assert_eq!(assembly_action(&client,run,"assembly_start_test","WO-E",&format!("{prefix}-start"),json!({})).await["ok"],true);
+                            advance(&client,run,10).await;
+                            let finish=assembly_action(&client,run,"assembly_finish_test","WO-E",&format!("{prefix}-finish"),json!({})).await;
+                            let attempts=finish["state"]["tests"].as_array().unwrap();
+                            assert_eq!(attempts.last().unwrap()["result"],expected);
+                            if expected=="fail" {
+                                assert_eq!(assembly_action(&client,run,"assembly_repair","WO-E","repair",json!({"reason":"re-seat connector"})).await["ok"],true);
+                            }
+                        }
+                        let delivered=assembly_action(&client,run,"assembly_deliver","WO-E","deliver",json!({})).await;
+                        assert_eq!(delivered["state"]["phase"],"delivered");
+                        delivered["state"]["installed"].clone()
+                    }
+                };
+                let events=delivered(&client,run).await;
+                let inspection=call(&client,"inspect_run",json!({"run_id":run})).await;
+                assert_eq!(inspection["replay_verified"],true);
+                assert!(events["events"].as_array().unwrap().iter().all(|e| e["payload"].get("root_cause").is_none()));
+                assert_eq!(call(&client,"close_run",json!({"run_id":run})).await["closed"],true);
+                traces.push(json!({"seed":seed,"events":events,"business":evidence}));
+            }
+            assert_eq!(traces[0],traces[1]);
+            assert_ne!(traces[0]["events"],traces[2]["events"],"{scenario}");
+            assert_eq!(traces[0]["business"],traces[2]["business"]);
+            report.push(json!({"scenario":scenario,"version":version,"variants":traces}));
+        }
+        p6_evidence("industry-replay.json",json!(report));
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn p6_03_restart_budget_and_run_lifecycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (controller, mut child) = connect_options(&db, "0", true, true).await;
+    timeout(WAIT, async {
+        let run = open_assembly(&controller, true).await;
+        let independent = cnc(&controller).await;
+        build_assembly(&controller, &run, "WO-E", "CELL-A").await;
+        let test = assembly_action(
+            &controller,
+            &run,
+            "assembly_start_test",
+            "WO-E",
+            "durable",
+            json!({}),
+        )
+        .await;
+        assert_eq!(test["state"]["phase"], "testing");
+        assert_eq!(
+            call(
+                &controller,
+                "advance_run",
+                json!({"run_id":run,"max_events":101})
+            )
+            .await,
+            json!({"ok":false,"code":"INVALID_ARGUMENT","field":"max_events"})
+        );
+        child.kill().await.unwrap();
+        drop(controller);
+
+        let (agent, _a) = connect_mode(&db, "0", true).await;
+        let (restored, _b) = connect_options(&db, "0", true, true).await;
+        assert_eq!(
+            call(&agent, "advance_run", json!({"run_id":run})).await["code"],
+            "UNKNOWN_TOOL"
+        );
+        assert_eq!(
+            assembly_action(
+                &agent,
+                &run,
+                "assembly_start_test",
+                "WO-E",
+                "durable",
+                json!({})
+            )
+            .await,
+            test
+        );
+        let (step, read) = tokio::join!(
+            advance(&restored, &run, 1),
+            call(&agent, "get_run", json!({"run_id":run}))
+        );
+        assert_eq!(read["ok"], true);
+        assert_eq!(step["event_cursor"], 1);
+        let events = delivered(&agent, &run).await;
+        assert_eq!(events["events"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            assembly_action(
+                &agent,
+                &run,
+                "assembly_finish_test",
+                "WO-E",
+                "finish",
+                json!({})
+            )
+            .await["state"]["tests"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            call(&agent, "close_run", json!({"run_id":run})).await["closed"],
+            true
+        );
+        let still_open = call(&agent, "get_run", json!({"run_id":independent})).await;
+        assert_eq!(still_open["closed"], false);
+        assert_eq!(still_open["event_cursor"], 0);
+        assert_eq!(
+            call(&agent, "close_run", json!({"run_id":independent})).await["closed"],
+            true
+        );
+        p6_evidence(
+            "restart-recovery.json",
+            json!({"before_restart":test,"after_restart":events,"independent":still_open}),
+        );
+    })
+    .await
+    .unwrap();
+}

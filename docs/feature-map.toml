@@ -264,6 +264,7 @@ phase = "P6"
 spec = "acceptance/P6.md"
 features = ["F01", "F02", "F04", "F13"]
 layers = ["rust-integration", "agentnexus"]
+tests = { rust-integration = "p6_01_cross_industry_catalog_and_isolation", agentnexus = "p6_agentnexus_three_industries" }
 
 [[case]]
 id = "P6-02"
@@ -271,6 +272,7 @@ phase = "P6"
 spec = "acceptance/P6.md"
 features = ["F12", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p6_02_multi_seed_business_invariants" }
 
 [[case]]
 id = "P6-03"
@@ -278,6 +280,7 @@ phase = "P6"
 spec = "acceptance/P6.md"
 features = ["F10", "F15"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p6_03_restart_budget_and_run_lifecycle" }
 
 [[case]]
 id = "P6-04"
@@ -285,6 +288,7 @@ phase = "P6"
 spec = "acceptance/P6.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P6-04 keyboard navigation on desktop and mobile" }
 
 [[case]]
 id = "P6-UI"
@@ -292,6 +296,7 @@ phase = "P6"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P6-UI three production scenarios share one browser session" }
 
 [[case]]
 id = "P7-01"

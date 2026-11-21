@@ -103,6 +103,7 @@ async fn forward(bridge: Bridge, request: Call, scenarios: bool) -> Reply {
 
 async fn document(Path(path): Path<String>) -> impl IntoResponse {
     let text = match path.as_str() {
+        "RELEASE.md" => include_str!("../docs/RELEASE.md"),
         "DESIGN.md" => include_str!("../docs/DESIGN.md"),
         "FEATURES.md" => include_str!("../docs/FEATURES.md"),
         "IMPLEMENTATION_PLAN.md" => include_str!("../docs/IMPLEMENTATION_PLAN.md"),
@@ -180,6 +181,15 @@ pub async fn serve(db: PathBuf, port: u16, control_tools: bool) -> anyhow::Resul
         .route(
             "/api/control-enabled",
             get(|State(bridge): State<Bridge>| async move { Json(bridge.control_tools) }),
+        )
+        .route(
+            "/config/agentnexus.p1.toml",
+            get(|| async {
+                (
+                    [("content-type", "text/plain; charset=utf-8")],
+                    include_str!("../config/agentnexus.p1.toml"),
+                )
+            }),
         )
         .route("/api/tools", get(list))
         .route("/api/call", post(call))
