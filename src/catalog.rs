@@ -35,6 +35,16 @@ pub enum Action {
     SmtRework,
     SmtRetest,
     SmtScrap,
+    AssemblyKit,
+    AssemblySubstitute,
+    AssemblyDispatch,
+    AssemblyBuild,
+    AssemblyPriority,
+    AssemblyStartTest,
+    AssemblyFinishTest,
+    AssemblyRepair,
+    AssemblyDeliver,
+    AssemblyTrace,
 }
 
 pub struct Gateway {
@@ -76,6 +86,7 @@ impl Action {
                 crate::mes::TOOLS
                     .iter()
                     .chain(crate::smt::TOOLS)
+                    .chain(crate::assembly::TOOLS)
                     .find(|tool| tool.1 == name)
                     .map(|tool| tool.0)
             })
@@ -90,6 +101,7 @@ impl Action {
                 crate::mes::TOOLS
                     .iter()
                     .chain(crate::smt::TOOLS)
+                    .chain(crate::assembly::TOOLS)
                     .find(|tool| tool.0 == self)
                     .unwrap()
                     .1
@@ -152,6 +164,9 @@ impl Action {
             ),
             _ if crate::smt::TOOLS.iter().any(|tool| tool.0 == self) => {
                 return crate::smt::spec(self);
+            }
+            _ if crate::assembly::TOOLS.iter().any(|tool| tool.0 == self) => {
+                return crate::assembly::spec(self);
             }
             _ => return crate::mes::spec(self),
         };

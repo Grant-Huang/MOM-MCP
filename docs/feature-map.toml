@@ -232,6 +232,7 @@ phase = "P5"
 spec = "acceptance/P5.md"
 features = ["F08", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p5_01_assembly_kit_build_test_and_delivery" }
 
 [[case]]
 id = "P5-02"
@@ -239,6 +240,7 @@ phase = "P5"
 spec = "acceptance/P5.md"
 features = ["F09", "F11"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p5_02_shortage_qualified_substitution_and_priority" }
 
 [[case]]
 id = "P5-03"
@@ -246,6 +248,7 @@ phase = "P5"
 spec = "acceptance/P5.md"
 features = ["F09", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p5_03_shared_bench_failure_repair_and_retest" }
 
 [[case]]
 id = "P5-UI"
@@ -253,6 +256,7 @@ phase = "P5"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P5-UI assembly substitution test repair retest and delivery" }
 
 [[case]]
 id = "P6-01"

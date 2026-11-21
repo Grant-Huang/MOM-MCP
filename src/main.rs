@@ -1,3 +1,4 @@
+mod assembly;
 mod catalog;
 mod mes;
 mod probe;

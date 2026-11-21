@@ -690,6 +690,7 @@ dependencies = [
  "axum",
  "clap",
  "mom-des",
+ "mom-model-assembly",
  "mom-model-cnc",
  "mom-model-fixture",
  "mom-model-smt",
@@ -699,6 +700,15 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "mom-model-assembly"
+version = "0.1.0"
+dependencies = [
+ "mom-des",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

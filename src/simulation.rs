@@ -16,6 +16,10 @@ pub fn load_model(
             mom_model_smt::Smt::load(Value::Object(parameters.clone()))
                 .map(|model| Box::new(model) as Box<dyn Model>)
         }
+        mom_model_assembly::ID if version == mom_model_assembly::VERSION => {
+            mom_model_assembly::Assembly::load(Value::Object(parameters.clone()))
+                .map(|model| Box::new(model) as Box<dyn Model>)
+        }
         id if mom_model_fixture::IDS.contains(&id) && version == mom_model_fixture::VERSION => {
             if !parameters.is_empty() {
                 return Err("fixture does not accept model parameters".into());

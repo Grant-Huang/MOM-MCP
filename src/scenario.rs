@@ -24,6 +24,8 @@ pub struct Definition {
     manufacturing: Option<crate::mes::Setup>,
     #[serde(default)]
     smt: Option<crate::smt::Setup>,
+    #[serde(default)]
+    assembly: Option<crate::assembly::Setup>,
     #[serde(default = "model_version")]
     model_version: u32,
     #[serde(default)]
@@ -189,6 +191,21 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                 .any(|action| crate::smt::TOOLS.iter().any(|tool| tool.0 == *action)),
         "SMT capabilities require smt setup"
     );
+    if let Some(setup) = &definition.assembly {
+        setup.validate(
+            &definition.work_orders,
+            &definition.model,
+            &definition.model_parameters,
+        )?;
+    }
+    anyhow::ensure!(
+        definition.assembly.is_some()
+            || !definition
+                .capabilities
+                .iter()
+                .any(|action| crate::assembly::TOOLS.iter().any(|tool| tool.0 == *action)),
+        "assembly capabilities require assembly setup"
+    );
     Ok(definition)
 }
 
@@ -209,6 +226,7 @@ impl Scenarios {
                  run TEXT NOT NULL, batch TEXT NOT NULL, reason TEXT NOT NULL,
                  PRIMARY KEY (run, batch)
              );
+             CREATE TABLE IF NOT EXISTS assembly_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS smt_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS mes_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS des_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
@@ -225,6 +243,8 @@ impl Scenarios {
             include_str!("../fixtures/smt.json"),
             include_str!("../fixtures/smt-production.json"),
             include_str!("../fixtures/assembly.json"),
+            include_str!("../fixtures/assembly-production.json"),
+            include_str!("../fixtures/assembly-shortage.json"),
         ] {
             let definition = parse_definition(source)?;
             conn.execute(
@@ -437,6 +457,10 @@ impl Scenarios {
                     action: args["action"].as_str().expect("validated action").into(),
                 }
             };
+            if matches!(&command, Command::Intervene { action } if action.starts_with("assembly_test:"))
+            {
+                return Ok(Err(reject("INTERVENTION_UNSUPPORTED", "action")));
+            }
             let stop = match state.execute(command, &definition.event_rules, model.as_ref()) {
                 Ok(stop) => stop,
                 Err(code) => {
@@ -466,6 +490,9 @@ impl Scenarios {
                     &state.timeline.events,
                 )?;
             }
+            if let Some(setup) = &definition.assembly {
+                crate::assembly::project_receipt(&tx, run, setup, &state.timeline.events)?;
+            }
             tx.commit()?;
             return Ok(Ok(response));
         }
@@ -488,6 +515,39 @@ impl Scenarios {
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if crate::assembly::TOOLS.iter().any(|tool| tool.0 == action) {
+            let Some(setup) = &definition.assembly else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            let model = simulation::load_model(
+                &definition.model,
+                definition.model_version,
+                &definition.model_parameters,
+            )
+            .map_err(|reason| anyhow::anyhow!("{reason}"))?;
+            let mut simulation = stored.unwrap_or_else(|| {
+                Simulation::new(
+                    seed.parse().expect("stored seed"),
+                    &definition.event_rules,
+                    model.as_ref(),
+                )
+            });
+            let (response, changed) = crate::assembly::invoke(
+                &tx,
+                run,
+                setup,
+                action,
+                parameters,
+                cursor,
+                &mut simulation,
+                &definition.event_rules,
+                model.as_ref(),
+            )?;
+            if changed {
+                tx.commit()?;
+            }
+            return Ok(Ok(response));
         }
         if crate::smt::TOOLS.iter().any(|tool| tool.0 == action) {
             let Some(setup) = &definition.smt else {
@@ -523,6 +583,10 @@ impl Scenarios {
         }
         if action == Action::GetWorkOrder {
             let order = parameters["work_order"].as_str().unwrap();
+            if let Some(setup) = &definition.assembly {
+                return Ok(crate::assembly::status(&tx, run, setup, order)?
+                    .ok_or_else(|| reject("WORK_ORDER_NOT_FOUND", "work_order")));
+            }
             if let Some(setup) = &definition.smt {
                 if !definition.work_orders.iter().any(|id| id == order) {
                     return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
