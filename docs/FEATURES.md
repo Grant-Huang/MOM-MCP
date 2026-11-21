@@ -20,6 +20,6 @@ MOM-MCP 是供 AgentNexus 的 Agent 调用的离散制造 mock MCP 服务。项�
 | F12 | 重放与评测隔离 | 同场景、模型版本、种子和相同控制与动作序列可重放。Agent 看不到未来事件、根因标签与评测断言 | P0、P2–P6 |
 | F13 | 三行业完整场景 | 汽车零部件 CNC、电子装联 SMT、工业设备装配均通过端到端验收，且可在同一连接切换 | P3–P6 |
 | F14 | 行业扩展 | 使用相同契约扩展钣金和线束场景，分别验证套料余料谱系和替代件与测试返工 | P7 |
-| F15 | 运行与维护 | 具备资源预算、运行生命周期、诊断和版本兼容测试，介绍页支持查看场景与调用示例 | P2–P6 |
+| F15 | 运行、前端验收与维护 | P0 起可启动验收台，每个里程碑的已开放流程均可用。feature map 驱动 Playwright 和集成回归，记录 mock 或正式实现证据。具备资源预算、生命周期、诊断和版本兼容测试 | P0–P7 |
 
-相关文档见 [架构设计](DESIGN.md) 与 [实施计划](IMPLEMENTATION_PLAN.md)。
+相关文档见 [架构设计](DESIGN.md) 与 [实施计划](IMPLEMENTATION_PLAN.md)、[验收与替换计划](TEST_AND_MOCK_PLAN.md) 及 [feature map](feature-map.toml)。

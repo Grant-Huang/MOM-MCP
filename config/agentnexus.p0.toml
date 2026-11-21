@@ -2,8 +2,8 @@
 [[mcp.servers]]
 id = "mom_probe"
 transport = "stdio"
-command = "/path/to/MOM-MCP/.venv/bin/python"
-args = ["/path/to/MOM-MCP/mom_mcp.py", "--db", "/path/to/MOM-MCP/probe.sqlite3"]
+command = "/path/to/MOM-MCP/target/debug/mom-mcp"
+args = ["stdio", "--db", "/path/to/MOM-MCP/probe.sqlite3"]
 timeout_ms = 5000
 
 [[mcp.servers.tools]]

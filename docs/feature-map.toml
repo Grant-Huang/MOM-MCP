@@ -1,0 +1,302 @@
+schema_version = 1
+status = "planned"
+requirements = "FEATURES.md"
+
+[[case]]
+id = "P0-01"
+phase = "P0"
+spec = "acceptance/P0.md"
+features = ["F01"]
+layers = ["rust-integration", "agentnexus"]
+tests = { rust-integration = "p0_01_discovery", agentnexus = "p0_agentnexus_agent_uses_probe" }
+
+[[case]]
+id = "P0-02"
+phase = "P0"
+spec = "acceptance/P0.md"
+features = ["F01"]
+layers = ["rust-integration", "agentnexus"]
+tests = { rust-integration = "p0_02_write_and_rejections", agentnexus = "p0_agentnexus_discovery_read_and_write" }
+
+[[case]]
+id = "P0-03"
+phase = "P0"
+spec = "acceptance/P0.md"
+features = ["F01", "F10"]
+layers = ["rust-integration", "agentnexus"]
+tests = { rust-integration = "p0_03_timeout_and_restart", agentnexus = "p0_agentnexus_timeout_and_reconnect" }
+
+[[case]]
+id = "P0-04"
+phase = "P0"
+spec = "acceptance/P0.md"
+features = ["F12"]
+layers = ["des-baseline"]
+tests = { des-baseline = "p0_des_two_seed_replay" }
+
+[[case]]
+id = "P0-UI"
+phase = "P0"
+spec = "TEST_AND_MOCK_PLAN.md"
+features = ["F15"]
+layers = ["playwright"]
+tests = { playwright = "P0-UI browser discovery, write, rejection and recovery" }
+
+[[case]]
+id = "P1-01"
+phase = "P1"
+spec = "acceptance/P1.md"
+features = ["F02"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P1-02"
+phase = "P1"
+spec = "acceptance/P1.md"
+features = ["F02"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P1-03"
+phase = "P1"
+spec = "acceptance/P1.md"
+features = ["F04", "F08"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P1-04"
+phase = "P1"
+spec = "acceptance/P1.md"
+features = ["F03"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P1-UI"
+phase = "P1"
+spec = "TEST_AND_MOCK_PLAN.md"
+features = ["F15"]
+layers = ["playwright"]
+
+[[case]]
+id = "P2-01"
+phase = "P2"
+spec = "acceptance/P2.md"
+features = ["F05"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P2-02"
+phase = "P2"
+spec = "acceptance/P2.md"
+features = ["F03", "F06", "F12"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P2-03"
+phase = "P2"
+spec = "acceptance/P2.md"
+features = ["F05", "F06", "F15"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P2-04"
+phase = "P2"
+spec = "acceptance/P2.md"
+features = ["F06", "F12"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P2-05"
+phase = "P2"
+spec = "acceptance/P2.md"
+features = ["F03", "F07", "F15"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P2-06"
+phase = "P2"
+spec = "acceptance/P2.md"
+features = ["F12"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P2-UI"
+phase = "P2"
+spec = "TEST_AND_MOCK_PLAN.md"
+features = ["F15"]
+layers = ["playwright"]
+
+[[case]]
+id = "P3-01"
+phase = "P3"
+spec = "acceptance/P3.md"
+features = ["F08", "F09"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P3-02"
+phase = "P3"
+spec = "acceptance/P3.md"
+features = ["F08", "F09", "F11", "F13"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P3-03"
+phase = "P3"
+spec = "acceptance/P3.md"
+features = ["F10"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P3-04"
+phase = "P3"
+spec = "acceptance/P3.md"
+features = ["F10", "F12"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P3-05"
+phase = "P3"
+spec = "acceptance/P3.md"
+features = ["F09", "F13"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P3-06"
+phase = "P3"
+spec = "acceptance/P3.md"
+features = ["F11"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P3-UI"
+phase = "P3"
+spec = "TEST_AND_MOCK_PLAN.md"
+features = ["F15"]
+layers = ["playwright"]
+
+[[case]]
+id = "P4-01"
+phase = "P4"
+spec = "acceptance/P4.md"
+features = ["F08", "F11", "F13"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P4-02"
+phase = "P4"
+spec = "acceptance/P4.md"
+features = ["F09", "F11", "F13"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P4-03"
+phase = "P4"
+spec = "acceptance/P4.md"
+features = ["F07", "F09", "F11", "F12"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P4-UI"
+phase = "P4"
+spec = "TEST_AND_MOCK_PLAN.md"
+features = ["F15"]
+layers = ["playwright"]
+
+[[case]]
+id = "P5-01"
+phase = "P5"
+spec = "acceptance/P5.md"
+features = ["F08", "F13"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P5-02"
+phase = "P5"
+spec = "acceptance/P5.md"
+features = ["F09", "F11"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P5-03"
+phase = "P5"
+spec = "acceptance/P5.md"
+features = ["F09", "F13"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P5-UI"
+phase = "P5"
+spec = "TEST_AND_MOCK_PLAN.md"
+features = ["F15"]
+layers = ["playwright"]
+
+[[case]]
+id = "P6-01"
+phase = "P6"
+spec = "acceptance/P6.md"
+features = ["F01", "F02", "F04", "F13"]
+layers = ["rust-integration", "agentnexus"]
+
+[[case]]
+id = "P6-02"
+phase = "P6"
+spec = "acceptance/P6.md"
+features = ["F12", "F13"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P6-03"
+phase = "P6"
+spec = "acceptance/P6.md"
+features = ["F10", "F15"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P6-04"
+phase = "P6"
+spec = "acceptance/P6.md"
+features = ["F15"]
+layers = ["playwright"]
+
+[[case]]
+id = "P6-UI"
+phase = "P6"
+spec = "TEST_AND_MOCK_PLAN.md"
+features = ["F15"]
+layers = ["playwright"]
+
+[[case]]
+id = "P7-01"
+phase = "P7"
+spec = "acceptance/P7.md"
+features = ["F11", "F14"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P7-02"
+phase = "P7"
+spec = "acceptance/P7.md"
+features = ["F14"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P7-03"
+phase = "P7"
+spec = "acceptance/P7.md"
+features = ["F11", "F14"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P7-04"
+phase = "P7"
+spec = "acceptance/P7.md"
+features = ["F07", "F12", "F14"]
+layers = ["rust-integration"]
+
+[[case]]
+id = "P7-UI"
+phase = "P7"
+spec = "TEST_AND_MOCK_PLAN.md"
+features = ["F15"]
+layers = ["playwright"]

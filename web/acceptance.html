@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOM-MCP · 接入验收台</title>
+<style>
+:root { color-scheme: dark; font: 16px/1.6 system-ui, sans-serif; background: #101815; color: #edf3ef; }
+* { box-sizing: border-box; }
+main { width: min(52rem, calc(100% - 2rem)); margin: 2rem auto; }
+a { color: #bdf479; } h1, h2 { line-height: 1.2; }
+section { border: 1px solid #354741; padding: 1rem; margin: 1rem 0; background: #151f1b; }
+label { display: block; margin: 0.75rem 0; }
+input, select, button { font: inherit; padding: .4rem; max-width: 100%; }
+button { cursor: pointer; } button:focus-visible, a:focus-visible { outline: 2px solid #bdf479; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<script src="/acceptance.js" defer></script>
+</head>
+<body><main>
+<a href="/">项目介绍</a>
+<h1>接入验收台</h1>
+<p>P0 · Rust MCP 接入探针。读写使用本地 SQLite 测试库。</p>
+<section>
+<h2>发现工具</h2>
+<button type="button" id="discover">加载 MCP 工具</button>
+<label for="tools">工具</label><select id="tools" disabled><option value="">请先加载工具</option></select>
+<details><summary>工具契约</summary><pre id="schema"></pre></details>
+</section>
+<section>
+<h2>调用和复查</h2>
+<form id="call">
+<div id="write-fields" hidden>
+<label>测试值 <input id="value" type="number" step="1"></label>
+<label>幂等键 <input id="key" maxlength="128"></label>
+</div>
+<button id="submit" disabled>调用工具</button>
+</form>
+<pre role="status" id="result">等待调用</pre>
+</section>
+</main></body>
+</html>

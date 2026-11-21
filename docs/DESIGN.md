@@ -2,7 +2,7 @@
 
 ## 目标与边界
 
-AgentNexus 的 Agent 可以在多个虚拟工厂中查找工具、理解工况、执行有限的制造动作并检查结果。ISA-95 Level 3 的生产、库存、质量和维护用于校准场景范围。ERP 和设备侧通过 mock 业务事件表达。认证、财务、设备协议、APS 求解及人类操作工作台超出本项目的交付范围。项目介绍页描述能力、场景及调用示例。
+AgentNexus 的 Agent 可以在多个虚拟工厂中查找工具、理解工况、执行有限的制造动作并检查结果。ISA-95 Level 3 的生产、库存、质量和维护用于校准场景范围。ERP 和设备侧通过 mock 业务事件表达。认证、财务、设备协议、APS 求解及人类操作工作台超出本项目的交付范围。项目介绍页描述能力、场景及调用示例。独立的浏览器验收台用于开发、演示和用户测试，通过与 Agent 共用的 MCP 契约操作隔离的模拟实例。
 
 设计来源包括 Carbon 的搜索与业务命令、qcadoo 的显式状态及记录纠正、OpenMES 的工单快照、WebErpMesv2 的序列号追溯。AgentNexus 的 `an-des` 已有标签随机流、CNC 推演和重放，`an-des-mcp` 已有 stdio 入口。当前 `Pattern::Script` 固定报警时刻，适合旧场景回归。新场景的时间通过规则和随机流生成。现有 DES 基线为 `Grant-Huang/multi-agent-conv-mvp@e0a21d3`。
 
@@ -11,6 +11,12 @@ AgentNexus 的 Agent 可以在多个虚拟工厂中查找工具、理解工况�
 - [OpenMES 工单快照](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Services/WorkOrder/WorkOrderSnapshotService.php)
 - [WebErpMesv2 追溯](https://github.com/SMEWebify/WebErpMesv2/blob/8fa6c05452ce5a5e3d0bf68ef1592446c1858a54/app/Http/Controllers/ProductionTraceController.php)
 - [现有 DES 接口](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/e0a21d3/crates/des/src/lib.rs)
+
+## 技术栈
+
+MOM-MCP 运行端采用全 Rust。使用 Cargo workspace、固定工具链和 `Cargo.lock`，按需拆分 MCP 服务、制造业务与持久化、DES 内核和模型包。MCP 使用 Rust SDK `rmcp`，共享数据契约使用 Serde，业务数据持久化使用 SQLite。验收环境使用 Axum 提供静态页面与测试专用 HTTP 桥，浏览器通过该桥调用 Rust MCP。静态页面使用 HTML、CSS 和必要的浏览器脚本，Playwright 使用 Node.js 测试工具链，二者均不参与生产后端运行。
+
+P0 的维护入口为 Rust 接入探针。迁移以既有 Python 探针的发现、结构化回包和写入行为为对照，并单独验证了重连恢复。DES 在同一 Rust 依赖图内复用，通过清晰的服务接口隔离内核和模型，保持将来独立发布的能力。共享时钟由 Rust DES 服务端持有，每个 run 保持单一权威时钟。P0 以 stdio 验证 AgentNexus 接入，跨独立宿主的共享部署待有具体需求时设计。
 
 ## 调用关系
 
@@ -58,4 +64,4 @@ MOM-MCP 是 DES 的客户端，随项目交付的行业示例也用与外部客�
 
 ## 扩展与发布
 
-前期可按独立 Rust 包和传输适配边界组织。保留 AgentNexus 旧 CNC 调用的兼容入口，以同一基线做轨迹对比。至少在 CNC 与 SMT 同用新接口、且模型注册无需更新内核后，评估拆仓或发布独立版本。拆仓时固定模型与运行协议的版本矩阵，并为既有记录保留重放途径。验收与实施依赖见 [实施计划](IMPLEMENTATION_PLAN.md)。
+Rust 内核、服务与行业模型包使用独立依赖边界。保留 AgentNexus 旧 CNC 调用的兼容入口，以同一基线做轨迹对比。至少在 CNC 与 SMT 同用新接口、且模型注册无需更新内核后，评估拆仓或发布独立版本。拆仓时固定模型与运行协议的版本矩阵，并为既有记录保留重放途径。验收与实施依赖见 [实施计划](IMPLEMENTATION_PLAN.md)。
