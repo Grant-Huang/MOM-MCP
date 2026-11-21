@@ -1,5 +1,5 @@
 [workspace]
-members = ["."]
+members = [".", "crates/des", "crates/model-cnc", "crates/model-fixture"]
 resolver = "3"
 
 [package]
@@ -9,6 +9,9 @@ edition = "2024"
 rust-version = "1.100"
 
 [dependencies]
+mom-des = { path = "crates/des" }
+mom-model-cnc = { path = "crates/model-cnc" }
+mom-model-fixture = { path = "crates/model-fixture" }
 anyhow = "1"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }

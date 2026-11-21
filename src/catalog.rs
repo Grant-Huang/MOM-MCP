@@ -17,6 +17,7 @@ pub struct Gateway {
     description: &'static str,
     read_only: bool,
     pub input: Value,
+    pub control: bool,
 }
 
 #[derive(Serialize)]
@@ -153,7 +154,7 @@ pub fn search(capabilities: &[Action], args: &Map<String, Value>) -> Vec<Value> 
     results.into_iter().map(|(_, _, item)| item).collect()
 }
 
-pub const NAMES: [&str; 7] = [
+pub const NAMES: [&str; 11] = [
     "list_scenarios",
     "open_scenario",
     "get_run",
@@ -161,6 +162,10 @@ pub const NAMES: [&str; 7] = [
     "search_tools",
     "describe_tool",
     "call_tool",
+    "read_events",
+    "advance_run",
+    "intervene_run",
+    "inspect_run",
 ];
 
 pub fn gateway(name: &str) -> Option<Gateway> {
@@ -223,6 +228,44 @@ pub fn gateway(name: &str) -> Option<Gateway> {
                 }),
             ),
         ),
+        "read_events" => (
+            "read_events",
+            "Read already delivered events",
+            true,
+            object(
+                &["run_id"],
+                json!({
+                    "run_id":text(),"after":{"type":"integer","maximum":10000},"limit":{"type":"integer","minimum":1,"maximum":100}
+                }),
+            ),
+        ),
+        "advance_run" => (
+            "advance_run",
+            "Advance a trusted simulation within a work budget",
+            false,
+            object(
+                &["run_id"],
+                json!({
+                    "run_id":text(),"max_events":{"type":"integer","minimum":1,"maximum":mom_des::MAX_STEP_EVENTS},
+                    "max_minutes":{"type":"integer","minimum":1,"maximum":mom_des::MAX_STEP_MINUTES}
+                }),
+            ),
+        ),
+        "intervene_run" => (
+            "intervene_run",
+            "Schedule an intervention at the current virtual time",
+            false,
+            object(
+                &["run_id", "action"],
+                json!({"run_id":text(),"action":text()}),
+            ),
+        ),
+        "inspect_run" => (
+            "inspect_run",
+            "Inspect hidden evaluation state and replay controls",
+            true,
+            object(&["run_id"], json!({"run_id":text()})),
+        ),
         _ => return None,
     };
     Some(Gateway {
@@ -230,14 +273,15 @@ pub fn gateway(name: &str) -> Option<Gateway> {
         description,
         read_only,
         input,
+        control: matches!(name, "advance_run" | "intervene_run" | "inspect_run"),
     })
 }
 
-pub fn tools() -> Vec<Tool> {
+pub fn tools(control: bool) -> Vec<Tool> {
     NAMES
         .iter()
-        .map(|name| {
-            let spec = gateway(name).expect("known gateway");
+        .filter_map(|name| {
+            let spec = gateway(name).filter(|spec| control || !spec.control)?;
             let mut tool = Tool::new(
                 spec.name,
                 spec.description,
@@ -248,7 +292,7 @@ pub fn tools() -> Vec<Tool> {
                     .read_only(spec.read_only)
                     .destructive(false),
             );
-            tool
+            Some(tool)
         })
         .collect()
 }

@@ -18,6 +18,15 @@ async fn connect_mode(
     delay: &str,
     scenarios: bool,
 ) -> (RunningService<RoleClient, ()>, Child) {
+    connect_options(db, delay, scenarios, false).await
+}
+
+async fn connect_options(
+    db: &Path,
+    delay: &str,
+    scenarios: bool,
+    control: bool,
+) -> (RunningService<RoleClient, ()>, Child) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_mom-mcp"));
     command
         .args(["stdio", "--db"])
@@ -25,6 +34,9 @@ async fn connect_mode(
         .args(["--response-delay-ms", delay]);
     if scenarios {
         command.arg("--scenario-tools");
+    }
+    if control {
+        command.arg("--control-tools");
     }
     let mut child = command
         .stdin(Stdio::piped())
@@ -389,6 +401,272 @@ async fn p1_04_register_and_reject_malformed_definitions() {
             .await["status"],
             "planned"
         );
+    })
+    .await
+    .unwrap();
+}
+
+async fn advance(client: &RunningService<RoleClient, ()>, run: &Value, budget: u64) -> Value {
+    call(
+        client,
+        "advance_run",
+        json!({"run_id":run,"max_events":budget}),
+    )
+    .await
+}
+
+async fn delivered(client: &RunningService<RoleClient, ()>, run: &Value) -> Value {
+    call(client, "read_events", json!({"run_id":run,"limit":100})).await
+}
+
+#[tokio::test]
+async fn p2_01_shared_clock() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (controller, _a) = connect_options(&db, "0", true, true).await;
+    let (agent, _b) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        let a = open(&agent, "cnc").await;
+        let b = open(&agent, "cnc").await;
+        let args = json!({"run_id":a});
+        let before = call(&agent, "get_run", args.clone()).await;
+        assert_eq!(before, call(&agent, "get_run", args.clone()).await);
+        assert_eq!(before["clock"], 0);
+        let advanced = advance(&controller, &a, 1).await;
+        assert!(advanced["clock"].as_u64().unwrap() > 0);
+        assert_eq!(advanced["event_cursor"], 1);
+        assert_eq!(
+            call(&agent, "get_run", args.clone()).await["clock"],
+            advanced["clock"]
+        );
+        assert_eq!(call(&controller, "get_run", args).await["event_cursor"], 1);
+        assert_eq!(delivered(&agent, &b).await["clock"], 0);
+    })
+    .await
+    .unwrap();
+}
+
+fn register_definition(db: &Path, definition: Value) -> std::process::Output {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("definition.json");
+    std::fs::write(&file, definition.to_string()).unwrap();
+    std::process::Command::new(env!("CARGO_BIN_EXE_mom-mcp"))
+        .arg("register-scenario")
+        .arg("--db")
+        .arg(db)
+        .arg("--file")
+        .arg(file)
+        .output()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn p2_02_seeded_event_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let fixture = json!({"scenario_id":"replay","version":1,"title":"Replay","model":"smt",
+        "work_orders":["WO"],"materials":{},"capabilities":["get_work_order"],
+        "event_rules":[{"event":"arrival","delay":{"distribution":"exponential","mean_minutes":21}},
+            {"event":"processing","delay":{"distribution":"uniform","min_minutes":1,"max_minutes":10}}]});
+    assert!(register_definition(&db, fixture).status.success());
+    let (controller, _child) = connect_options(&db, "0", true, true).await;
+    timeout(WAIT, async {
+        let a = open(&controller, "replay").await;
+        let b = open(&controller, "replay").await;
+        let c = call(
+            &controller,
+            "open_scenario",
+            json!({"scenario_id":"replay","version":1,"seed":17}),
+        )
+        .await["run_id"]
+            .clone();
+        for run in [&a, &b, &c] {
+            assert_eq!(advance(&controller, run, 12).await["event_cursor"], 12);
+        }
+        let a = delivered(&controller, &a).await;
+        assert_eq!(a, delivered(&controller, &b).await);
+        assert_ne!(a, delivered(&controller, &c).await);
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p2_03_budgets_and_cursor_paging() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let rules: Vec<_> = (0..17)
+        .map(|index| {
+            json!({"event":format!("event_{index}"),"delay":{
+                "distribution":"uniform","min_minutes":1.1,"max_minutes":1.2
+            }})
+        })
+        .collect();
+    assert!(
+        register_definition(
+            &db,
+            json!({"scenario_id":"crowded","version":1,"title":"Crowded",
+        "model":"smt","work_orders":["WO"],"materials":{},"capabilities":[],"event_rules":rules})
+        )
+        .status
+        .success()
+    );
+    let (controller, _child) = connect_options(&db, "0", true, true).await;
+    timeout(WAIT, async {
+        let run = open(&controller, "crowded").await;
+        let first = advance(&controller, &run, 1).await;
+        assert_eq!(first["stop"], "event_budget");
+        let timed = call(
+            &controller,
+            "advance_run",
+            json!({"run_id":run,"max_events":10,"max_minutes":1}),
+        )
+        .await;
+        assert_eq!(timed["stop"], "time_budget");
+        assert_eq!(timed["clock"], 1);
+        let capped = advance(&controller, &run, 100).await;
+        assert_eq!(capped["stop"], "same_tick_limit");
+        assert_eq!(capped["event_cursor"], 18);
+        let page_args = json!({"run_id":run,"after":2,"limit":2});
+        let page = call(&controller, "read_events", page_args.clone()).await;
+        assert_eq!(page, call(&controller, "read_events", page_args).await);
+        assert_eq!(page["events"][0]["kind"], "event_0");
+        assert_eq!(page["events"][1]["kind"], "event_1");
+        assert_eq!(page["event_cursor"], 4);
+        let rest = call(
+            &controller,
+            "read_events",
+            json!({"run_id":run,"after":4,"limit":100}),
+        )
+        .await;
+        assert_eq!(rest["events"][0]["cursor"], 5);
+        assert_eq!(rest["has_more"], false);
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p2_04_intervention_changes_future() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (controller, _child) = connect_options(&db, "0", true, true).await;
+    timeout(WAIT, async {
+        let reference = open(&controller, "cnc").await;
+        let intervention = open(&controller, "cnc").await;
+        let baseline = advance(&controller, &reference, 1).await;
+        let prior = delivered(&controller, &intervention).await;
+        let control = call(
+            &controller,
+            "intervene_run",
+            json!({"run_id":intervention,"action":"maintenance"}),
+        )
+        .await;
+        assert_eq!(control["clock"], prior["clock"]);
+        assert_eq!(delivered(&controller, &intervention).await, prior);
+        advance(&controller, &intervention, 4).await;
+        let changed = delivered(&controller, &intervention).await;
+        assert_eq!(changed["events"][0]["kind"], "cnc_repair_started");
+        assert_eq!(changed["events"][0]["minute"], prior["clock"]);
+        assert_eq!(changed["events"][1]["kind"], "cnc_repair_completed");
+        assert!(
+            changed["events"][1]["minute"].as_u64().unwrap() > prior["clock"].as_u64().unwrap()
+        );
+        assert!(changed["events"][2]["payload"]["vibration_mm_s"].is_number());
+        assert!(changed["events"][3]["payload"]["cpk"].is_number());
+        let replay = call(&controller, "inspect_run", json!({"run_id":intervention})).await;
+        assert_eq!(replay["replay_verified"], true);
+        assert_eq!(changed["events"][2]["kind"], "cnc_vibration");
+        assert_ne!(changed["events"][2]["minute"], baseline["clock"]);
+        assert_eq!(
+            delivered(&controller, &reference).await["events"][0]["kind"],
+            "cnc_vibration"
+        );
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p2_05_model_registry_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let mut spec: Value = serde_json::from_str(include_str!("../fixtures/cnc.json")).unwrap();
+    spec["scenario_id"] = "model_test".into();
+    spec["model_version"] = 7.into();
+    let bad_version = register_definition(&db, spec.clone());
+    assert!(!bad_version.status.success());
+    assert!(String::from_utf8_lossy(&bad_version.stderr).contains("model_version"));
+    spec["model_version"] = 1.into();
+    spec["model_parameters"] = json!({"alarm_mean_minutes":0});
+    let bad_parameter = register_definition(&db, spec);
+    assert!(!bad_parameter.status.success());
+    assert!(String::from_utf8_lossy(&bad_parameter.stderr).contains("alarm_mean_minutes"));
+    let legacy = json!({"scenario_id":"legacy","version":1,"title":"Legacy","model":"unregistered",
+        "work_orders":["WO"],"materials":{},"capabilities":[]});
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute(
+            "INSERT INTO scenario_definitions VALUES ('legacy',1,?1)",
+            [legacy.to_string()],
+        )
+        .unwrap();
+    let (controller, _child) = connect_options(&db, "0", true, true).await;
+    timeout(WAIT, async {
+        let rejected = call(
+            &controller,
+            "open_scenario",
+            json!({"scenario_id":"legacy","version":1}),
+        )
+        .await;
+        assert_eq!(rejected["code"], "MODEL_CONFIGURATION_INVALID");
+        for (id, kind) in [("smt", "fixture_ready"), ("cnc", "cnc_vibration")] {
+            let run = open(&controller, id).await;
+            advance(&controller, &run, 1).await;
+            assert_eq!(
+                delivered(&controller, &run).await["events"][0]["kind"],
+                kind
+            );
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p2_06_control_visibility() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (controller, _a) = connect_options(&db, "0", true, true).await;
+    let (agent, _b) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        let run = open(&agent, "cnc").await;
+        let args = json!({"run_id":run});
+        let tools = agent.peer().list_tools(None).await.unwrap().tools;
+        assert!(!tools.iter().any(|tool| matches!(
+            tool.name.as_ref(),
+            "advance_run" | "intervene_run" | "inspect_run"
+        )));
+        for hidden in ["inspect_run", "advance_run", "intervene_run"] {
+            assert_eq!(
+                call(&agent, hidden, args.clone()).await["code"],
+                "UNKNOWN_TOOL"
+            );
+        }
+        let evaluation = call(&controller, "inspect_run", args.clone()).await;
+        assert_eq!(evaluation["diagnosis"]["root_cause"], "spindle_wear");
+        assert!(evaluation["replay"]["timeline"]["pending"].is_array());
+        let public = delivered(&agent, &run).await;
+        assert_eq!(public["events"], json!([]));
+        for secret in ["diagnosis", "root_cause", "pending", "spindle_wear"] {
+            assert!(!public.to_string().contains(secret));
+            assert!(
+                !call(&agent, "get_run", args.clone())
+                    .await
+                    .to_string()
+                    .contains(secret)
+            );
+        }
     })
     .await
     .unwrap();

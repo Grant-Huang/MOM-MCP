@@ -88,6 +88,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F05"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_01_shared_clock" }
 
 [[case]]
 id = "P2-02"
@@ -95,6 +96,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F03", "F06", "F12"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_02_seeded_event_replay" }
 
 [[case]]
 id = "P2-03"
@@ -102,6 +104,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F05", "F06", "F15"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_03_budgets_and_cursor_paging" }
 
 [[case]]
 id = "P2-04"
@@ -109,6 +112,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F06", "F12"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_04_intervention_changes_future" }
 
 [[case]]
 id = "P2-05"
@@ -116,6 +120,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F03", "F07", "F15"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_05_model_registry_validation" }
 
 [[case]]
 id = "P2-06"
@@ -123,6 +128,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F12"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_06_control_visibility" }
 
 [[case]]
 id = "P2-UI"
@@ -130,6 +136,7 @@ phase = "P2"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P2-UI shared clock and reproducible delivered events" }
 
 [[case]]
 id = "P3-01"

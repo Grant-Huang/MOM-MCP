@@ -37,9 +37,9 @@ MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P0 --gate
 
 ## P1 场景工具
 
-从首页进入「场景验收台」，加载 CNC、SMT 或按单装配夹具。每次打开生成独立的 `run_id`；切换后可重新搜索并复查各自的物料状态。P1 的虚拟时间固定为初始值，P2 接入 DES 后按规则推进。
+从首页进入「场景验收台」，加载 CNC、SMT 或按单装配夹具。每次打开生成独立的 `run_id`；切换后可重新搜索并复查各自的物料状态。P2 的虚拟时间由服务端持有，按评测控制请求和模型规则推进。
 
-AgentNexus 可使用 [P1 示例配置](config/agentnexus.p1.toml) 启用七个场景工具。可信调用端可用 `register-scenario` 注册定义：
+AgentNexus 可使用 [P1 示例配置](config/agentnexus.p1.toml) 启用场景工具。可信调用端可用 `register-scenario` 注册定义：
 
 ```sh
 cargo run --locked -- register-scenario --db scenarios.sqlite3 --file /path/to/my-scenario.json
@@ -49,4 +49,20 @@ cargo run --locked -- register-scenario --db scenarios.sqlite3 --file /path/to/m
 
 ```sh
 MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P1 --gate
+```
+
+## P2 仿真时钟与评测控制
+
+普通 Agent 可调用 `read_events`，从 `after=0` 开始，使用返回的 `event_cursor` 读取下一页。读操作不会推进时钟。业务游标 `cursor` 仍用于 P1 业务写入，DES 使用独立的 `event_cursor`。
+
+仅在本地评测时启用控制入口：
+
+```sh
+cargo run --locked -- web --db p2-test.sqlite3 --control-tools
+```
+
+评测 stdio 进程可使用 `stdio --scenario-tools --control-tools`。控制方通过 `advance_run` 指定事件和时间预算，`intervene_run` 根据当前服务端时刻安排维修，并可通过 `inspect_run` 获取未来候选、诊断、重放记录及重新执行的校验结果。普通 Agent 配置只启动 `--scenario-tools`。
+
+```sh
+MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P2 --gate
 ```

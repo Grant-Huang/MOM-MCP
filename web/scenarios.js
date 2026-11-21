@@ -14,7 +14,8 @@ function controls() {
   $("open").disabled = busy || !scenarios.size;
   $("seed").disabled = busy;
   $("run").disabled = busy || !runs.size;
-  $("read-run").disabled = busy || !run;
+  $("read-run").disabled = $("events").disabled = busy || !run;
+  $("advance").disabled = $("repair").disabled = busy || !run || run.closed;
   $("close").disabled = $("find").disabled = busy || !run || run.closed;
   $("tool").disabled = $("describe").disabled = $("invoke").disabled =
     busy || !run || run.closed || !$("tool").options.length;
@@ -121,3 +122,10 @@ $("call").onsubmit = (event) => {
   });
 };
 controls();
+
+$("events").onclick = () => action(() => request("read_events", { run_id: $("run").value }));
+$("advance").onclick = () => action(() => request("advance_run", { run_id: $("run").value }));
+$("repair").onclick = () => action(() => request("intervene_run", { run_id: $("run").value, action: "maintenance" }));
+fetch("/api/control-enabled").then((response) => response.json()).then((enabled) => {
+  $("control").hidden = !enabled;
+}).catch(() => {});
