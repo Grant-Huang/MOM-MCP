@@ -1,6 +1,6 @@
 # MOM-MCP
 
-面向 AgentNexus 的离散制造模拟 MCP 项目。当前覆盖 CNC、SMT 和按单装配。启动、接入和发布证据见 [三行业基线](docs/RELEASE.md)。钣金与线束按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 扩展。
+面向 AgentNexus 的离散制造模拟 MCP 项目。当前覆盖 CNC、SMT、按单装配、钣金和线束。启动与接入见 [五行业基线](docs/RELEASE.md)，业务能力覆盖与取舍见 [MES 能力边界](docs/MES_SCOPE.md)。
 
 ## 启动验收台
 

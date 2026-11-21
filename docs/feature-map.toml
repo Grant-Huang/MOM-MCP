@@ -304,6 +304,7 @@ phase = "P7"
 spec = "acceptance/P7.md"
 features = ["F11", "F14"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p7_01_sheet_area_conservation_and_remnant_lineage" }
 
 [[case]]
 id = "P7-02"
@@ -311,6 +312,7 @@ phase = "P7"
 spec = "acceptance/P7.md"
 features = ["F14"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p7_02_invalid_stock_and_sheet_machine_reroute" }
 
 [[case]]
 id = "P7-03"
@@ -318,6 +320,7 @@ phase = "P7"
 spec = "acceptance/P7.md"
 features = ["F11", "F14"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p7_03_harness_sample_rework_and_terminal_genealogy" }
 
 [[case]]
 id = "P7-04"
@@ -325,6 +328,7 @@ phase = "P7"
 spec = "acceptance/P7.md"
 features = ["F07", "F12", "F14"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p7_04_five_industry_catalog_and_replay" }
 
 [[case]]
 id = "P7-UI"
@@ -332,3 +336,4 @@ phase = "P7"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P7-UI sheet and harness exception flows share the scenario console" }

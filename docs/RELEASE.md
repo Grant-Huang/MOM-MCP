@@ -1,6 +1,6 @@
-# P6 三行业基线
+# P7 五行业基线
 
-此基线包含汽车零部件 CNC、电子装联 SMT 和工业设备按单装配。业务操作走 MCP stdio，场景验收台通过 Axum 的本地 HTTP 桥调用同一 Rust 程序。
+此基线包含汽车零部件 CNC、电子装联 SMT、工业设备按单装配、钣金和线束。业务操作走 MCP stdio，场景验收台通过 Axum 的本地 HTTP 桥调用同一 Rust 程序。
 
 ## 从干净检出安装
 
@@ -9,17 +9,19 @@ cargo build --release --locked
 ./target/release/mom-mcp web --db ./acceptance.sqlite3
 ```
 
-终端打印监听地址，默认绑定 `127.0.0.1:4173`。用页面查看场景和模拟状态。需要推进仿真或回放诊断时，在隔离测试数据库上追加 `--control-tools`。常规验收台仅保留查询和行业操作。
+终端打印监听地址，默认绑定 `127.0.0.1:4173`。用页面查看场景和模拟状态。需要推进仿真或回放诊断时，在隔离的测试数据库上追加 `--control-tools`。常规验收台仅保留查询和行业操作。
 
 AgentNexus 使用 [stdio 配置示例](../config/agentnexus.p1.toml)。将命令改成发布二进制的绝对路径并指定数据库路径。若希望与本地验收台观察同一个 run，两端须使用同一份数据库和 `run_id`。Agent 配置保留 `--scenario-tools`，评测进程单独启用控制工具。
 
-## 三行业入口
+## 五行业入口
 
 | 行业 | 正常入口 | 异常验收 | 关键证据 |
 |---|---|---|---|
 | CNC | `cnc@2`，下达 → 派工 → 报工 → 终检 → 关单 | `cnc-shortage@1` 到货，`cnc-lot@1` 来料异常，`cnc@2` 维修与复检 | 工艺快照、消耗、序列号、质量阻塞与冲销 |
 | SMT | `smt@2`，工单 → 上料 → 贴装 → AOI → 分板 → 放行 | 同场景按种子生成供应商召回和 AOI 扰动 | 料卷到跨工单板卡、返工换料、复检和报废 |
 | 按单装配 | `assembly@2`，齐套 → 派工 → 实装 → 终测 → 交付 | `assembly-shortage@1` 替代件、测试台竞争、失败返修 | 实装 BOM、资格依据、终测区间及交付序列号 |
+| 钣金 | `sheet-metal@1`，发料 → 套料 → 切割 → 成形 → 检验 → 余料回库 | 缺料改用合格余料，设备停机时改派 | 面积守恒、原板材批次、余料父链和执行设备 |
+| 线束 | `wire-harness@1`，裁线 → 压接 → 导通 → 放行 | 抽检失败后隔离，换端子返工及复测 | 原端子、替代资格、工艺版本、序列号和测试记录 |
 
 具体工具调用见 [README](../README.md) 和各阶段验收记录。
 
@@ -36,7 +38,16 @@ AgentNexus 使用 [stdio 配置示例](../config/agentnexus.p1.toml)。将命令
 ```sh
 npm ci
 npx playwright install chromium
-MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P6 --gate
+MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P7 --gate
 ```
 
-严格门槛同时执行所有早期阶段。普通 CI 运行项目内 Rust 与浏览器用例。带固定 AgentNexus 源码的门槛另产出相邻项目的连接与 DES 证据。查看 [P6 验收记录](acceptance/P6.md)。
+严格门槛同时执行所有早期阶段。普通 CI 运行项目内 Rust 与浏览器用例。带固定 AgentNexus 源码的门槛另产出相邻项目的连接与 DES 证据。查看 [P7 验收记录](acceptance/P7.md)。
+
+
+## 工具数与覆盖
+
+正式场景能力分别为 CNC 16、SMT 13、按单装配 11、钣金 7、线束 7。跨场景去重后为 52 个业务工具，另有 8 个 AgentNexus 直挂 MCP 方法。探针与评测控制入口单列。端到端闭环及待补公共能力见 [MES 能力边界](MES_SCOPE.md)。
+
+## DES 独立发布评估
+
+`mom-des` workspace 包只依赖序列化库，行业模型包依赖它，DES 内核对行业包没有反向依赖。P7 新增两种模型注册并复跑五行业及既有 AgentNexus CNC 接口。本地 `cargo package -p mom-des --allow-dirty --offline` 已完成打包和解包构建。独立发布仍需确认 API 与持久化快照的版本策略、模型兼容矩阵、授权与发行维护方，另外需要实际独立消费者验证安装和升级路径。本阶段提供仓库内发布基线，独立 DES 包暂未对外发布。

@@ -64,7 +64,7 @@
     <div class="hero">
       <h1>为 AgentNexus 模拟离散制造现场</h1>
       <p>在可重复运行的制造场景中，让 Agent 查找工具、理解工况、执行模拟动作，并通过工单、库存、质量和追溯数据检查结果。</p>
-      <p>三行业基线支持 CNC、SMT 和按单装配。可在验收台运行正常流程与异常处置。</p>
+      <p>五行业基线支持 CNC、SMT、按单装配、钣金加工和线束制造。可在验收台运行正常流程与异常处置。</p>
       <a class="primary" href="#usage">查看 MCP 调用流程</a>
       <a href="/acceptance">打开接入验收台</a>
       <a href="/scenarios">打开场景验收台</a>
@@ -80,13 +80,14 @@
     </section>
 
     <section id="scenarios">
-      <h2>三行业场景</h2>
+      <h2>五行业场景</h2>
       <div class="grid">
         <article><h3>汽车零部件 CNC</h3><p>从泵体报工与终检延伸到振动取证、批次隔离和维修干预。</p></article>
         <article><h3>电子装联 SMT</h3><p>按料卷上料记录跨工单追溯受影响板卡，处理隔离、返工与复检。</p></article>
         <article><h3>工业设备按单装配</h3><p>检查齐套与合格替代件，调整派工并完成终测放行。</p></article>
+        <article><h3>钣金加工</h3><p>按面积套料、切割和回收余料，遇到设备停机时改派并核对批次谱系。</p></article>
+        <article><h3>线束制造</h3><p>记录端子压接和导通测试，按抽检事件隔离，返工复测后放行。</p></article>
       </div>
-      <p style="margin-top: 1rem">后续扩展钣金余料追溯与线束端子替代、复测。</p>
     </section>
 
     <section id="usage">
@@ -111,7 +112,8 @@
       <ul>
         <li><a href="docs/FEATURES.md">需求与特性清单</a></li>
         <li><a href="docs/DESIGN.md">架构设计</a></li>
-        <li><a href="docs/RELEASE.md">三行业基线部署</a></li>
+        <li><a href="docs/RELEASE.md">五行业基线部署</a></li>
+        <li><a href="docs/MES_SCOPE.md">MES 能力边界</a></li>
         <li><a href="docs/IMPLEMENTATION_PLAN.md">实施计划</a></li>
         <li><a href="docs/acceptance/README.md">分阶段验收规范</a></li>
         <li><a href="docs/TEST_AND_MOCK_PLAN.md">前端验收与 Mock 替换计划</a></li>

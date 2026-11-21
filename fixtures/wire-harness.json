@@ -1,0 +1,23 @@
+{
+  "scenario_id": "wire-harness",
+  "version": 1,
+  "title": "线束制造 · 端子压接与复测",
+  "model": "wire_harness",
+  "model_parameters": {
+    "mean_minutes": 12.0
+  },
+  "work_orders": [
+    "WO-HARNESS"
+  ],
+  "materials": {},
+  "capabilities": [
+    "harness_cut",
+    "harness_crimp",
+    "harness_sample",
+    "harness_test",
+    "harness_rework",
+    "harness_release",
+    "harness_trace"
+  ],
+  "fabrication": "wire_harness"
+}

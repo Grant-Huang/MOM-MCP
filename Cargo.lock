@@ -692,6 +692,7 @@ dependencies = [
  "mom-des",
  "mom-model-assembly",
  "mom-model-cnc",
+ "mom-model-fabrication",
  "mom-model-fixture",
  "mom-model-smt",
  "rmcp",
@@ -713,6 +714,15 @@ dependencies = [
 
 [[package]]
 name = "mom-model-cnc"
+version = "0.1.0"
+dependencies = [
+ "mom-des",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mom-model-fabrication"
 version = "0.1.0"
 dependencies = [
  "mom-des",

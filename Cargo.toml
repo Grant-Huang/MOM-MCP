@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/des", "crates/model-cnc", "crates/model-fixture", "crates/model-smt", "crates/model-assembly"]
+members = [".", "crates/des", "crates/model-cnc", "crates/model-fixture", "crates/model-smt", "crates/model-assembly", "crates/model-fabrication"]
 resolver = "3"
 
 [package]
@@ -14,6 +14,7 @@ mom-model-cnc = { path = "crates/model-cnc" }
 mom-model-fixture = { path = "crates/model-fixture" }
 mom-model-smt = { path = "crates/model-smt" }
 mom-model-assembly = { path = "crates/model-assembly" }
+mom-model-fabrication = { path = "crates/model-fabrication" }
 anyhow = "1"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
