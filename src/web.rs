@@ -16,6 +16,7 @@ use tokio::{net::TcpListener, process::Command};
 struct Bridge {
     db: PathBuf,
     executable: PathBuf,
+    control_tools: bool,
 }
 
 type Reply = Result<Json<Value>, (StatusCode, Json<Value>)>;
@@ -28,9 +29,15 @@ fn unavailable() -> (StatusCode, Json<Value>) {
 }
 
 impl Bridge {
-    async fn connect(&self) -> anyhow::Result<RunningService<RoleClient, ()>> {
+    async fn connect(&self, scenarios: bool) -> anyhow::Result<RunningService<RoleClient, ()>> {
         let mut command = Command::new(&self.executable);
         command.arg("stdio").arg("--db").arg(&self.db);
+        if scenarios {
+            command.arg("--scenario-tools");
+        }
+        if scenarios && self.control_tools {
+            command.arg("--control-tools");
+        }
         let transport = rmcp::transport::TokioChildProcess::new(command)?;
         Ok(().serve(transport).await?)
     }
@@ -38,7 +45,7 @@ impl Bridge {
 
 async fn list(State(bridge): State<Bridge>) -> Reply {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let client = bridge.connect().await?;
+        let client = bridge.connect(false).await?;
         let output = client.peer().list_tools(None).await?;
         client.cancel().await?;
         Ok::<_, anyhow::Error>(Json(serde_json::to_value(output)?))
@@ -61,8 +68,24 @@ async fn call(State(bridge): State<Bridge>, Json(request): Json<Call>) -> Reply 
             Json(json!({"ok":false,"code":"UNKNOWN_TOOL"})),
         ));
     }
+    forward(bridge, request, false).await
+}
+
+async fn scenarios(State(bridge): State<Bridge>, Json(request): Json<Call>) -> Reply {
+    if !crate::catalog::gateway(&request.name)
+        .is_some_and(|tool| bridge.control_tools || !tool.control)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"ok":false,"code":"UNKNOWN_TOOL"})),
+        ));
+    }
+    forward(bridge, request, true).await
+}
+
+async fn forward(bridge: Bridge, request: Call, scenarios: bool) -> Reply {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let client = bridge.connect().await?;
+        let client = bridge.connect(scenarios).await?;
         let response = client
             .peer()
             .call_tool(CallToolRequestParams::new(request.name).with_arguments(request.arguments))
@@ -99,9 +122,10 @@ async fn document(Path(path): Path<String>) -> impl IntoResponse {
     ([("content-type", "text/plain; charset=utf-8")], text).into_response()
 }
 
-pub async fn serve(db: PathBuf, port: u16) -> anyhow::Result<()> {
+pub async fn serve(db: PathBuf, port: u16, control_tools: bool) -> anyhow::Result<()> {
     let state = Bridge {
         db,
+        control_tools,
         executable: std::env::current_exe()?,
     };
     let app = Router::new()
@@ -138,6 +162,24 @@ pub async fn serve(db: PathBuf, port: u16) -> anyhow::Result<()> {
                     include_str!("../config/agentnexus.p0.toml"),
                 )
             }),
+        )
+        .route(
+            "/scenarios",
+            get(|| async { Html(include_str!("../web/scenarios.html")) }),
+        )
+        .route(
+            "/scenarios.js",
+            get(|| async {
+                (
+                    [("content-type", "text/javascript; charset=utf-8")],
+                    include_str!("../web/scenarios.js"),
+                )
+            }),
+        )
+        .route("/api/scenarios", post(scenarios))
+        .route(
+            "/api/control-enabled",
+            get(|State(bridge): State<Bridge>| async move { Json(bridge.control_tools) }),
         )
         .route("/api/tools", get(list))
         .route("/api/call", post(call))

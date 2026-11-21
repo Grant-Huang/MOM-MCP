@@ -65,3 +65,10 @@ MOM-MCP 是 DES 的客户端，随项目交付的行业示例也用与外部客�
 ## 扩展与发布
 
 Rust 内核、服务与行业模型包使用独立依赖边界。保留 AgentNexus 旧 CNC 调用的兼容入口，以同一基线做轨迹对比。至少在 CNC 与 SMT 同用新接口、且模型注册无需更新内核后，评估拆仓或发布独立版本。拆仓时固定模型与运行协议的版本矩阵，并为既有记录保留重放途径。验收与实施依赖见 [实施计划](IMPLEMENTATION_PLAN.md)。
+
+
+### P2 运行边界
+
+MOM-MCP 在 SQLite 事务内保存每个 run 的 DES 队列、当前时钟、可见事件及控制命令。跨 stdio 进程访问同一数据库和 run ID 时，共用这份状态。控制入口使用显式启动开关，普通客户端只能读取已交付事件。公开事件游标 `event_cursor` 与 P1 工具的业务游标独立。
+
+Cargo workspace 包含通用 `mom-des`、`mom-model-cnc` 和 `mom-model-fixture`。CNC 模型提供模拟磨损和观测值，模型注册表按 ID 与版本加载。旧 DES 入口及既有完整固定剧本继续在 AgentNexus 上独立运行，由同一验收门槛复跑。

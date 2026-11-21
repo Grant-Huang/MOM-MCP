@@ -11,7 +11,7 @@ export default defineConfig({
     launchOptions: { executablePath: process.env.MOM_CHROMIUM || undefined },
   },
   webServer: {
-    command: "cargo run --locked -- web --db \"$MOM_TEST_DB\"",
+    command: "cargo run --locked -- web --control-tools --db \"$MOM_TEST_DB\"",
     url: baseURL,
     timeout: 120_000,
   },

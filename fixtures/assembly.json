@@ -1,0 +1,1 @@
+{"scenario_id":"assembly","version":1,"title":"工业设备按单装配","model":"assembly","work_orders":["WO-1"],"materials":{"LOT-1":"WO-1"},"capabilities":["get_work_order","get_material","hold_material"]}

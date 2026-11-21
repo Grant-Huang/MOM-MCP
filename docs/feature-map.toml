@@ -48,6 +48,7 @@ phase = "P1"
 spec = "acceptance/P1.md"
 features = ["F02"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p1_01_search_synonyms_filters_and_sorting" }
 
 [[case]]
 id = "P1-02"
@@ -55,6 +56,7 @@ phase = "P1"
 spec = "acceptance/P1.md"
 features = ["F02"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p1_02_schema_and_business_errors" }
 
 [[case]]
 id = "P1-03"
@@ -62,6 +64,7 @@ phase = "P1"
 spec = "acceptance/P1.md"
 features = ["F04", "F08"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p1_03_run_isolation_close_and_reconnect" }
 
 [[case]]
 id = "P1-04"
@@ -69,6 +72,7 @@ phase = "P1"
 spec = "acceptance/P1.md"
 features = ["F03"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p1_04_register_and_reject_malformed_definitions" }
 
 [[case]]
 id = "P1-UI"
@@ -76,6 +80,7 @@ phase = "P1"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P1-UI search, call and verify isolated scenario runs" }
 
 [[case]]
 id = "P2-01"
@@ -83,6 +88,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F05"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_01_shared_clock" }
 
 [[case]]
 id = "P2-02"
@@ -90,6 +96,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F03", "F06", "F12"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_02_seeded_event_replay" }
 
 [[case]]
 id = "P2-03"
@@ -97,6 +104,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F05", "F06", "F15"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_03_budgets_and_cursor_paging" }
 
 [[case]]
 id = "P2-04"
@@ -104,6 +112,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F06", "F12"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_04_intervention_changes_future" }
 
 [[case]]
 id = "P2-05"
@@ -111,6 +120,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F03", "F07", "F15"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_05_model_registry_validation" }
 
 [[case]]
 id = "P2-06"
@@ -118,6 +128,7 @@ phase = "P2"
 spec = "acceptance/P2.md"
 features = ["F12"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p2_06_control_visibility" }
 
 [[case]]
 id = "P2-UI"
@@ -125,6 +136,7 @@ phase = "P2"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P2-UI shared clock and reproducible delivered events" }
 
 [[case]]
 id = "P3-01"
@@ -132,6 +144,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F08", "F09"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_01_shortage_receipt_and_snapshot" }
 
 [[case]]
 id = "P3-02"
@@ -139,6 +152,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F08", "F09", "F11", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_02_sequence_and_normal_production" }
 
 [[case]]
 id = "P3-03"
@@ -146,6 +160,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F10"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_03_idempotent_retry_and_parallel_stock" }
 
 [[case]]
 id = "P3-04"
@@ -153,6 +168,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F10", "F12"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_04_rollback_and_receipt_deduplication" }
 
 [[case]]
 id = "P3-05"
@@ -160,6 +176,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F09", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_05_quality_disposition_and_evidence" }
 
 [[case]]
 id = "P3-06"
@@ -167,6 +184,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F11"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_06_genealogy_and_report_reversal" }
 
 [[case]]
 id = "P3-UI"
@@ -174,6 +192,7 @@ phase = "P3"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P3-UI CNC work order through inspection closure and genealogy" }
 
 [[case]]
 id = "P4-01"
@@ -181,6 +200,7 @@ phase = "P4"
 spec = "acceptance/P4.md"
 features = ["F08", "F11", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p4_01_smt_normal_route_and_genealogy" }
 
 [[case]]
 id = "P4-02"
@@ -188,6 +208,7 @@ phase = "P4"
 spec = "acceptance/P4.md"
 features = ["F09", "F11", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p4_02_smt_recall_across_work_orders" }
 
 [[case]]
 id = "P4-03"
@@ -195,6 +216,7 @@ phase = "P4"
 spec = "acceptance/P4.md"
 features = ["F07", "F09", "F11", "F12"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p4_03_smt_rework_retest_scrap_and_replay" }
 
 [[case]]
 id = "P4-UI"
@@ -202,6 +224,7 @@ phase = "P4"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P4-UI SMT recall isolation rework and genealogy" }
 
 [[case]]
 id = "P5-01"
@@ -209,6 +232,7 @@ phase = "P5"
 spec = "acceptance/P5.md"
 features = ["F08", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p5_01_assembly_kit_build_test_and_delivery" }
 
 [[case]]
 id = "P5-02"
@@ -216,6 +240,7 @@ phase = "P5"
 spec = "acceptance/P5.md"
 features = ["F09", "F11"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p5_02_shortage_qualified_substitution_and_priority" }
 
 [[case]]
 id = "P5-03"
@@ -223,6 +248,7 @@ phase = "P5"
 spec = "acceptance/P5.md"
 features = ["F09", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p5_03_shared_bench_failure_repair_and_retest" }
 
 [[case]]
 id = "P5-UI"
@@ -230,6 +256,7 @@ phase = "P5"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P5-UI assembly substitution test repair retest and delivery" }
 
 [[case]]
 id = "P6-01"

@@ -1,0 +1,1 @@
+{"scenario_id":"smt","version":1,"title":"电子装联 SMT","model":"smt","work_orders":["WO-1"],"materials":{"LOT-1":"WO-1"},"capabilities":["get_work_order","get_material"]}

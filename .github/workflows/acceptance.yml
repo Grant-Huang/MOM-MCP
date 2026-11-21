@@ -1,7 +1,7 @@
 name: Acceptance
 on: [push, pull_request]
 jobs:
-  p0-local:
+  milestone-local:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -13,9 +13,9 @@ jobs:
       - run: cargo fmt --check
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run acceptance -- P0
+      - run: npm run acceptance -- P5
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p0-browser-evidence
+          name: browser-evidence
           path: test-results/
