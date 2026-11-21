@@ -1,0 +1,49 @@
+# Merge into AgentNexus and replace /path/to/MOM-MCP with an absolute path.
+[[mcp.servers]]
+id = "mom"
+transport = "stdio"
+command = "/path/to/MOM-MCP/target/debug/mom-mcp"
+args = ["stdio", "--scenario-tools", "--db", "/path/to/MOM-MCP/scenarios.sqlite3"]
+timeout_ms = 5000
+
+[[mcp.servers.tools]]
+name = "list_scenarios"
+capability_id = "mom.scenario.list"
+description = "List published mock scenarios and versions"
+effect = "read_only"
+
+[[mcp.servers.tools]]
+name = "open_scenario"
+capability_id = "mom.scenario.open"
+description = "Open an isolated mock scenario run"
+effect = "workspace_write"
+
+[[mcp.servers.tools]]
+name = "get_run"
+capability_id = "mom.scenario.get"
+description = "Read scenario run metadata"
+effect = "read_only"
+
+[[mcp.servers.tools]]
+name = "close_run"
+capability_id = "mom.scenario.close"
+description = "Close a scenario run"
+effect = "workspace_write"
+
+[[mcp.servers.tools]]
+name = "search_tools"
+capability_id = "mom.scenario.search"
+description = "Search a run's available business tools"
+effect = "read_only"
+
+[[mcp.servers.tools]]
+name = "describe_tool"
+capability_id = "mom.scenario.describe"
+description = "Read business tool contracts"
+effect = "read_only"
+
+[[mcp.servers.tools]]
+name = "call_tool"
+capability_id = "mom.scenario.call"
+description = "Call a run's business tool"
+effect = "workspace_write"

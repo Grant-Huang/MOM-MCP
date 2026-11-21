@@ -1,0 +1,412 @@
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
+
+use crate::catalog::{self, Action};
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Definition {
+    scenario_id: String,
+    version: u32,
+    title: String,
+    model: String,
+    #[serde(default)]
+    model_parameters: Map<String, Value>,
+    #[serde(default)]
+    event_rules: Vec<EventRule>,
+    work_orders: Vec<String>,
+    materials: BTreeMap<String, String>,
+    capabilities: Vec<Action>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct EventRule {
+    event: String,
+    delay: Delay,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "distribution", rename_all = "snake_case", deny_unknown_fields)]
+enum Delay {
+    Exponential { mean_minutes: f64 },
+    Uniform { min_minutes: f64, max_minutes: f64 },
+}
+
+impl Delay {
+    fn valid(&self) -> bool {
+        let positive = |value: f64| value.is_finite() && value > 0.0;
+        match *self {
+            Self::Exponential { mean_minutes } => positive(mean_minutes),
+            Self::Uniform {
+                min_minutes,
+                max_minutes,
+            } => positive(min_minutes) && positive(max_minutes) && min_minutes < max_minutes,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Scenarios {
+    db: PathBuf,
+}
+
+pub struct Rejection {
+    code: &'static str,
+    field: String,
+}
+
+impl Rejection {
+    fn json(self) -> Value {
+        json!({"ok":false,"code":self.code,"field":self.field})
+    }
+}
+
+fn reject(code: &'static str, field: &'static str) -> Rejection {
+    Rejection {
+        code,
+        field: field.into(),
+    }
+}
+
+impl Rejection {
+    pub fn invalid(field: &str) -> Self {
+        Self {
+            code: "INVALID_ARGUMENT",
+            field: field.into(),
+        }
+    }
+}
+
+fn identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn explicit_time(value: &Value, path: &str) -> Option<String> {
+    match value {
+        Value::Object(fields) => fields.iter().find_map(|(name, value)| {
+            let key = name.replace(['_', '-'], "").to_ascii_lowercase();
+            let field = format!("{path}.{name}");
+            if matches!(
+                key.as_str(),
+                "occurredat"
+                    | "eventtime"
+                    | "atminute"
+                    | "timestamp"
+                    | "timeline"
+                    | "startminute"
+                    | "scheduledat"
+                    | "dueat"
+            ) {
+                Some(field)
+            } else {
+                explicit_time(value, &field)
+            }
+        }),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .find_map(|(index, value)| explicit_time(value, &format!("{path}[{index}]"))),
+        _ => None,
+    }
+}
+
+fn parse_definition(source: &str) -> anyhow::Result<Definition> {
+    let raw: Value = serde_json::from_str(source)?;
+    if let Some(field) = explicit_time(&raw, "$") {
+        anyhow::bail!("explicit event timestamps are not supported at {field}");
+    }
+    let definition: Definition = serde_json::from_value(raw)?;
+    anyhow::ensure!(identifier(&definition.scenario_id), "invalid scenario_id");
+    anyhow::ensure!(definition.version > 0, "invalid version");
+    anyhow::ensure!(
+        !definition.title.trim().is_empty() && definition.title.len() <= 160,
+        "invalid title"
+    );
+    anyhow::ensure!(identifier(&definition.model), "invalid model");
+    for (index, rule) in definition.event_rules.iter().enumerate() {
+        anyhow::ensure!(
+            identifier(&rule.event),
+            "invalid event_rules[{index}].event"
+        );
+        anyhow::ensure!(rule.delay.valid(), "invalid event_rules[{index}].delay");
+    }
+    let orders = &definition.work_orders;
+    anyhow::ensure!(
+        !orders.is_empty() && orders.iter().all(|id| identifier(id)),
+        "invalid work_orders"
+    );
+    anyhow::ensure!(
+        orders
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == orders.len(),
+        "duplicate work_orders"
+    );
+    for (batch, order) in &definition.materials {
+        anyhow::ensure!(identifier(batch), "invalid materials batch {batch}");
+        anyhow::ensure!(
+            orders.contains(order),
+            "materials.{batch} references unknown work order {order}"
+        );
+    }
+    anyhow::ensure!(
+        definition
+            .capabilities
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == definition.capabilities.len(),
+        "duplicate capabilities"
+    );
+    Ok(definition)
+}
+
+impl Scenarios {
+    pub fn new(db: PathBuf) -> anyhow::Result<Self> {
+        let store = Self { db };
+        let conn = store.connect()?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS scenario_definitions (
+                 id TEXT NOT NULL, version INTEGER NOT NULL, definition TEXT NOT NULL,
+                 PRIMARY KEY (id, version)
+             );
+             CREATE TABLE IF NOT EXISTS scenario_runs (
+                 id TEXT PRIMARY KEY, scenario TEXT NOT NULL, version INTEGER NOT NULL,
+                 seed TEXT NOT NULL, closed INTEGER NOT NULL DEFAULT 0, cursor INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS scenario_holds (
+                 run TEXT NOT NULL, batch TEXT NOT NULL, reason TEXT NOT NULL,
+                 PRIMARY KEY (run, batch)
+             );
+             CREATE TABLE IF NOT EXISTS scenario_requests (
+                 run TEXT NOT NULL, key TEXT NOT NULL, request TEXT NOT NULL, response TEXT NOT NULL,
+                 PRIMARY KEY (run, key)
+             );"
+        )?;
+        for source in [
+            include_str!("../fixtures/cnc.json"),
+            include_str!("../fixtures/smt.json"),
+            include_str!("../fixtures/assembly.json"),
+        ] {
+            let definition = parse_definition(source)?;
+            conn.execute(
+                "INSERT OR IGNORE INTO scenario_definitions VALUES (?1,?2,?3)",
+                params![definition.scenario_id, definition.version, source],
+            )?;
+        }
+        Ok(store)
+    }
+
+    fn connect(&self) -> rusqlite::Result<Connection> {
+        let connection = Connection::open(&self.db)?;
+        connection.busy_timeout(Duration::from_secs(2))?;
+        Ok(connection)
+    }
+
+    pub fn register(&self, source: &Path) -> anyhow::Result<()> {
+        let definition = parse_definition(&std::fs::read_to_string(source)?)?;
+        self.connect()?.execute(
+            "INSERT INTO scenario_definitions VALUES (?1,?2,?3)",
+            params![
+                definition.scenario_id,
+                definition.version,
+                serde_json::to_string(&definition)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn invoke(&self, name: &str, args: Map<String, Value>) -> anyhow::Result<Value> {
+        let Some(tool) = catalog::gateway(name) else {
+            return Ok(reject("UNKNOWN_TOOL", "name").json());
+        };
+        if let Err(error) = catalog::validate(&tool.input, &args) {
+            return Ok(error.json());
+        }
+        match self.dispatch(name, &args)? {
+            Ok(value) => Ok(value),
+            Err(error) => Ok(error.json()),
+        }
+    }
+
+    fn dispatch(
+        &self,
+        name: &str,
+        args: &Map<String, Value>,
+    ) -> anyhow::Result<Result<Value, Rejection>> {
+        let mut conn = self.connect()?;
+        if name == "list_scenarios" {
+            let mut query =
+                conn.prepare("SELECT definition FROM scenario_definitions ORDER BY id, version")?;
+            let mut scenarios = Vec::new();
+            for row in query.query_map([], |r| r.get::<_, String>(0))? {
+                let spec: Definition = serde_json::from_str(&row?)?;
+                scenarios.push(json!({"scenario_id":spec.scenario_id,"version":spec.version,"title":spec.title,"model":spec.model,"capabilities":spec.capabilities,"mode":"mock","run_parameters":{"seed":{"type":"integer","minimum":0,"default":1}}}));
+            }
+            return Ok(Ok(json!({"ok":true,"scenarios":scenarios})));
+        }
+        if name == "open_scenario" {
+            let scenario = args["scenario_id"].as_str().unwrap();
+            let version = args["version"].as_i64().unwrap();
+            let seed = args
+                .get("seed")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .to_string();
+            let id: Option<String> = conn.query_row(
+                "INSERT INTO scenario_runs (id,scenario,version,seed)
+                 SELECT lower(hex(randomblob(16))),id,version,?3 FROM scenario_definitions WHERE id=?1 AND version=?2 RETURNING id",
+                params![scenario, version, seed], |r| r.get(0)).optional()?;
+            return Ok(id
+                .map(|id| run_view(&id, scenario, version, &seed, false, 0))
+                .ok_or_else(|| reject("SCENARIO_NOT_FOUND", "scenario_id")));
+        }
+
+        let run = args["run_id"].as_str().unwrap();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let record = tx
+            .query_row(
+                "SELECT scenario,version,seed,closed,cursor FROM scenario_runs WHERE id=?1",
+                [run],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, bool>(3)?,
+                        r.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((scenario, version, seed, closed, cursor)) = record else {
+            return Ok(Err(reject("RUN_NOT_FOUND", "run_id")));
+        };
+        if name == "get_run" {
+            return Ok(Ok(run_view(run, &scenario, version, &seed, closed, cursor)));
+        }
+        if name == "close_run" {
+            tx.execute("UPDATE scenario_runs SET closed=1 WHERE id=?1", [run])?;
+            tx.commit()?;
+            return Ok(Ok(run_view(run, &scenario, version, &seed, true, cursor)));
+        }
+        if closed {
+            return Ok(Err(reject("RUN_CLOSED", "run_id")));
+        }
+        let source: String = tx.query_row(
+            "SELECT definition FROM scenario_definitions WHERE id=?1 AND version=?2",
+            params![scenario, version],
+            |r| r.get(0),
+        )?;
+        let definition: Definition = serde_json::from_str(&source)?;
+        if name == "search_tools" {
+            return Ok(Ok(
+                json!({"ok":true,"tools":catalog::search(&definition.capabilities, args)}),
+            ));
+        }
+        let action = args["name"].as_str().unwrap();
+        let Some(action) = Action::named(action) else {
+            return Ok(Err(reject("UNKNOWN_TOOL", "name")));
+        };
+        if !definition.capabilities.contains(&action) {
+            return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+        }
+        let spec = action.spec();
+        if name == "describe_tool" {
+            return Ok(Ok(json!({"ok":true,"tool":spec})));
+        }
+        let parameters = args["arguments"].as_object().unwrap();
+        if let Err(error) = catalog::validate(&spec.input, parameters) {
+            return Ok(Err(error));
+        }
+        if action == Action::GetWorkOrder {
+            let order = parameters["work_order"].as_str().unwrap();
+            return Ok(
+                if definition
+                    .work_orders
+                    .iter()
+                    .any(|candidate| candidate == order)
+                {
+                    Ok(json!({"ok":true,"run_id":run,"work_order":order,"status":"planned"}))
+                } else {
+                    Err(reject("WORK_ORDER_NOT_FOUND", "work_order"))
+                },
+            );
+        }
+        let batch = parameters["batch"].as_str().unwrap();
+        let Some(order) = definition.materials.get(batch) else {
+            return Ok(Err(reject("MATERIAL_NOT_FOUND", "batch")));
+        };
+        let held: Option<String> = tx
+            .query_row(
+                "SELECT reason FROM scenario_holds WHERE run=?1 AND batch=?2",
+                params![run, batch],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if action == Action::GetMaterial {
+            return Ok(Ok(
+                json!({"ok":true,"run_id":run,"batch":batch,"work_order":order,"held":held.is_some(),"reason":held,"cursor":cursor}),
+            ));
+        }
+        let reason = parameters["reason"].as_str().unwrap();
+        let key = parameters["idempotency_key"].as_str().unwrap();
+        let request = serde_json::to_string(parameters)?;
+        let saved = tx
+            .query_row(
+                "SELECT request,response FROM scenario_requests WHERE run=?1 AND key=?2",
+                params![run, key],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        if let Some((original, response)) = saved {
+            return Ok(if original == request {
+                Ok(serde_json::from_str(&response)?)
+            } else {
+                Err(reject("IDEMPOTENCY_CONFLICT", "idempotency_key"))
+            });
+        }
+        if held.is_some() {
+            return Ok(Err(reject("ALREADY_HELD", "batch")));
+        }
+        tx.execute(
+            "INSERT INTO scenario_holds VALUES (?1,?2,?3)",
+            params![run, batch, reason],
+        )?;
+        tx.execute(
+            "UPDATE scenario_runs SET cursor=cursor+1 WHERE id=?1",
+            [run],
+        )?;
+        let response = json!({"ok":true,"run_id":run,"batch":batch,"held":true,"reason":reason,"cursor":cursor+1});
+        tx.execute(
+            "INSERT INTO scenario_requests VALUES (?1,?2,?3,?4)",
+            params![run, key, request, response.to_string()],
+        )?;
+        tx.commit()?;
+        Ok(Ok(response))
+    }
+}
+
+fn run_view(
+    run: &str,
+    scenario: &str,
+    version: i64,
+    seed: &str,
+    closed: bool,
+    cursor: i64,
+) -> Value {
+    json!({"ok":true,"run_id":run,"scenario_id":scenario,"version":version,"seed":seed.parse::<u64>().expect("stored seed"),"closed":closed,"clock":0,"cursor":cursor,"mode":"mock"})
+}

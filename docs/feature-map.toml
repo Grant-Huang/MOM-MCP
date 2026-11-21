@@ -48,6 +48,7 @@ phase = "P1"
 spec = "acceptance/P1.md"
 features = ["F02"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p1_01_search_synonyms_filters_and_sorting" }
 
 [[case]]
 id = "P1-02"
@@ -55,6 +56,7 @@ phase = "P1"
 spec = "acceptance/P1.md"
 features = ["F02"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p1_02_schema_and_business_errors" }
 
 [[case]]
 id = "P1-03"
@@ -62,6 +64,7 @@ phase = "P1"
 spec = "acceptance/P1.md"
 features = ["F04", "F08"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p1_03_run_isolation_close_and_reconnect" }
 
 [[case]]
 id = "P1-04"
@@ -69,6 +72,7 @@ phase = "P1"
 spec = "acceptance/P1.md"
 features = ["F03"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p1_04_register_and_reject_malformed_definitions" }
 
 [[case]]
 id = "P1-UI"
@@ -76,6 +80,7 @@ phase = "P1"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P1-UI search, call and verify isolated scenario runs" }
 
 [[case]]
 id = "P2-01"

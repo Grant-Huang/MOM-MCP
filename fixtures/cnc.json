@@ -1,0 +1,1 @@
+{"scenario_id":"cnc","version":1,"title":"汽车零部件 CNC","model":"cnc_wear","work_orders":["WO-1"],"materials":{"LOT-1":"WO-1"},"capabilities":["get_work_order","get_material","hold_material"]}

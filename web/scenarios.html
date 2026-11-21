@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOM-MCP · 场景验收台</title>
+<style>
+:root { color-scheme: dark; font: 16px/1.6 system-ui, sans-serif; background: #101815; color: #edf3ef; }
+* { box-sizing: border-box; }
+main { width: min(56rem, calc(100% - 2rem)); margin: 2rem auto; }
+a { color: #bdf479; }
+h1, h2 { line-height: 1.2; }
+section { border: 1px solid #354741; padding: 1rem; margin: 1rem 0; background: #151f1b; }
+label { display: block; margin: .75rem 0; }
+input, select, textarea, button { font: inherit; padding: .4rem; max-width: 100%; }
+button { cursor: pointer; }
+textarea { display: block; width: 100%; min-height: 6rem; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid #bdf479; outline-offset: 2px; }
+</style>
+<script src="/scenarios.js" defer></script>
+</head>
+<body><main>
+<a href="/">项目介绍</a> · <a href="/acceptance">P0 接入探针</a>
+<h1>场景验收台</h1>
+<p>P1 · 模拟场景。当前使用固定夹具，虚拟时间停在初始值。</p>
+<section>
+<h2>运行实例</h2>
+<button id="load">加载场景</button>
+<label for="scenario">已发布场景</label><select id="scenario" disabled></select>
+<label>随机种子 <input id="seed" type="number" min="0" max="9007199254740991" step="1" value="1"></label>
+<button id="open" disabled>打开场景</button>
+<label for="run">当前运行</label><select id="run" disabled></select>
+<button id="read-run" disabled>查看运行</button>
+<button id="close" disabled>关闭运行</button>
+</section>
+<section>
+<h2>查找业务工具</h2>
+<form id="search">
+<label>搜索词 <input id="query" placeholder="质量冻结或 quality hold"></label>
+<label>业务域 <select id="domain"><option value="">全部</option><option value="quality">质量</option><option value="inventory">库存</option><option value="production">生产</option></select></label>
+<label>操作类型 <select id="effect"><option value="">全部</option><option value="read">只读</option><option value="write">写入</option></select></label>
+<button id="find" disabled>搜索工具</button>
+</form>
+<label for="tool">匹配工具</label><select id="tool" disabled></select>
+<button id="describe" disabled>查看工具契约</button>
+<pre id="contract" aria-label="工具契约"></pre>
+</section>
+<section>
+<h2>调用与复查</h2>
+<form id="call">
+<label>JSON 参数<textarea id="arguments">{}</textarea></label>
+<button id="invoke" disabled>调用工具</button>
+</form>
+<pre id="response" role="status">等待操作</pre>
+</section>
+</main></body>
+</html>

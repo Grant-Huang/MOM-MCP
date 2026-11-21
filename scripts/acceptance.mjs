@@ -33,13 +33,14 @@ if (
 
 const selected = map.filter((entry) => entry.phase <= phase);
 const external = [];
+const missing = [];
 const cargo = [];
 const browser = [];
 const upstream = [];
 for (const entry of selected) {
   for (const layer of entry.layers) {
     const test = entry.tests?.[layer];
-    if (!test) external.push(`${entry.id}/${layer}`);
+    if (!test) missing.push(`${entry.id}/${layer}`);
     else if (layer === "rust-integration") cargo.push([entry.id, test]);
     else if (layer === "playwright") browser.push([entry.id, test]);
     else if (layer === "agentnexus" || layer === "des-baseline") {
@@ -92,7 +93,11 @@ if (upstream.length) {
     if (!stdout.includes(`test ${test} ... ok`)) throw new Error(`Missing successful upstream evidence for ${id}`);
   }
 }
+if (missing.length) {
+  console.error(`Missing project tests: ${missing.join(", ")}`);
+  process.exitCode = 1;
+}
 if (external.length) {
   console.error(`No automated evidence registered: ${external.join(", ")}`);
-  if (gate || phase !== "P0") process.exitCode = 1;
+  if (gate) process.exitCode = 1;
 }

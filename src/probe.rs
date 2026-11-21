@@ -15,11 +15,16 @@ use serde_json::{Map, Value, json};
 pub struct Probe {
     db: PathBuf,
     response_delay_ms: u64,
+    scenarios: Option<crate::scenario::Scenarios>,
 }
 
 impl Probe {
-    pub fn new(db: PathBuf, response_delay_ms: u64) -> anyhow::Result<Self> {
+    pub fn new(db: PathBuf, response_delay_ms: u64, scenario_tools: bool) -> anyhow::Result<Self> {
+        let scenarios = scenario_tools
+            .then(|| crate::scenario::Scenarios::new(db.clone()))
+            .transpose()?;
         let probe = Self {
+            scenarios,
             db,
             response_delay_ms,
         };
@@ -144,7 +149,11 @@ impl ServerHandler for Probe {
             );
             tool
         });
-        Ok(ListToolsResult::with_all_items(tools.into()))
+        let mut tools = tools.to_vec();
+        if self.scenarios.is_some() {
+            tools.extend(crate::catalog::tools());
+        }
+        Ok(ListToolsResult::with_all_items(tools))
     }
 
     async fn call_tool(
@@ -153,7 +162,16 @@ impl ServerHandler for Probe {
         _: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         if !matches!(request.name.as_ref(), "get_probe" | "set_probe") {
-            return Err(ErrorData::invalid_params("Unknown tool", None));
+            let Some(scenarios) = self.scenarios.clone() else {
+                return Err(ErrorData::invalid_params("Unknown tool", None));
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                scenarios.invoke(&request.name, request.arguments.unwrap_or_default())
+            })
+            .await
+            .map_err(|_| ErrorData::internal_error("Scenario worker failed", None))?
+            .map_err(|_| ErrorData::internal_error("Scenario operation failed", None))?;
+            return Ok(CallToolResult::structured(result).into());
         }
         let probe = self.clone();
         let (value, inserted) = tokio::task::spawn_blocking(move || {

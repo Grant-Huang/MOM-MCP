@@ -34,3 +34,19 @@ MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P0 --gate
 本地命令通过 [feature map](docs/feature-map.toml) 选择 Rust stdio 和浏览器测试。严格门槛还会对固定的 AgentNexus 版本运行实际连接、Agent 工具使用和 CNC 复跑验证。验证使用该仓库的临时源码副本。可以设置 `MOM_CHROMIUM` 使用已安装的 Chromium。浏览器报告保存在 `test-results/browser.json`。
 
 参见 [P0 验收](docs/acceptance/P0.md)、[架构设计](docs/DESIGN.md) 与 [测试及 Mock 替换计划](docs/TEST_AND_MOCK_PLAN.md)。
+
+## P1 场景工具
+
+从首页进入「场景验收台」，加载 CNC、SMT 或按单装配夹具。每次打开生成独立的 `run_id`；切换后可重新搜索并复查各自的物料状态。P1 的虚拟时间固定为初始值，P2 接入 DES 后按规则推进。
+
+AgentNexus 可使用 [P1 示例配置](config/agentnexus.p1.toml) 启用七个场景工具。可信调用端可用 `register-scenario` 注册定义：
+
+```sh
+cargo run --locked -- register-scenario --db scenarios.sqlite3 --file /path/to/my-scenario.json
+```
+
+以 [CNC 夹具](fixtures/cnc.json) 为起点，选用新的场景 ID 或版本。同名同版本一旦注册就保留原定义。可选的 `event_rules` 使用分布参数描述相对延迟，P1 只校验和存储规则。
+
+```sh
+MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P1 --gate
+```

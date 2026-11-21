@@ -28,9 +28,12 @@ fn unavailable() -> (StatusCode, Json<Value>) {
 }
 
 impl Bridge {
-    async fn connect(&self) -> anyhow::Result<RunningService<RoleClient, ()>> {
+    async fn connect(&self, scenarios: bool) -> anyhow::Result<RunningService<RoleClient, ()>> {
         let mut command = Command::new(&self.executable);
         command.arg("stdio").arg("--db").arg(&self.db);
+        if scenarios {
+            command.arg("--scenario-tools");
+        }
         let transport = rmcp::transport::TokioChildProcess::new(command)?;
         Ok(().serve(transport).await?)
     }
@@ -38,7 +41,7 @@ impl Bridge {
 
 async fn list(State(bridge): State<Bridge>) -> Reply {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let client = bridge.connect().await?;
+        let client = bridge.connect(false).await?;
         let output = client.peer().list_tools(None).await?;
         client.cancel().await?;
         Ok::<_, anyhow::Error>(Json(serde_json::to_value(output)?))
@@ -61,8 +64,22 @@ async fn call(State(bridge): State<Bridge>, Json(request): Json<Call>) -> Reply 
             Json(json!({"ok":false,"code":"UNKNOWN_TOOL"})),
         ));
     }
+    forward(bridge, request, false).await
+}
+
+async fn scenarios(State(bridge): State<Bridge>, Json(request): Json<Call>) -> Reply {
+    if crate::catalog::gateway(&request.name).is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"ok":false,"code":"UNKNOWN_TOOL"})),
+        ));
+    }
+    forward(bridge, request, true).await
+}
+
+async fn forward(bridge: Bridge, request: Call, scenarios: bool) -> Reply {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let client = bridge.connect().await?;
+        let client = bridge.connect(scenarios).await?;
         let response = client
             .peer()
             .call_tool(CallToolRequestParams::new(request.name).with_arguments(request.arguments))
@@ -139,6 +156,20 @@ pub async fn serve(db: PathBuf, port: u16) -> anyhow::Result<()> {
                 )
             }),
         )
+        .route(
+            "/scenarios",
+            get(|| async { Html(include_str!("../web/scenarios.html")) }),
+        )
+        .route(
+            "/scenarios.js",
+            get(|| async {
+                (
+                    [("content-type", "text/javascript; charset=utf-8")],
+                    include_str!("../web/scenarios.js"),
+                )
+            }),
+        )
+        .route("/api/scenarios", post(scenarios))
         .route("/api/tools", get(list))
         .route("/api/call", post(call))
         .with_state(state);
