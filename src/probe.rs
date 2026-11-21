@@ -126,6 +126,11 @@ impl ServerHandler for Probe {
         _: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        if self.scenarios.is_some() {
+            return Ok(ListToolsResult::with_all_items(crate::catalog::tools(
+                self.control_tools,
+            )));
+        }
         let output = json!({"type":"object","required":["ok","code","revision","value"],"properties":{
             "ok":{"type":"boolean"},"code":{"enum":["OK","INVALID_ARGUMENT","VALUE_OUT_OF_RANGE","IDEMPOTENCY_CONFLICT"]},
             "revision":{"type":"integer"},"value":{"type":"integer"}
@@ -156,11 +161,7 @@ impl ServerHandler for Probe {
             );
             tool
         });
-        let mut tools = tools.to_vec();
-        if self.scenarios.is_some() {
-            tools.extend(crate::catalog::tools(self.control_tools));
-        }
-        Ok(ListToolsResult::with_all_items(tools))
+        Ok(ListToolsResult::with_all_items(tools.to_vec()))
     }
 
     async fn call_tool(
@@ -168,7 +169,7 @@ impl ServerHandler for Probe {
         request: CallToolRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        if !matches!(request.name.as_ref(), "get_probe" | "set_probe") {
+        if self.scenarios.is_some() || !matches!(request.name.as_ref(), "get_probe" | "set_probe") {
             let Some(scenarios) = self.scenarios.clone() else {
                 return Err(ErrorData::invalid_params("Unknown tool", None));
             };

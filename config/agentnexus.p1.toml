@@ -9,13 +9,13 @@ timeout_ms = 5000
 [[mcp.servers.tools]]
 name = "list_scenarios"
 capability_id = "mom.scenario.list"
-description = "List published mock scenarios and versions"
+description = "List manufacturing scenarios and versions"
 effect = "read_only"
 
 [[mcp.servers.tools]]
 name = "open_scenario"
 capability_id = "mom.scenario.open"
-description = "Open an isolated mock scenario run"
+description = "Open an isolated manufacturing scenario run"
 effect = "workspace_write"
 
 [[mcp.servers.tools]]
@@ -51,5 +51,5 @@ effect = "workspace_write"
 [[mcp.servers.tools]]
 name = "read_events"
 capability_id = "mom.scenario.events"
-description = "Read events delivered by the simulation"
+description = "Read manufacturing events available to this run"
 effect = "read_only"

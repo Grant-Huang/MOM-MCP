@@ -69,6 +69,19 @@ pub struct Gateway {
     pub control: bool,
 }
 
+impl Gateway {
+    pub fn input_schema(&self, control: bool) -> Value {
+        let mut schema = self.input.clone();
+        if !control && self.name == "open_scenario" {
+            schema["properties"]
+                .as_object_mut()
+                .expect("gateway input properties")
+                .remove("seed");
+        }
+        schema
+    }
+}
+
 #[derive(Serialize)]
 pub struct Spec {
     pub(crate) name: &'static str,
@@ -251,7 +264,7 @@ pub fn gateway(name: &str) -> Option<Gateway> {
     let (name, description, read_only, input) = match name {
         "list_scenarios" => (
             "list_scenarios",
-            "List published mock scenarios",
+            "List available manufacturing scenarios",
             true,
             object(&[], json!({})),
         ),
@@ -364,7 +377,7 @@ pub fn tools(control: bool) -> Vec<Tool> {
             let mut tool = Tool::new(
                 spec.name,
                 spec.description,
-                spec.input.as_object().unwrap().clone(),
+                spec.input_schema(control).as_object().unwrap().clone(),
             );
             tool.annotations = Some(
                 ToolAnnotations::new()

@@ -178,7 +178,7 @@ async fn open(client: &RunningService<RoleClient, ()>, scenario: &str) -> Value 
     let result = call(
         client,
         "open_scenario",
-        json!({"scenario_id":scenario,"version":1,"seed":42}),
+        json!({"scenario_id":scenario,"version":1}),
     )
     .await;
     assert_eq!(result["ok"], true, "{result}");
@@ -619,7 +619,7 @@ async fn p2_05_model_registry_validation() {
             json!({"scenario_id":"legacy","version":1}),
         )
         .await;
-        assert_eq!(rejected["code"], "MODEL_CONFIGURATION_INVALID");
+        assert_eq!(rejected["code"], "SCENARIO_CONFIGURATION_INVALID");
         for (id, kind) in [("smt", "fixture_ready"), ("cnc", "cnc_vibration")] {
             let run = open(&controller, id).await;
             advance(&controller, &run, 1).await;
@@ -676,7 +676,7 @@ async fn cnc(client: &RunningService<RoleClient, ()>) -> Value {
     let state = call(
         client,
         "open_scenario",
-        json!({"scenario_id":"cnc","version":2,"seed":42}),
+        json!({"scenario_id":"cnc","version":2}),
     )
     .await;
     assert_eq!(state["ok"], true);
@@ -1052,7 +1052,7 @@ async fn smt(client: &RunningService<RoleClient, ()>) -> Value {
     let opened = call(
         client,
         "open_scenario",
-        json!({"scenario_id":"smt","version":2,"seed":42}),
+        json!({"scenario_id":"smt","version":2}),
     )
     .await;
     assert_eq!(opened["ok"], true, "{opened}");
@@ -1381,7 +1381,7 @@ async fn open_assembly(client: &RunningService<RoleClient, ()>, normal: bool) ->
     let value = call(
         client,
         "open_scenario",
-        json!({"scenario_id":id,"version":version,"seed":42}),
+        json!({"scenario_id":id,"version":version}),
     )
     .await;
     assert_eq!(value["ok"], true, "{value}");
@@ -2345,4 +2345,103 @@ async fn p8_01_partial_reporting_reversal_and_dependencies() {
         assert_eq!(mes(&client,&run,"dispatch_operation","WO-1","assembly-dispatch",json!({"operation":"assembly"})).await["ok"],true);
         assert_eq!(call(&client,"close_run",json!({"run_id":run})).await["closed"],true);
     }).await.unwrap();
+}
+
+#[tokio::test]
+async fn p8_02_public_mcp_contract_excludes_evaluation_internals() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (agent, _a) = connect_mode(&db, "0", true).await;
+    let (evaluation, _b) = connect_options(&db, "0", true, true).await;
+    timeout(WAIT, async {
+        let tools = agent.peer().list_tools(None).await.unwrap();
+        assert_eq!(tools.tools.len(), 8);
+        let opening = tools
+            .tools
+            .iter()
+            .find(|tool| tool.name == "open_scenario")
+            .unwrap();
+        assert!(
+            !opening.input_schema["properties"]
+                .as_object()
+                .unwrap()
+                .contains_key("seed")
+        );
+        let scenarios = call(&agent, "list_scenarios", json!({})).await;
+        let opened = call(
+            &agent,
+            "open_scenario",
+            json!({"scenario_id":"cnc","version":2}),
+        )
+        .await;
+        assert_eq!(opened["ok"], true);
+        let run = &opened["run_id"];
+        let view = call(&agent, "get_run", json!({"run_id":run})).await;
+        for public in [
+            serde_json::to_value(tools).unwrap(),
+            scenarios,
+            opened.clone(),
+            view,
+        ] {
+            let serialized = public.to_string();
+            for forbidden in [
+                "mock",
+                "fixture",
+                "model_version",
+                "run_parameters",
+                "diagnosis",
+                "inspect_run",
+                "get_probe",
+                "set_probe",
+                "seed",
+            ] {
+                assert!(
+                    !serialized.contains(forbidden),
+                    "{forbidden} in {serialized}"
+                );
+            }
+        }
+        assert_eq!(
+            call(&agent, "inspect_run", json!({"run_id":run})).await["code"],
+            "UNKNOWN_TOOL"
+        );
+        assert_eq!(
+            call(&agent, "get_probe", json!({})).await["code"],
+            "UNKNOWN_TOOL"
+        );
+        assert_eq!(
+            call(
+                &agent,
+                "open_scenario",
+                json!({"scenario_id":"cnc","version":2,"seed":42})
+            )
+            .await["code"],
+            "INVALID_ARGUMENT"
+        );
+        let legacy = open(&agent, "smt").await;
+        assert_eq!(advance(&evaluation, &legacy, 1).await["event_cursor"], 1);
+        assert_eq!(
+            delivered(&evaluation, &legacy).await["events"][0]["kind"],
+            "fixture_ready"
+        );
+        let public_events = delivered(&agent, &legacy).await;
+        assert_eq!(public_events["events"][0]["kind"], "station_ready");
+        assert_eq!(public_events["event_cursor"], 1);
+        let controlled = call(
+            &evaluation,
+            "open_scenario",
+            json!({"scenario_id":"cnc","version":2,"seed":42}),
+        )
+        .await;
+        let evidence = call(
+            &evaluation,
+            "inspect_run",
+            json!({"run_id":controlled["run_id"]}),
+        )
+        .await;
+        assert_eq!(evidence["seed"], "42");
+        assert_eq!(evidence["diagnosis"]["root_cause"], "spindle_wear");
+    })
+    .await
+    .unwrap();
 }

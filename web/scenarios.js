@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 const scenarios = new Map();
 const runs = new Map();
 let busy = false;
+let controlEnabled = false;
 
 function show(value) {
   $("response").textContent = JSON.stringify(value, null, 2);
@@ -63,9 +64,13 @@ $("load").onclick = () => action(async () => {
 
 $("open").onclick = () => action(async () => {
   const { scenario_id, version, title } = scenarios.get($("scenario").value);
-  const seed = $("seed").valueAsNumber;
-  if (!Number.isSafeInteger(seed) || seed < 0) return { ok: false, code: "INVALID_SEED" };
-  const result = await request("open_scenario", { scenario_id, version, seed });
+  const args = { scenario_id, version };
+  if (controlEnabled) {
+    const seed = $("seed").valueAsNumber;
+    if (!Number.isSafeInteger(seed) || seed < 0) return { ok: false, code: "INVALID_SEED" };
+    args.seed = seed;
+  }
+  const result = await request("open_scenario", args);
   if (result.ok) {
     runs.set(result.run_id, result);
     $("run").add(new Option(`${title} · ${result.run_id.slice(0, 8)}`, result.run_id));
@@ -127,5 +132,7 @@ $("events").onclick = () => action(() => request("read_events", { run_id: $("run
 $("advance").onclick = () => action(() => request("advance_run", { run_id: $("run").value }));
 $("repair").onclick = () => action(() => request("intervene_run", { run_id: $("run").value, action: "maintenance" }));
 fetch("/api/control-enabled").then((response) => response.json()).then((enabled) => {
+  controlEnabled = enabled;
+  $("seed-control").hidden = !enabled;
   $("control").hidden = !enabled;
 }).catch(() => {});

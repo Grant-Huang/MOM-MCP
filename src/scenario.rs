@@ -304,10 +304,10 @@ impl Scenarios {
         let Some(tool) = catalog::gateway(name).filter(|tool| control || !tool.control) else {
             return Ok(reject("UNKNOWN_TOOL", "name").json());
         };
-        if let Err(error) = catalog::validate(&tool.input, &args) {
+        if let Err(error) = catalog::validate(&tool.input_schema(control), &args) {
             return Ok(error.json());
         }
-        match self.dispatch(name, &args)? {
+        match self.dispatch(name, &args, control)? {
             Ok(value) => Ok(value),
             Err(error) => Ok(error.json()),
         }
@@ -317,6 +317,7 @@ impl Scenarios {
         &self,
         name: &str,
         args: &Map<String, Value>,
+        control: bool,
     ) -> anyhow::Result<Result<Value, Rejection>> {
         let mut conn = self.connect()?;
         if name == "list_scenarios" {
@@ -325,7 +326,13 @@ impl Scenarios {
             let mut scenarios = Vec::new();
             for row in query.query_map([], |r| r.get::<_, String>(0))? {
                 let spec: Definition = serde_json::from_str(&row?)?;
-                scenarios.push(json!({"scenario_id":spec.scenario_id,"version":spec.version,"title":spec.title,"model":spec.model,"model_version":spec.model_version,"capabilities":spec.capabilities,"mode":"mock","run_parameters":{"seed":{"type":"integer","minimum":0,"default":1}}}));
+                let mut scenario = json!({"scenario_id":spec.scenario_id,"version":spec.version,
+                    "title":spec.title,"capabilities":spec.capabilities});
+                if control {
+                    scenario["model"] = spec.model.into();
+                    scenario["model_version"] = spec.model_version.into();
+                }
+                scenarios.push(scenario);
             }
             return Ok(Ok(json!({"ok":true,"scenarios":scenarios})));
         }
@@ -356,7 +363,7 @@ impl Scenarios {
             )
             .is_err()
             {
-                return Ok(Err(reject("MODEL_CONFIGURATION_INVALID", "model")));
+                return Ok(Err(reject("SCENARIO_CONFIGURATION_INVALID", "scenario_id")));
             }
             let id: String = conn.query_row(
                 "INSERT INTO scenario_runs (id,scenario,version,seed)
@@ -364,7 +371,7 @@ impl Scenarios {
                 params![scenario, version, seed],
                 |row| row.get(0),
             )?;
-            return Ok(Ok(run_view(&id, scenario, version, &seed, false, 0, None)));
+            return Ok(Ok(run_view(&id, scenario, version, false, 0, None)));
         }
 
         let run = args["run_id"].as_str().unwrap();
@@ -401,7 +408,6 @@ impl Scenarios {
                 run,
                 &scenario,
                 version,
-                &seed,
                 closed,
                 cursor,
                 stored.as_ref(),
@@ -414,7 +420,6 @@ impl Scenarios {
                 run,
                 &scenario,
                 version,
-                &seed,
                 true,
                 cursor,
                 stored.as_ref(),
@@ -431,7 +436,7 @@ impl Scenarios {
             }
             return Ok(Ok(stored.as_ref().map_or_else(
                 || json!({"ok":true,"clock":0,"events":[],"event_cursor":0,"has_more":false}),
-                |state| state.page(after, limit),
+                |state| state.page(after, limit, control),
             )));
         }
         if closed {
@@ -714,10 +719,9 @@ fn run_view(
     run: &str,
     scenario: &str,
     version: i64,
-    seed: &str,
     closed: bool,
     cursor: i64,
     state: Option<&Simulation>,
 ) -> Value {
-    json!({"ok":true,"run_id":run,"scenario_id":scenario,"version":version,"seed":seed.parse::<u64>().expect("stored seed"),"closed":closed,"clock":state.map_or(0, |state| state.timeline.clock),"event_cursor":state.map_or(0, |state| state.timeline.events.len()),"cursor":cursor,"mode":"mock"})
+    json!({"ok":true,"run_id":run,"scenario_id":scenario,"version":version,"closed":closed,"clock":state.map_or(0, |state| state.timeline.clock),"event_cursor":state.map_or(0, |state| state.timeline.events.len()),"cursor":cursor})
 }
