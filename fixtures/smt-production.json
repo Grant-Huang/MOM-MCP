@@ -1,0 +1,61 @@
+{
+  "scenario_id": "smt",
+  "version": 2,
+  "title": "电子装联 SMT · 贴装与召回",
+  "model": "smt_line",
+  "model_parameters": {
+    "recall_reel": "REEL-R",
+    "recall_mean_minutes": 25,
+    "aoi_panel": "P-B",
+    "aoi_mean_minutes": 28
+  },
+  "work_orders": [
+    "WO-A",
+    "WO-B"
+  ],
+  "materials": {},
+  "capabilities": [
+    "get_work_order",
+    "smt_release",
+    "smt_load",
+    "smt_place",
+    "smt_aoi",
+    "smt_split",
+    "smt_finish",
+    "smt_status",
+    "smt_trace",
+    "smt_isolate",
+    "smt_rework",
+    "smt_retest",
+    "smt_scrap"
+  ],
+  "smt": {
+    "reels": {
+      "REEL-R": 12,
+      "REEL-C": 20
+    },
+    "panels": {
+      "P-A": {
+        "order": "WO-A",
+        "serials": [
+          "A-01",
+          "A-02"
+        ]
+      },
+      "P-B": {
+        "order": "WO-B",
+        "serials": [
+          "B-01",
+          "B-02"
+        ]
+      },
+      "P-C": {
+        "order": "WO-B",
+        "serials": [
+          "C-01",
+          "C-02"
+        ]
+      }
+    }
+  }
+}

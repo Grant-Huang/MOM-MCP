@@ -54,6 +54,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 <section>
 <h2>调用与复查</h2>
 <details><summary>CNC 泵体生产示例</summary><p>打开「汽车零部件 CNC · 泵体生产」。搜索全部工具，按下达、派工、领料、开工、报工推进机加工，再派工、开工和报工装配，最后派工、终检并关单。使用 WO-1、LOT-1，写操作提供不同的幂等键。关单后可按批次或序列号追溯。</p></details>
+<details><summary>SMT 召回与返工示例</summary><p>打开「电子装联 SMT · 贴装与召回」。下达 WO-A，给 F1 上料 REEL-R，贴装 P-A，进行 AOI 并分板。推进并读取供应商召回事件，按事件游标隔离。使用 REEL-C 为 A-01 返工，复检后放行，并按单板或料卷追溯。</p></details>
 <form id="call">
 <label>JSON 参数<textarea id="arguments">{}</textarea></label>
 <button id="invoke" disabled>调用工具</button>

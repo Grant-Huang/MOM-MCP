@@ -3,6 +3,7 @@ mod mes;
 mod probe;
 mod scenario;
 mod simulation;
+mod smt;
 mod web;
 
 use clap::{Parser, Subcommand};
