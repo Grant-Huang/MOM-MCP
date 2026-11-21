@@ -692,6 +692,7 @@ dependencies = [
  "mom-des",
  "mom-model-cnc",
  "mom-model-fixture",
+ "mom-model-smt",
  "rmcp",
  "rusqlite",
  "serde",
@@ -714,6 +715,15 @@ name = "mom-model-fixture"
 version = "0.1.0"
 dependencies = [
  "mom-des",
+ "serde_json",
+]
+
+[[package]]
+name = "mom-model-smt"
+version = "0.1.0"
+dependencies = [
+ "mom-des",
+ "serde",
  "serde_json",
 ]
 

@@ -23,6 +23,18 @@ pub enum Action {
     CloseOrder,
     Trace,
     ReverseReport,
+    SmtRelease,
+    SmtLoad,
+    SmtPlace,
+    SmtAoi,
+    SmtSplit,
+    SmtFinish,
+    SmtStatus,
+    SmtTrace,
+    SmtIsolate,
+    SmtRework,
+    SmtRetest,
+    SmtScrap,
 }
 
 pub struct Gateway {
@@ -63,6 +75,7 @@ impl Action {
             .or_else(|| {
                 crate::mes::TOOLS
                     .iter()
+                    .chain(crate::smt::TOOLS)
                     .find(|tool| tool.1 == name)
                     .map(|tool| tool.0)
             })
@@ -76,6 +89,7 @@ impl Action {
             _ => {
                 crate::mes::TOOLS
                     .iter()
+                    .chain(crate::smt::TOOLS)
                     .find(|tool| tool.0 == self)
                     .unwrap()
                     .1
@@ -136,6 +150,9 @@ impl Action {
                     "IDEMPOTENCY_CONFLICT",
                 ][..],
             ),
+            _ if crate::smt::TOOLS.iter().any(|tool| tool.0 == self) => {
+                return crate::smt::spec(self);
+            }
             _ => return crate::mes::spec(self),
         };
         let mut fields = fields.as_object().unwrap().clone();

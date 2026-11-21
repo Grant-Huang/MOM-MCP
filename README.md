@@ -83,3 +83,20 @@ MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P2 --gate
 ```sh
 MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P3 --gate
 ```
+
+## P4 电子装联 SMT
+
+在场景验收台选择 `smt@2`。两张工单共享同一料卷，另有对照料卷。所有写入带不同的 `idempotency_key`，重放须保留原参数和键。
+
+| 流程 | 工具 |
+|---|---|
+| 生产 | `smt_release`、`smt_load`、`smt_place`、`smt_aoi`、`smt_split`、`smt_finish` |
+| 查询 | `smt_status` 查看上料历史和余量，`smt_trace` 按料卷、拼板或单板查实际谱系 |
+| 异常 | 通过 `read_events` 获取已交付的召回游标，再调用 `smt_isolate` |
+| 处置 | `smt_rework` 更换料卷元件，`smt_retest` 合格后放行，或使用 `smt_scrap` 登记报废 |
+
+启动评测控制后，可推进虚拟时间观察供应商召回和 AOI 扰动。两者按 SMT 模型的延迟分布生成。SMT 夹具为每板一个元件的最小模型，贴装和替换都会扣减相应料卷余量。
+
+```sh
+MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P4 --gate
+```

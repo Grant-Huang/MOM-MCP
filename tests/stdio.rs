@@ -1047,3 +1047,327 @@ async fn p3_06_genealogy_and_report_reversal() {
     .await
     .unwrap();
 }
+
+async fn smt(client: &RunningService<RoleClient, ()>) -> Value {
+    let opened = call(
+        client,
+        "open_scenario",
+        json!({"scenario_id":"smt","version":2,"seed":42}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    opened["run_id"].clone()
+}
+
+async fn smt_action(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    name: &str,
+    key: &str,
+    args: Value,
+) -> Value {
+    let mut args = args.as_object().unwrap().clone();
+    args.insert("idempotency_key".into(), key.into());
+    business(client, run, name, Value::Object(args)).await
+}
+
+async fn smt_panel(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    panel: &str,
+    reel: &str,
+) -> Value {
+    let mut result = Value::Null;
+    for (name, suffix, args) in [
+        ("smt_load", "load", json!({"slot":"F1","reel":reel})),
+        ("smt_place", "place", json!({"panel":panel,"slot":"F1"})),
+        ("smt_aoi", "aoi", json!({"panel":panel,"result":"pass"})),
+        ("smt_split", "split", json!({"panel":panel})),
+    ] {
+        result = smt_action(client, run, name, &format!("{panel}-{suffix}"), args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+    }
+    result
+}
+
+async fn smt_population(client: &RunningService<RoleClient, ()>, run: &Value) {
+    for order in ["WO-A", "WO-B"] {
+        assert_eq!(
+            smt_action(
+                client,
+                run,
+                "smt_release",
+                order,
+                json!({"work_order":order})
+            )
+            .await["ok"],
+            true
+        );
+    }
+    for (panel, reel) in [("P-A", "REEL-R"), ("P-B", "REEL-R"), ("P-C", "REEL-C")] {
+        smt_panel(client, run, panel, reel).await;
+    }
+}
+
+async fn smt_recall(client: &RunningService<RoleClient, ()>, run: &Value) -> Value {
+    advance(client, run, 10).await;
+    let observed = delivered(client, run).await;
+    observed["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["kind"] == "supplier_recall")
+        .unwrap()
+        .clone()
+}
+
+#[tokio::test]
+async fn p4_01_smt_normal_route_and_genealogy() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT,async {
+        let run=smt(&client).await;
+        assert_eq!(smt_action(&client,&run,"smt_place","early",json!({"panel":"P-A","slot":"F1"})).await["code"],"INVALID_STATE");
+        assert_eq!(smt_action(&client,&run,"smt_release","release",json!({"work_order":"WO-A"})).await["ok"],true);
+        assert_eq!(smt_action(&client,&run,"smt_load","load",json!({"slot":"F2","reel":"REEL-R"})).await["ok"],true);
+        assert_eq!(smt_action(&client,&run,"smt_place","place",json!({"panel":"P-A","slot":"F2"})).await["ok"],true);
+        assert_eq!(smt_action(&client,&run,"smt_split","split",json!({"panel":"P-A"})).await["code"],"AOI_REQUIRED");
+        assert_eq!(smt_action(&client,&run,"smt_aoi","aoi",json!({"panel":"P-A","result":"pass"})).await["ok"],true);
+        assert_eq!(smt_action(&client,&run,"smt_split","split",json!({"panel":"P-A"})).await["serial_numbers"],json!(["A-01","A-02"]));
+        for serial in ["A-01","A-02"] {
+            assert_eq!(smt_action(&client,&run,"smt_finish",serial,json!({"serial":serial})).await["finished"],true);
+        }
+        let board=business(&client,&run,"smt_trace",json!({"subject":"A-01"})).await;
+        assert_eq!(board["links"][0]["panel"],"P-A");
+        assert_eq!(board["links"][0]["reel"],"REEL-R");
+        assert_eq!(board["links"][0]["machine"],"SMT-1");
+        assert_eq!(board["links"][0]["slot"],"F2");
+        assert_eq!(board["links"][0]["load_id"],1);
+        assert_eq!(business(&client,&run,"smt_trace",json!({"subject":"P-A"})).await["links"].as_array().unwrap().len(),2);
+        assert_eq!(business(&client,&run,"get_work_order",json!({"work_order":"WO-A"})).await["status"],"complete");
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn p4_02_smt_recall_across_work_orders() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT, async {
+        let run = smt(&client).await;
+        smt_population(&client, &run).await;
+        assert_eq!(
+            smt_action(
+                &client,
+                &run,
+                "smt_isolate",
+                "pending",
+                json!({"event_cursor":1})
+            )
+            .await["code"],
+            "RECALL_NOT_DELIVERED"
+        );
+        let status = business(&client, &run, "smt_status", json!({"work_order":"WO-B"})).await;
+        assert_eq!(status["load_history"][2]["reel"], "REEL-C");
+        assert_eq!(status["remaining"]["REEL-R"], 8);
+        let event = smt_recall(&client, &run).await;
+        assert!(event["minute"].as_u64().unwrap() > 0);
+        let args = json!({"event_cursor":event["cursor"]});
+        let isolated = smt_action(&client, &run, "smt_isolate", "recall", args.clone()).await;
+        assert_eq!(
+            isolated["affected"],
+            json!(["A-01", "A-02", "B-01", "B-02"])
+        );
+        assert_eq!(isolated["affected_panels"], json!(["P-A", "P-B"]));
+        assert_eq!(
+            smt_action(&client, &run, "smt_isolate", "recall", args).await,
+            isolated
+        );
+        let by_reel = business(&client, &run, "smt_trace", json!({"subject":"REEL-R"})).await;
+        assert_eq!(by_reel["links"][0]["work_order"], "WO-A");
+        assert_eq!(by_reel["links"][3]["work_order"], "WO-B");
+        for (serial, expected) in [
+            ("A-01", "QUALITY_HOLD"),
+            ("B-02", "QUALITY_HOLD"),
+            ("C-01", "OK"),
+        ] {
+            let result = smt_action(
+                &client,
+                &run,
+                "smt_finish",
+                serial,
+                json!({"serial":serial}),
+            )
+            .await;
+            if expected == "OK" {
+                assert_eq!(result["finished"], true);
+            } else {
+                assert_eq!(result["code"], expected);
+            }
+        }
+        assert_eq!(
+            smt_action(
+                &client,
+                &run,
+                "smt_load",
+                "reload",
+                json!({"slot":"F2","reel":"REEL-R"})
+            )
+            .await["code"],
+            "REEL_RECALLED"
+        );
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p4_03_smt_rework_retest_scrap_and_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT, async {
+        let run = smt(&client).await;
+        smt_population(&client, &run).await;
+        let event = smt_recall(&client, &run).await;
+        let comparison = smt(&client).await;
+        for (tool, args) in [
+            ("smt_release", json!({"work_order":"WO-B"})),
+            ("smt_load", json!({"slot":"F1","reel":"REEL-C"})),
+            ("smt_place", json!({"panel":"P-B","slot":"F1"})),
+        ] {
+            assert_eq!(
+                smt_action(&client, &comparison, tool, tool, args).await["ok"],
+                true
+            );
+        }
+        assert_eq!(smt_recall(&client, &comparison).await, event);
+        assert_eq!(
+            delivered(&client, &run).await,
+            delivered(&client, &comparison).await
+        );
+        assert_eq!(
+            smt_action(
+                &client,
+                &run,
+                "smt_isolate",
+                "isolate",
+                json!({"event_cursor":event["cursor"]})
+            )
+            .await["ok"],
+            true
+        );
+        assert_eq!(
+            smt_action(
+                &client,
+                &comparison,
+                "smt_aoi",
+                "drift",
+                json!({"panel":"P-B","result":"pass"})
+            )
+            .await["code"],
+            "AOI_DRIFT_DETECTED"
+        );
+        assert_eq!(
+            smt_action(
+                &client,
+                &comparison,
+                "smt_aoi",
+                "drift",
+                json!({"panel":"P-B","result":"fail"})
+            )
+            .await["ok"],
+            true
+        );
+        let rework = |key| {
+            smt_action(
+                &client,
+                &run,
+                "smt_rework",
+                key,
+                json!({"serial":"A-01","replacement_reel":"REEL-C","reason":"supplier recall"}),
+            )
+        };
+        assert_eq!(rework("rework").await["quality"], "awaiting_retest");
+        assert_eq!(
+            smt_action(
+                &client,
+                &run,
+                "smt_finish",
+                "early",
+                json!({"serial":"A-01"})
+            )
+            .await["code"],
+            "RETEST_REQUIRED"
+        );
+        assert_eq!(
+            smt_action(
+                &client,
+                &run,
+                "smt_retest",
+                "fail",
+                json!({"serial":"A-01","result":"fail"})
+            )
+            .await["quality"],
+            "held"
+        );
+        assert_eq!(rework("second-rework").await["quality"], "awaiting_retest");
+        assert_eq!(
+            smt_action(
+                &client,
+                &run,
+                "smt_retest",
+                "pass",
+                json!({"serial":"A-01","result":"pass"})
+            )
+            .await["quality"],
+            "clear"
+        );
+        assert_eq!(
+            smt_action(
+                &client,
+                &run,
+                "smt_finish",
+                "finish",
+                json!({"serial":"A-01"})
+            )
+            .await["finished"],
+            true
+        );
+        assert_eq!(
+            smt_action(
+                &client,
+                &run,
+                "smt_scrap",
+                "scrap",
+                json!({"serial":"A-02","reason":"damaged board"})
+            )
+            .await["quality"],
+            "scrapped"
+        );
+        assert_eq!(
+            smt_action(
+                &client,
+                &run,
+                "smt_finish",
+                "reject-scrap",
+                json!({"serial":"A-02"})
+            )
+            .await["code"],
+            "BOARD_SCRAPPED"
+        );
+        let trace = business(&client, &run, "smt_trace", json!({"subject":"A-01"})).await;
+        assert_eq!(trace["links"][0]["reel"], "REEL-R");
+        assert_eq!(
+            trace["links"][0]["replacements"],
+            json!(["REEL-C", "REEL-C"])
+        );
+        assert!(
+            trace["links"][0]["history"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["action"] == "retest" && item["result"] == "pass")
+        );
+    })
+    .await
+    .unwrap();
+}

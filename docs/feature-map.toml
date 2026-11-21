@@ -200,6 +200,7 @@ phase = "P4"
 spec = "acceptance/P4.md"
 features = ["F08", "F11", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p4_01_smt_normal_route_and_genealogy" }
 
 [[case]]
 id = "P4-02"
@@ -207,6 +208,7 @@ phase = "P4"
 spec = "acceptance/P4.md"
 features = ["F09", "F11", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p4_02_smt_recall_across_work_orders" }
 
 [[case]]
 id = "P4-03"
@@ -214,6 +216,7 @@ phase = "P4"
 spec = "acceptance/P4.md"
 features = ["F07", "F09", "F11", "F12"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p4_03_smt_rework_retest_scrap_and_replay" }
 
 [[case]]
 id = "P4-UI"
@@ -221,6 +224,7 @@ phase = "P4"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P4-UI SMT recall isolation rework and genealogy" }
 
 [[case]]
 id = "P5-01"

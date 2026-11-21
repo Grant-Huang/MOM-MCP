@@ -22,6 +22,8 @@ pub struct Definition {
     model: String,
     #[serde(default)]
     manufacturing: Option<crate::mes::Setup>,
+    #[serde(default)]
+    smt: Option<crate::smt::Setup>,
     #[serde(default = "model_version")]
     model_version: u32,
     #[serde(default)]
@@ -172,6 +174,21 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         &definition.model_parameters,
     )
     .map_err(|reason| anyhow::anyhow!("model configuration: {reason}"))?;
+    if let Some(setup) = &definition.smt {
+        setup.validate(
+            &definition.work_orders,
+            &definition.model,
+            &definition.model_parameters,
+        )?;
+    }
+    anyhow::ensure!(
+        definition.smt.is_some()
+            || !definition
+                .capabilities
+                .iter()
+                .any(|action| crate::smt::TOOLS.iter().any(|tool| tool.0 == *action)),
+        "SMT capabilities require smt setup"
+    );
     Ok(definition)
 }
 
@@ -192,6 +209,7 @@ impl Scenarios {
                  run TEXT NOT NULL, batch TEXT NOT NULL, reason TEXT NOT NULL,
                  PRIMARY KEY (run, batch)
              );
+             CREATE TABLE IF NOT EXISTS smt_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS mes_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS des_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS scenario_requests (
@@ -205,6 +223,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-shortage.json"),
             include_str!("../fixtures/cnc-lot.json"),
             include_str!("../fixtures/smt.json"),
+            include_str!("../fixtures/smt-production.json"),
             include_str!("../fixtures/assembly.json"),
         ] {
             let definition = parse_definition(source)?;
@@ -470,6 +489,20 @@ impl Scenarios {
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
         }
+        if crate::smt::TOOLS.iter().any(|tool| tool.0 == action) {
+            let Some(setup) = &definition.smt else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            let events = stored
+                .as_ref()
+                .map_or(&[][..], |state| state.timeline.events.as_slice());
+            let (response, changed) =
+                crate::smt::invoke(&tx, run, setup, action, parameters, cursor, events)?;
+            if changed {
+                tx.commit()?;
+            }
+            return Ok(Ok(response));
+        }
         if crate::mes::TOOLS.iter().any(|tool| tool.0 == action) {
             let Some(setup) = &definition.manufacturing else {
                 return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
@@ -490,6 +523,15 @@ impl Scenarios {
         }
         if action == Action::GetWorkOrder {
             let order = parameters["work_order"].as_str().unwrap();
+            if let Some(setup) = &definition.smt {
+                if !definition.work_orders.iter().any(|id| id == order) {
+                    return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
+                }
+                let status = crate::smt::work_order_status(&tx, run, setup, order)?;
+                return Ok(Ok(
+                    json!({"ok":true,"run_id":run,"work_order":order,"status":status}),
+                ));
+            }
             if let Some(setup) = &definition.manufacturing {
                 return Ok(crate::mes::order_status(
                     &tx,
