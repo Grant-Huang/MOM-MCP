@@ -18,6 +18,12 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "production",
     ),
     (
+        Action::GetReleaseReadiness,
+        "get_release_readiness",
+        "预检工单下达条件与阻塞原因",
+        "production",
+    ),
+    (
         Action::ReleaseOrder,
         "release_order",
         "下达工单并冻结工艺版本",
@@ -89,7 +95,7 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
 pub fn spec(action: Action) -> Spec {
     let &(_, name, description, domain) = TOOLS.iter().find(|entry| entry.0 == action).unwrap();
     let required: &[&str] = match action {
-        Action::MesStatus => &["work_order"],
+        Action::MesStatus | Action::GetReleaseReadiness => &["work_order"],
         Action::Trace => &["subject"],
         Action::ReviseRoute => &["route_version", "idempotency_key"],
         Action::SetEquipment => &["equipment_state", "idempotency_key"],
@@ -122,7 +128,10 @@ pub fn spec(action: Action) -> Spec {
             rule["enum"] = json!(values);
         }
     }
-    let read = matches!(action, Action::MesStatus | Action::Trace);
+    let read = matches!(
+        action,
+        Action::MesStatus | Action::Trace | Action::GetReleaseReadiness
+    );
     if let Some(equipment) = fields.get_mut("equipment_state") {
         equipment["enum"] = json!(["available", "down"]);
     }
@@ -336,6 +345,18 @@ pub fn invoke(
         params![run, LOT],
         |row| row.get(0),
     )?;
+    if action == Action::GetReleaseReadiness {
+        let id = args["work_order"].as_str().unwrap();
+        let Some(order) = state.orders.get(id) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        let blocking = release_blocker(&order.phase, state.stock, held);
+        return Ok((
+            json!({"ok":true,"work_order":id,"ready":blocking.is_none(),
+            "blocking":blocking,"route_version":state.route_version,"cursor":cursor}),
+            false,
+        ));
+    }
     if action == Action::MesStatus {
         let id = args["work_order"].as_str().unwrap();
         let Some(order) = state.orders.get(id) else {
@@ -455,6 +476,18 @@ pub fn invoke(
     Ok((response, true))
 }
 
+fn release_blocker(phase: &Phase, stock: usize, held: bool) -> Option<&'static str> {
+    if *phase != Phase::Planned {
+        Some("INVALID_STATE")
+    } else if stock < QUANTITY {
+        Some("MATERIAL_SHORTAGE")
+    } else if held {
+        Some("MATERIAL_HELD")
+    } else {
+        None
+    }
+}
+
 fn apply(
     state: &mut State,
     held: bool,
@@ -474,12 +507,13 @@ fn apply(
         return error("OPERATION_OUT_OF_SEQUENCE");
     }
     match action {
-        Action::ReleaseOrder if order.phase == Phase::Planned => {
-            if state.stock < QUANTITY {
-                return shortage(state.stock);
-            }
-            if held {
-                return error("MATERIAL_HELD");
+        Action::ReleaseOrder => {
+            if let Some(code) = release_blocker(&order.phase, state.stock, held) {
+                return if code == "MATERIAL_SHORTAGE" {
+                    shortage(state.stock)
+                } else {
+                    error(code)
+                };
             }
             order.route_version = Some(state.route_version.clone());
             order.phase = Phase::Ready;

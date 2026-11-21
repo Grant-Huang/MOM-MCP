@@ -2445,3 +2445,52 @@ async fn p8_02_public_mcp_contract_excludes_evaluation_internals() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn p8b_01_public_order_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let mut contracts = Vec::new();
+        for (scenario, first, second) in [("cnc", "WO-1", "WO-2"), ("assembly", "WO-E", "WO-L")] {
+            let opened = call(&client, "open_scenario", json!({"scenario_id":scenario,"version":3})).await;
+            assert_eq!(opened["ok"], true, "{opened}");
+            let run = &opened["run_id"];
+            let invoke = |name: &str, arguments| call(&client, "call_tool",
+                json!({"run_id":run,"name":name,"arguments":arguments}));
+            let search = call(&client, "search_tools", json!({"run_id":run})).await;
+            assert!(search["tools"].as_array().unwrap().iter().any(|entry| entry["name"] == "list_work_orders"));
+            contracts.push(call(&client, "describe_tool", json!({"run_id":run,"name":"list_work_orders"})).await);
+            let page = invoke("list_work_orders", json!({"limit":1})).await;
+            assert_eq!(page["orders"][0]["work_order"], first);
+            assert_eq!(page["next_after_work_order"], first);
+            let next = invoke("list_work_orders", json!({"after_work_order":first})).await;
+            assert_eq!(next["orders"][0]["work_order"], second);
+            assert!(next["next_after_work_order"].is_null());
+            let detail = invoke("get_work_order", json!({"work_order":first})).await;
+            assert_eq!(detail["status"], page["orders"][0]["status"]);
+            assert_eq!(invoke("list_work_orders", json!({"status":"not-a-status"})).await["orders"], json!([]));
+            if scenario == "cnc" {
+                let before = invoke("get_release_readiness", json!({"work_order":first})).await;
+                assert_eq!(before["ready"], true);
+                let repeated = invoke("get_release_readiness", json!({"work_order":first})).await;
+                assert_eq!(before, repeated);
+                let release = invoke("release_order", json!({"work_order":first,"idempotency_key":"release","expected_cursor":before["cursor"]})).await;
+                assert_eq!(release["ok"], true, "{release}");
+                let blocked = invoke("get_release_readiness", json!({"work_order":first})).await;
+                assert_eq!(blocked["blocking"], "INVALID_STATE");
+                assert_eq!(blocked["cursor"], release["cursor"]);
+                let held = invoke("hold_material", json!({"batch":"LOT-1","reason":"incoming inspection","idempotency_key":"hold"})).await;
+                assert_eq!(held["ok"], true, "{held}");
+                let blocked = invoke("get_release_readiness", json!({"work_order":second})).await;
+                assert_eq!(blocked["blocking"], "MATERIAL_HELD");
+                assert_eq!(blocked["cursor"], held["cursor"]);
+                let rejected = invoke("release_order", json!({"work_order":second,"idempotency_key":"blocked-release"})).await;
+                assert_eq!(rejected["code"], blocked["blocking"]);
+                assert_eq!(invoke("get_release_readiness", json!({"work_order":second})).await, blocked);
+            }
+        }
+        assert_eq!(contracts[0]["ok"], true);
+        assert_eq!(contracts[0], contracts[1]);
+    }).await.unwrap();
+}
