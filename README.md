@@ -66,3 +66,20 @@ cargo run --locked -- web --db p2-test.sqlite3 --control-tools
 ```sh
 MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P2 --gate
 ```
+
+## P3 汽车零部件 CNC
+
+在场景验收台选择 `cnc@2` 泵体生产夹具。先打开场景，再通过工具搜索进入制造操作。夹具含两张各 10 件的工单及一个原料批次。正常流程使用 WO-1，WO-2 可用于并发争料验证。
+
+| 流程 | 工具 |
+|---|---|
+| 下达与准备 | `release_order`、`dispatch_operation` 和 `issue_material` |
+| 工序执行 | `start_operation` 和 `report_operation`，依次执行 `machining` 与 `assembly` |
+| 质量与关单 | 派工至 `inspection`，再调用 `inspect_units`、必要时调用 `disposition`，最后 `close_order` |
+| 复查与纠正 | `mes_status`、`trace`、`reverse_report` |
+
+每次写入带 `idempotency_key`，可选 `expected_cursor` 检查当前业务版本。原料在机加工报工事务中实际扣减。终检和处置是分开的模拟动作，每次关单前必须处理质量冻结。使用 `cnc-shortage@1` 验证到货，使用 `cnc-lot@1` 验证来料偏差。
+
+```sh
+MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P3 --gate
+```

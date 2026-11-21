@@ -20,6 +20,8 @@ pub struct Definition {
     version: u32,
     title: String,
     model: String,
+    #[serde(default)]
+    manufacturing: Option<crate::mes::Setup>,
     #[serde(default = "model_version")]
     model_version: u32,
     #[serde(default)]
@@ -154,6 +156,16 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             == definition.capabilities.len(),
         "duplicate capabilities"
     );
+    if let Some(setup) = &definition.manufacturing {
+        anyhow::ensure!(
+            setup.initial_stock <= 1_000_000,
+            "manufacturing.initial_stock exceeds the supported range"
+        );
+        anyhow::ensure!(
+            definition.materials.contains_key("LOT-1"),
+            "manufacturing requires materials.LOT-1"
+        );
+    }
     simulation::load_model(
         &definition.model,
         definition.model_version,
@@ -180,6 +192,7 @@ impl Scenarios {
                  run TEXT NOT NULL, batch TEXT NOT NULL, reason TEXT NOT NULL,
                  PRIMARY KEY (run, batch)
              );
+             CREATE TABLE IF NOT EXISTS mes_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS des_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS scenario_requests (
                  run TEXT NOT NULL, key TEXT NOT NULL, request TEXT NOT NULL, response TEXT NOT NULL,
@@ -188,6 +201,9 @@ impl Scenarios {
         )?;
         for source in [
             include_str!("../fixtures/cnc.json"),
+            include_str!("../fixtures/cnc-manufacturing.json"),
+            include_str!("../fixtures/cnc-shortage.json"),
+            include_str!("../fixtures/cnc-lot.json"),
             include_str!("../fixtures/smt.json"),
             include_str!("../fixtures/assembly.json"),
         ] {
@@ -422,6 +438,15 @@ impl Scenarios {
                 ON CONFLICT(run) DO UPDATE SET state=excluded.state",
                 params![run, serde_json::to_string(&state)?],
             )?;
+            if let Some(setup) = &definition.manufacturing {
+                crate::mes::project_receipts(
+                    &tx,
+                    run,
+                    setup,
+                    &definition.work_orders,
+                    &state.timeline.events,
+                )?;
+            }
             tx.commit()?;
             return Ok(Ok(response));
         }
@@ -445,8 +470,36 @@ impl Scenarios {
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
         }
+        if crate::mes::TOOLS.iter().any(|tool| tool.0 == action) {
+            let Some(setup) = &definition.manufacturing else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            let (response, changed) = crate::mes::invoke(
+                &tx,
+                run,
+                setup,
+                &definition.work_orders,
+                action,
+                parameters,
+                cursor,
+            )?;
+            if changed {
+                tx.commit()?;
+            }
+            return Ok(Ok(response));
+        }
         if action == Action::GetWorkOrder {
             let order = parameters["work_order"].as_str().unwrap();
+            if let Some(setup) = &definition.manufacturing {
+                return Ok(crate::mes::order_status(
+                    &tx,
+                    run,
+                    setup,
+                    &definition.work_orders,
+                    order,
+                )?
+                .ok_or_else(|| reject("WORK_ORDER_NOT_FOUND", "work_order")));
+            }
             return Ok(
                 if definition
                     .work_orders

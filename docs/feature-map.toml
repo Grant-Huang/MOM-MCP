@@ -144,6 +144,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F08", "F09"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_01_shortage_receipt_and_snapshot" }
 
 [[case]]
 id = "P3-02"
@@ -151,6 +152,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F08", "F09", "F11", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_02_sequence_and_normal_production" }
 
 [[case]]
 id = "P3-03"
@@ -158,6 +160,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F10"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_03_idempotent_retry_and_parallel_stock" }
 
 [[case]]
 id = "P3-04"
@@ -165,6 +168,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F10", "F12"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_04_rollback_and_receipt_deduplication" }
 
 [[case]]
 id = "P3-05"
@@ -172,6 +176,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F09", "F13"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_05_quality_disposition_and_evidence" }
 
 [[case]]
 id = "P3-06"
@@ -179,6 +184,7 @@ phase = "P3"
 spec = "acceptance/P3.md"
 features = ["F11"]
 layers = ["rust-integration"]
+tests = { rust-integration = "p3_06_genealogy_and_report_reversal" }
 
 [[case]]
 id = "P3-UI"
@@ -186,6 +192,7 @@ phase = "P3"
 spec = "TEST_AND_MOCK_PLAN.md"
 features = ["F15"]
 layers = ["playwright"]
+tests = { playwright = "P3-UI CNC work order through inspection closure and genealogy" }
 
 [[case]]
 id = "P4-01"

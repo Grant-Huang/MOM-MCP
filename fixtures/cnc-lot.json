@@ -1,0 +1,48 @@
+{
+  "scenario_id": "cnc-lot",
+  "version": 1,
+  "title": "汽车零部件 CNC · 来料偏差",
+  "model": "cnc_wear",
+  "work_orders": [
+    "WO-1",
+    "WO-2"
+  ],
+  "materials": {
+    "LOT-1": "WO-1"
+  },
+  "capabilities": [
+    "get_work_order",
+    "get_material",
+    "hold_material",
+    "mes_status",
+    "release_order",
+    "revise_route",
+    "dispatch_operation",
+    "issue_material",
+    "start_operation",
+    "report_operation",
+    "inspect_units",
+    "disposition",
+    "close_order",
+    "trace",
+    "reverse_report",
+    "set_equipment"
+  ],
+  "manufacturing": {
+    "initial_stock": 10
+  },
+  "model_parameters": {
+    "alarm_enabled": false
+  },
+  "event_rules": [
+    {
+      "event": "incoming_lot_drift",
+      "delay": {
+        "distribution": "uniform",
+        "min_minutes": 0.1,
+        "max_minutes": 0.2
+      },
+      "repeat": false
+    }
+  ]
+}
