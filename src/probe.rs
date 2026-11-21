@@ -16,15 +16,22 @@ pub struct Probe {
     db: PathBuf,
     response_delay_ms: u64,
     scenarios: Option<crate::scenario::Scenarios>,
+    control_tools: bool,
 }
 
 impl Probe {
-    pub fn new(db: PathBuf, response_delay_ms: u64, scenario_tools: bool) -> anyhow::Result<Self> {
+    pub fn new(
+        db: PathBuf,
+        response_delay_ms: u64,
+        scenario_tools: bool,
+        control_tools: bool,
+    ) -> anyhow::Result<Self> {
         let scenarios = scenario_tools
             .then(|| crate::scenario::Scenarios::new(db.clone()))
             .transpose()?;
         let probe = Self {
             scenarios,
+            control_tools,
             db,
             response_delay_ms,
         };
@@ -151,7 +158,7 @@ impl ServerHandler for Probe {
         });
         let mut tools = tools.to_vec();
         if self.scenarios.is_some() {
-            tools.extend(crate::catalog::tools());
+            tools.extend(crate::catalog::tools(self.control_tools));
         }
         Ok(ListToolsResult::with_all_items(tools))
     }
@@ -165,8 +172,13 @@ impl ServerHandler for Probe {
             let Some(scenarios) = self.scenarios.clone() else {
                 return Err(ErrorData::invalid_params("Unknown tool", None));
             };
+            let control = self.control_tools;
             let result = tokio::task::spawn_blocking(move || {
-                scenarios.invoke(&request.name, request.arguments.unwrap_or_default())
+                scenarios.invoke(
+                    &request.name,
+                    request.arguments.unwrap_or_default(),
+                    control,
+                )
             })
             .await
             .map_err(|_| ErrorData::internal_error("Scenario worker failed", None))?

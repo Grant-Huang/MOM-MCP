@@ -1,0 +1,9 @@
+[package]
+name = "mom-model-fixture"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+
+[dependencies]
+mom-des = { path = "../des" }
+serde_json = "1"

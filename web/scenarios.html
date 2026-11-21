@@ -23,7 +23,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 <body><main>
 <a href="/">项目介绍</a> · <a href="/acceptance">P0 接入探针</a>
 <h1>场景验收台</h1>
-<p>P1 · 模拟场景。当前使用固定夹具，虚拟时间停在初始值。</p>
+<p>P1 · 模拟场景。可查看服务端时间与已发生的事件。</p>
 <section>
 <h2>运行实例</h2>
 <button id="load">加载场景</button>
@@ -33,6 +33,11 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 <label for="run">当前运行</label><select id="run" disabled></select>
 <button id="read-run" disabled>查看运行</button>
 <button id="close" disabled>关闭运行</button>
+<button id="events" disabled>读取事件</button>
+<div id="control" hidden>
+<button id="advance" disabled>推进一个事件</button>
+<button id="repair" disabled>安排维修</button>
+</div>
 </section>
 <section>
 <h2>查找业务工具</h2>
@@ -48,6 +53,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 </section>
 <section>
 <h2>调用与复查</h2>
+<details><summary>CNC 泵体生产示例</summary><p>打开「汽车零部件 CNC · 泵体生产」。搜索全部工具，按下达、派工、领料、开工、报工推进机加工，再派工、开工和报工装配，最后派工、终检并关单。使用 WO-1、LOT-1，写操作提供不同的幂等键。关单后可按批次或序列号追溯。</p></details>
 <form id="call">
 <label>JSON 参数<textarea id="arguments">{}</textarea></label>
 <button id="invoke" disabled>调用工具</button>

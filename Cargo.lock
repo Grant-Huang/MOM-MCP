@@ -675,18 +675,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "mom-des"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mom-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "mom-des",
+ "mom-model-cnc",
+ "mom-model-fixture",
  "rmcp",
  "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "mom-model-cnc"
+version = "0.1.0"
+dependencies = [
+ "mom-des",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mom-model-fixture"
+version = "0.1.0"
+dependencies = [
+ "mom-des",
+ "serde_json",
 ]
 
 [[package]]

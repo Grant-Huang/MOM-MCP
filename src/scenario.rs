@@ -8,7 +8,10 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::catalog::{self, Action};
+use crate::{
+    catalog::{self, Action},
+    simulation::{self, Command, Simulation},
+};
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -18,39 +21,20 @@ pub struct Definition {
     title: String,
     model: String,
     #[serde(default)]
+    manufacturing: Option<crate::mes::Setup>,
+    #[serde(default = "model_version")]
+    model_version: u32,
+    #[serde(default)]
     model_parameters: Map<String, Value>,
     #[serde(default)]
-    event_rules: Vec<EventRule>,
+    event_rules: Vec<mom_des::Rule>,
     work_orders: Vec<String>,
     materials: BTreeMap<String, String>,
     capabilities: Vec<Action>,
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct EventRule {
-    event: String,
-    delay: Delay,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "distribution", rename_all = "snake_case", deny_unknown_fields)]
-enum Delay {
-    Exponential { mean_minutes: f64 },
-    Uniform { min_minutes: f64, max_minutes: f64 },
-}
-
-impl Delay {
-    fn valid(&self) -> bool {
-        let positive = |value: f64| value.is_finite() && value > 0.0;
-        match *self {
-            Self::Exponential { mean_minutes } => positive(mean_minutes),
-            Self::Uniform {
-                min_minutes,
-                max_minutes,
-            } => positive(min_minutes) && positive(max_minutes) && min_minutes < max_minutes,
-        }
-    }
+const fn model_version() -> u32 {
+    1
 }
 
 #[derive(Clone)]
@@ -135,6 +119,7 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         "invalid title"
     );
     anyhow::ensure!(identifier(&definition.model), "invalid model");
+    anyhow::ensure!(definition.event_rules.len() <= 64, "too many event_rules");
     for (index, rule) in definition.event_rules.iter().enumerate() {
         anyhow::ensure!(
             identifier(&rule.event),
@@ -171,6 +156,22 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             == definition.capabilities.len(),
         "duplicate capabilities"
     );
+    if let Some(setup) = &definition.manufacturing {
+        anyhow::ensure!(
+            setup.initial_stock <= 1_000_000,
+            "manufacturing.initial_stock exceeds the supported range"
+        );
+        anyhow::ensure!(
+            definition.materials.contains_key("LOT-1"),
+            "manufacturing requires materials.LOT-1"
+        );
+    }
+    simulation::load_model(
+        &definition.model,
+        definition.model_version,
+        &definition.model_parameters,
+    )
+    .map_err(|reason| anyhow::anyhow!("model configuration: {reason}"))?;
     Ok(definition)
 }
 
@@ -191,6 +192,8 @@ impl Scenarios {
                  run TEXT NOT NULL, batch TEXT NOT NULL, reason TEXT NOT NULL,
                  PRIMARY KEY (run, batch)
              );
+             CREATE TABLE IF NOT EXISTS mes_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS des_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS scenario_requests (
                  run TEXT NOT NULL, key TEXT NOT NULL, request TEXT NOT NULL, response TEXT NOT NULL,
                  PRIMARY KEY (run, key)
@@ -198,6 +201,9 @@ impl Scenarios {
         )?;
         for source in [
             include_str!("../fixtures/cnc.json"),
+            include_str!("../fixtures/cnc-manufacturing.json"),
+            include_str!("../fixtures/cnc-shortage.json"),
+            include_str!("../fixtures/cnc-lot.json"),
             include_str!("../fixtures/smt.json"),
             include_str!("../fixtures/assembly.json"),
         ] {
@@ -229,8 +235,13 @@ impl Scenarios {
         Ok(())
     }
 
-    pub fn invoke(&self, name: &str, args: Map<String, Value>) -> anyhow::Result<Value> {
-        let Some(tool) = catalog::gateway(name) else {
+    pub fn invoke(
+        &self,
+        name: &str,
+        args: Map<String, Value>,
+        control: bool,
+    ) -> anyhow::Result<Value> {
+        let Some(tool) = catalog::gateway(name).filter(|tool| control || !tool.control) else {
             return Ok(reject("UNKNOWN_TOOL", "name").json());
         };
         if let Err(error) = catalog::validate(&tool.input, &args) {
@@ -254,7 +265,7 @@ impl Scenarios {
             let mut scenarios = Vec::new();
             for row in query.query_map([], |r| r.get::<_, String>(0))? {
                 let spec: Definition = serde_json::from_str(&row?)?;
-                scenarios.push(json!({"scenario_id":spec.scenario_id,"version":spec.version,"title":spec.title,"model":spec.model,"capabilities":spec.capabilities,"mode":"mock","run_parameters":{"seed":{"type":"integer","minimum":0,"default":1}}}));
+                scenarios.push(json!({"scenario_id":spec.scenario_id,"version":spec.version,"title":spec.title,"model":spec.model,"model_version":spec.model_version,"capabilities":spec.capabilities,"mode":"mock","run_parameters":{"seed":{"type":"integer","minimum":0,"default":1}}}));
             }
             return Ok(Ok(json!({"ok":true,"scenarios":scenarios})));
         }
@@ -266,13 +277,34 @@ impl Scenarios {
                 .and_then(Value::as_u64)
                 .unwrap_or(1)
                 .to_string();
-            let id: Option<String> = conn.query_row(
+            let source: Option<String> = conn
+                .query_row(
+                    "SELECT definition FROM scenario_definitions WHERE id=?1 AND version=?2",
+                    params![scenario, version],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(source) = source else {
+                return Ok(Err(reject("SCENARIO_NOT_FOUND", "scenario_id")));
+            };
+            // P1 allowed definitions before the versioned registry was available.
+            let definition: Definition = serde_json::from_str(&source)?;
+            if simulation::load_model(
+                &definition.model,
+                definition.model_version,
+                &definition.model_parameters,
+            )
+            .is_err()
+            {
+                return Ok(Err(reject("MODEL_CONFIGURATION_INVALID", "model")));
+            }
+            let id: String = conn.query_row(
                 "INSERT INTO scenario_runs (id,scenario,version,seed)
-                 SELECT lower(hex(randomblob(16))),id,version,?3 FROM scenario_definitions WHERE id=?1 AND version=?2 RETURNING id",
-                params![scenario, version, seed], |r| r.get(0)).optional()?;
-            return Ok(id
-                .map(|id| run_view(&id, scenario, version, &seed, false, 0))
-                .ok_or_else(|| reject("SCENARIO_NOT_FOUND", "scenario_id")));
+                 VALUES (lower(hex(randomblob(16))),?1,?2,?3) RETURNING id",
+                params![scenario, version, seed],
+                |row| row.get(0),
+            )?;
+            return Ok(Ok(run_view(&id, scenario, version, &seed, false, 0, None)));
         }
 
         let run = args["run_id"].as_str().unwrap();
@@ -295,13 +327,52 @@ impl Scenarios {
         let Some((scenario, version, seed, closed, cursor)) = record else {
             return Ok(Err(reject("RUN_NOT_FOUND", "run_id")));
         };
+        let serialized: Option<String> = tx
+            .query_row("SELECT state FROM des_runs WHERE run=?1", [run], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        let stored: Option<Simulation> = serialized
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()?;
         if name == "get_run" {
-            return Ok(Ok(run_view(run, &scenario, version, &seed, closed, cursor)));
+            return Ok(Ok(run_view(
+                run,
+                &scenario,
+                version,
+                &seed,
+                closed,
+                cursor,
+                stored.as_ref(),
+            )));
         }
         if name == "close_run" {
             tx.execute("UPDATE scenario_runs SET closed=1 WHERE id=?1", [run])?;
             tx.commit()?;
-            return Ok(Ok(run_view(run, &scenario, version, &seed, true, cursor)));
+            return Ok(Ok(run_view(
+                run,
+                &scenario,
+                version,
+                &seed,
+                true,
+                cursor,
+                stored.as_ref(),
+            )));
+        }
+        if name == "read_events" {
+            let after = args.get("after").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+            let total = stored
+                .as_ref()
+                .map_or(0, |state| state.timeline.events.len());
+            if after > total {
+                return Ok(Err(reject("INVALID_CURSOR", "after")));
+            }
+            return Ok(Ok(stored.as_ref().map_or_else(
+                || json!({"ok":true,"clock":0,"events":[],"event_cursor":0,"has_more":false}),
+                |state| state.page(after, limit),
+            )));
         }
         if closed {
             return Ok(Err(reject("RUN_CLOSED", "run_id")));
@@ -309,9 +380,76 @@ impl Scenarios {
         let source: String = tx.query_row(
             "SELECT definition FROM scenario_definitions WHERE id=?1 AND version=?2",
             params![scenario, version],
-            |r| r.get(0),
+            |row| row.get(0),
         )?;
         let definition: Definition = serde_json::from_str(&source)?;
+        if matches!(name, "advance_run" | "intervene_run" | "inspect_run") {
+            let model = simulation::load_model(
+                &definition.model,
+                definition.model_version,
+                &definition.model_parameters,
+            )
+            .map_err(|reason| anyhow::anyhow!("{reason}"))?;
+            let mut state = stored.unwrap_or_else(|| {
+                Simulation::new(
+                    seed.parse().expect("stored seed"),
+                    &definition.event_rules,
+                    model.as_ref(),
+                )
+            });
+            if name == "inspect_run" {
+                let replay_verified =
+                    state.verify_replay(seed.parse()?, &definition.event_rules, model.as_ref())?;
+                return Ok(Ok(
+                    json!({"ok":true,"seed":seed,"definition":definition,"model":definition.model,
+                    "model_version":definition.model_version,"engine_version":env!("CARGO_PKG_VERSION"),
+                    "diagnosis":model.diagnosis(),"replay_verified":replay_verified,"replay":state}),
+                ));
+            }
+
+            let command = if name == "advance_run" {
+                Command::Advance {
+                    event_budget: args.get("max_events").and_then(Value::as_u64).unwrap_or(1)
+                        as usize,
+                    minutes: args.get("max_minutes").and_then(Value::as_u64),
+                }
+            } else {
+                Command::Intervene {
+                    action: args["action"].as_str().expect("validated action").into(),
+                }
+            };
+            let stop = match state.execute(command, &definition.event_rules, model.as_ref()) {
+                Ok(stop) => stop,
+                Err(code) => {
+                    return Ok(Err(reject(
+                        code,
+                        if name == "advance_run" {
+                            "run_id"
+                        } else {
+                            "action"
+                        },
+                    )));
+                }
+            };
+            let response = json!({"ok":true,"clock":state.timeline.clock,
+                "event_cursor":state.timeline.events.len(),"stop":stop});
+            tx.execute(
+                "INSERT INTO des_runs (run,state) VALUES (?1,?2)
+                ON CONFLICT(run) DO UPDATE SET state=excluded.state",
+                params![run, serde_json::to_string(&state)?],
+            )?;
+            if let Some(setup) = &definition.manufacturing {
+                crate::mes::project_receipts(
+                    &tx,
+                    run,
+                    setup,
+                    &definition.work_orders,
+                    &state.timeline.events,
+                )?;
+            }
+            tx.commit()?;
+            return Ok(Ok(response));
+        }
         if name == "search_tools" {
             return Ok(Ok(
                 json!({"ok":true,"tools":catalog::search(&definition.capabilities, args)}),
@@ -332,8 +470,36 @@ impl Scenarios {
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
         }
+        if crate::mes::TOOLS.iter().any(|tool| tool.0 == action) {
+            let Some(setup) = &definition.manufacturing else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            let (response, changed) = crate::mes::invoke(
+                &tx,
+                run,
+                setup,
+                &definition.work_orders,
+                action,
+                parameters,
+                cursor,
+            )?;
+            if changed {
+                tx.commit()?;
+            }
+            return Ok(Ok(response));
+        }
         if action == Action::GetWorkOrder {
             let order = parameters["work_order"].as_str().unwrap();
+            if let Some(setup) = &definition.manufacturing {
+                return Ok(crate::mes::order_status(
+                    &tx,
+                    run,
+                    setup,
+                    &definition.work_orders,
+                    order,
+                )?
+                .ok_or_else(|| reject("WORK_ORDER_NOT_FOUND", "work_order")));
+            }
             return Ok(
                 if definition
                     .work_orders
@@ -407,6 +573,7 @@ fn run_view(
     seed: &str,
     closed: bool,
     cursor: i64,
+    state: Option<&Simulation>,
 ) -> Value {
-    json!({"ok":true,"run_id":run,"scenario_id":scenario,"version":version,"seed":seed.parse::<u64>().expect("stored seed"),"closed":closed,"clock":0,"cursor":cursor,"mode":"mock"})
+    json!({"ok":true,"run_id":run,"scenario_id":scenario,"version":version,"seed":seed.parse::<u64>().expect("stored seed"),"closed":closed,"clock":state.map_or(0, |state| state.timeline.clock),"event_cursor":state.map_or(0, |state| state.timeline.events.len()),"cursor":cursor,"mode":"mock"})
 }

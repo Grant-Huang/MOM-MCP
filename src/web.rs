@@ -16,6 +16,7 @@ use tokio::{net::TcpListener, process::Command};
 struct Bridge {
     db: PathBuf,
     executable: PathBuf,
+    control_tools: bool,
 }
 
 type Reply = Result<Json<Value>, (StatusCode, Json<Value>)>;
@@ -33,6 +34,9 @@ impl Bridge {
         command.arg("stdio").arg("--db").arg(&self.db);
         if scenarios {
             command.arg("--scenario-tools");
+        }
+        if scenarios && self.control_tools {
+            command.arg("--control-tools");
         }
         let transport = rmcp::transport::TokioChildProcess::new(command)?;
         Ok(().serve(transport).await?)
@@ -68,7 +72,9 @@ async fn call(State(bridge): State<Bridge>, Json(request): Json<Call>) -> Reply 
 }
 
 async fn scenarios(State(bridge): State<Bridge>, Json(request): Json<Call>) -> Reply {
-    if crate::catalog::gateway(&request.name).is_none() {
+    if !crate::catalog::gateway(&request.name)
+        .is_some_and(|tool| bridge.control_tools || !tool.control)
+    {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({"ok":false,"code":"UNKNOWN_TOOL"})),
@@ -116,9 +122,10 @@ async fn document(Path(path): Path<String>) -> impl IntoResponse {
     ([("content-type", "text/plain; charset=utf-8")], text).into_response()
 }
 
-pub async fn serve(db: PathBuf, port: u16) -> anyhow::Result<()> {
+pub async fn serve(db: PathBuf, port: u16, control_tools: bool) -> anyhow::Result<()> {
     let state = Bridge {
         db,
+        control_tools,
         executable: std::env::current_exe()?,
     };
     let app = Router::new()
@@ -170,6 +177,10 @@ pub async fn serve(db: PathBuf, port: u16) -> anyhow::Result<()> {
             }),
         )
         .route("/api/scenarios", post(scenarios))
+        .route(
+            "/api/control-enabled",
+            get(|State(bridge): State<Bridge>| async move { Json(bridge.control_tools) }),
+        )
         .route("/api/tools", get(list))
         .route("/api/call", post(call))
         .with_state(state);
