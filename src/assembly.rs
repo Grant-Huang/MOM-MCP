@@ -233,6 +233,8 @@ impl Setup {
 
 #[derive(Serialize, Deserialize, Default)]
 struct Order {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    build_reports: Vec<crate::mes::Report>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     build_pause_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -423,7 +425,8 @@ pub fn operations(
         if filter.is_some_and(|filter| filter != id) {
             continue;
         }
-        let built = !order.installed.is_empty();
+        let built = !order.installed.is_empty()
+            && !matches!(order.phase, Phase::Building | Phase::BuildPaused);
         let (build, test) = if order.phase == Phase::Cancelled {
             (("cancelled", None), ("cancelled", None))
         } else {
@@ -442,7 +445,8 @@ pub fn operations(
                         Phase::BuildPaused => "paused",
                         _ => "ready",
                     },
-                    (!shortages.is_empty()).then_some("MATERIAL_SHORTAGE"),
+                    (order.installed.is_empty() && !shortages.is_empty())
+                        .then_some("MATERIAL_SHORTAGE"),
                 )
             };
             let test = if !built {
@@ -594,6 +598,17 @@ pub fn invoke(
     let Some(order) = state.orders.get(id) else {
         return Ok((failure("WORK_ORDER_NOT_FOUND"), false));
     };
+    if action == Action::ListOperationReports {
+        let reports = match args["operation"].as_str().unwrap() {
+            "build" => order.build_reports.as_slice(),
+            "final_test" => &[],
+            _ => return Ok((failure("OPERATION_OUT_OF_SEQUENCE"), false)),
+        };
+        return Ok((
+            json!({"ok":true,"work_order":id,"operation":args["operation"],"reports":reports}),
+            false,
+        ));
+    }
     if action == Action::AssemblyKit {
         let parts = required(setup, order);
         let shortages = if order.installed.is_empty() {
@@ -639,6 +654,9 @@ pub fn invoke(
             | Action::StartOperation
             | Action::PauseOperation
             | Action::ResumeOperation
+            | Action::PostOperationReport
+            | Action::ReverseOperationReport
+            | Action::CompleteOperation
             | Action::SetDispatchPriority
     ) && args["expected_cursor"].as_i64() != Some(cursor)
     {
@@ -721,6 +739,12 @@ fn apply(
                 .map(str::to_owned)
         })
         .flatten();
+    let reverse_busy = action == Action::ReverseOperationReport
+        && state.orders[id].phase == Phase::Queued
+        && state.orders[id]
+            .cell
+            .as_deref()
+            .is_some_and(|cell| cell_occupant(state, cell, id).is_some());
     let order = state.orders.get_mut(id).unwrap();
     match action {
         Action::HoldWorkOrder
@@ -859,7 +883,7 @@ fn apply(
                         && order.phase == Phase::BuildPaused)) =>
         {
             let shortages = missing(&required(setup, order), &state.stock);
-            if !shortages.is_empty() {
+            if order.installed.is_empty() && !shortages.is_empty() {
                 return json!({"ok":false,"code":"MATERIAL_SHORTAGE","missing":shortages});
             }
             order.phase = Phase::Building;
@@ -870,7 +894,20 @@ fn apply(
             order.phase = Phase::BuildPaused;
             order.build_pause_reason = Some(args["reason"].as_str().unwrap().into());
         }
-        Action::AssemblyBuild if matches!(order.phase, Phase::Dispatched | Phase::Building) => {
+        Action::AssemblyBuild | Action::PostOperationReport
+            if (action == Action::AssemblyBuild
+                && matches!(order.phase, Phase::Dispatched | Phase::Building))
+                || (action == Action::PostOperationReport && order.phase == Phase::Building) =>
+        {
+            if action == Action::PostOperationReport {
+                if args["operation"] != "build" {
+                    return failure("OPERATION_OUT_OF_SEQUENCE");
+                }
+                let remaining = usize::from(order.installed.is_empty());
+                if args["quantity"].as_u64().unwrap() > remaining as u64 {
+                    return json!({"ok":false,"code":"REPORT_EXCEEDS_REMAINING","remaining":remaining});
+                }
+            }
             let parts = required(setup, order);
             let shortages = missing(&parts, &state.stock);
             if !shortages.is_empty() {
@@ -880,7 +917,57 @@ fn apply(
                 *state.stock.get_mut(part).unwrap() -= quantity;
             }
             order.installed = parts;
+            if action == Action::PostOperationReport {
+                let serial = &setup.orders[id].serial;
+                let report = crate::mes::Report {
+                    id: format!("report-{ticket}"),
+                    order: id.into(),
+                    step: 0,
+                    quantity: 1,
+                    batch: None,
+                    reversed: false,
+                    serial_numbers: vec![serial.clone()],
+                    components: order.installed.clone(),
+                };
+                let response = json!({"ok":true,"report":report,"serial_numbers":[serial],"reported_quantity":1,"remaining":0});
+                order.build_reports.push(report);
+                return response;
+            }
             order.phase = Phase::Queued;
+        }
+        Action::CompleteOperation if order.phase == Phase::Building => {
+            if args["operation"] != "build" {
+                return failure("OPERATION_OUT_OF_SEQUENCE");
+            }
+            if order.installed.is_empty() {
+                return json!({"ok":false,"code":"OPERATION_QUANTITY_INCOMPLETE","remaining":1});
+            }
+            order.phase = Phase::Queued;
+            return json!({"ok":true,"work_order":id,"operation":"build","status":"completed"});
+        }
+        Action::ReverseOperationReport => {
+            let Some(report) = order
+                .build_reports
+                .iter_mut()
+                .find(|report| report.id == args["report_id"])
+            else {
+                return failure("REPORT_NOT_FOUND");
+            };
+            if report.reversed
+                || !order.tests.is_empty()
+                || !matches!(order.phase, Phase::Building | Phase::Queued)
+            {
+                return failure("REPORT_HAS_DEPENDENCIES");
+            }
+            if reverse_busy {
+                return failure("RESOURCE_BUSY");
+            }
+            for (part, quantity) in std::mem::take(&mut order.installed) {
+                *state.stock.get_mut(&part).unwrap() += quantity;
+            }
+            report.reversed = true;
+            order.phase = Phase::Building;
+            return json!({"ok":true,"work_order":id,"report_id":report.id,"reversed":true});
         }
         Action::AssemblyPriority | Action::SetDispatchPriority
             if matches!(

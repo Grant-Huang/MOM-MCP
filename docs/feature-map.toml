@@ -481,3 +481,11 @@ spec = "acceptance/P8C.md"
 features = ["F09", "F10", "F11"]
 layers = ["rust-integration"]
 tests = { rust-integration = "p8c_05_explicit_completion_and_report_reversal" }
+
+[[case]]
+id = "P8C-06"
+phase = "P8C"
+spec = "acceptance/P8C.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p8c_06_assembly_actuals_and_test_dependency" }
