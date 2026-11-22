@@ -390,6 +390,17 @@ impl Scenarios {
                  demand TEXT NOT NULL, serial TEXT,
                  PRIMARY KEY (run, id)
              );
+             CREATE TABLE IF NOT EXISTS master_items (
+                 run TEXT NOT NULL, item TEXT NOT NULL, unit TEXT NOT NULL,
+                 PRIMARY KEY (run,item)
+             );
+             CREATE TABLE IF NOT EXISTS master_item_revisions (
+                 run TEXT NOT NULL, item TEXT NOT NULL, revision INTEGER NOT NULL,
+                 name TEXT NOT NULL, status TEXT NOT NULL,
+                 PRIMARY KEY (run,item,revision)
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS master_item_active_revision
+                 ON master_item_revisions (run,item) WHERE status='active';
              CREATE TABLE IF NOT EXISTS quality_inspection_plans (
                  run TEXT NOT NULL, plan TEXT NOT NULL, revision INTEGER NOT NULL,
                  specification TEXT NOT NULL, characteristics TEXT NOT NULL, status TEXT NOT NULL,
@@ -445,6 +456,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-quality-gates.json"),
             include_str!("../fixtures/cnc-inspection-plans.json"),
             include_str!("../fixtures/assembly-inspection-plans.json"),
+            include_str!("../fixtures/cnc-item-revisions.json"),
+            include_str!("../fixtures/assembly-item-revisions.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -771,6 +784,9 @@ impl Scenarios {
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if action.is_item_action() {
+            return crate::items::invoke(tx, run, action, parameters, cursor);
         }
         if matches!(
             action,

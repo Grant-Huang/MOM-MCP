@@ -1,6 +1,7 @@
 mod assembly;
 mod catalog;
 mod fabrication;
+mod items;
 mod mes;
 mod operations;
 mod probe;

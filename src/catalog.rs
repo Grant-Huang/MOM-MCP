@@ -7,6 +7,12 @@ use crate::scenario::Rejection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    ListItems,
+    GetItem,
+    CreateItem,
+    CreateItemRevision,
+    GetItemRevision,
+    ActivateRevision,
     OpenNonconformance,
     PlaceQualityHold,
     DispositionNonconformance,
@@ -143,6 +149,12 @@ pub(crate) fn text() -> Value {
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
+            Self::ListItems,
+            Self::GetItem,
+            Self::CreateItem,
+            Self::CreateItemRevision,
+            Self::GetItemRevision,
+            Self::ActivateRevision,
             Self::OpenNonconformance,
             Self::PlaceQualityHold,
             Self::DispositionNonconformance,
@@ -181,8 +193,14 @@ impl Action {
         })
     }
 
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::ListItems => "list_items",
+            Self::GetItem => "get_item",
+            Self::CreateItem => "create_item",
+            Self::CreateItemRevision => "create_item_revision",
+            Self::GetItemRevision => "get_item_revision",
+            Self::ActivateRevision => "activate_revision",
             Self::OpenNonconformance => "open_nonconformance",
             Self::PlaceQualityHold => "place_quality_hold",
             Self::DispositionNonconformance => "disposition_nonconformance",
@@ -248,6 +266,7 @@ impl Action {
             | Self::PlaceQualityHold
             | Self::DispositionNonconformance
             | Self::ReleaseQualityHold => &["检验", "质量", "inspection", "quality"],
+            action if action.is_item_action() => &["物料", "版本", "item", "revision"],
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
             Self::HoldMaterial => &[
                 "质量冻结",
@@ -261,7 +280,22 @@ impl Action {
         }
     }
 
+    pub(crate) fn is_item_action(self) -> bool {
+        matches!(
+            self,
+            Self::ListItems
+                | Self::GetItem
+                | Self::CreateItem
+                | Self::CreateItemRevision
+                | Self::GetItemRevision
+                | Self::ActivateRevision
+        )
+    }
+
     pub fn spec(self) -> Spec {
+        if self.is_item_action() {
+            return crate::items::spec(self);
+        }
         let (description, domain, effect, input, fields, side_effect, errors) = match self {
             Self::CreateInspectionPlanRevision
             | Self::ActivateInspectionPlanRevision

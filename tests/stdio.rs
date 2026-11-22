@@ -3711,3 +3711,60 @@ async fn p9a_01_inspection_plan_revision_binding() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p9a_02_item_revision_lifecycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("master.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        for (scenario, version) in [("cnc", 20), ("assembly", 19)] {
+            let open = async || call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
+            let opened = open().await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            let create=|item:&str,unit:&str,cursor| json!({"item_id":item,"base_unit":unit,
+                "expected_cursor":cursor,"idempotency_key":format!("item-{item}")});
+            let draft=|number,name:&str,cursor| json!({"item_id":"FRAME","revision":number,"name":name,
+                "expected_cursor":cursor,"idempotency_key":format!("draft-{number}")});
+            let activate=|number,cursor| json!({"revision_type":"item","item_id":"FRAME","revision":number,
+                "expected_cursor":cursor,"idempotency_key":format!("activate-{number}")});
+            let query=|number| json!({"item_id":"FRAME","revision":number});
+            let search=call(&client,"search_tools",json!({"run_id":run,"query":"item","domain":"inventory"})).await;
+            for name in ["list_items","get_item","create_item","create_item_revision","get_item_revision","activate_revision"] {
+                assert!(search["tools"].as_array().unwrap().iter().any(|tool|tool["name"]==name),"{search}");
+            }
+            assert_eq!(invoke("create_item",create("FRAME","invalid",0)).await["field"],"base_unit");
+            assert_eq!(invoke("create_item_revision",draft(1,"Frame A",0)).await["code"],"ITEM_NOT_FOUND");
+            assert_eq!(invoke("create_item",create("FRAME","each",0)).await["cursor"],1);
+            assert_eq!(invoke("create_item",create("WIRE","m",1)).await["cursor"],2);
+            let listed=invoke("list_items",json!({"limit":1})).await;
+            assert_eq!(listed["items"][0]["item_id"],"FRAME");
+            assert_eq!(listed["next_after_item_id"],"FRAME");
+            let next=invoke("list_items",json!({"limit":1,"after_item_id":listed["next_after_item_id"]})).await;
+            assert_eq!(next["items"][0]["base_unit"],"m");
+            assert!(next["next_after_item_id"].is_null());
+            assert_eq!(invoke("create_item_revision",draft(0,"invalid",2)).await["field"],"revision");
+            assert_eq!(invoke("create_item_revision",draft(1,"Frame A",2)).await["item_revision"]["status"],"draft");
+            let first_args=activate(1,3);
+            let first=invoke("activate_revision",first_args.clone()).await;
+            assert_eq!(first["item_revision"]["status"],"active","{first}");
+            assert_eq!(invoke("create_item_revision",draft(2,"Frame B",3)).await["code"],"VERSION_CONFLICT");
+            assert_eq!(invoke("create_item_revision",draft(2,"Frame B",4)).await["cursor"],5);
+            assert_eq!(invoke("activate_revision",activate(2,5)).await["item_revision"]["status"],"active");
+            assert_eq!(invoke("activate_revision",first_args).await,first);
+            let mut stale=activate(1,6);
+            stale["idempotency_key"]=json!("superseded");
+            assert_eq!(invoke("activate_revision",stale).await["code"],"ITEM_REVISION_NOT_ACTIVATABLE");
+            let (peer,_child)=connect_mode(&db,"0",true).await;
+            let old=business(&peer,run,"get_item_revision",query(1)).await;
+            assert_eq!(old["item_revision"],json!({"item_id":"FRAME","revision":1,"name":"Frame A","status":"superseded"}));
+            let current=business(&peer,run,"get_item",json!({"item_id":"FRAME"})).await;
+            assert_eq!(current["item"],json!({"item_id":"FRAME","base_unit":"each","active_revision":2}));
+            let isolated=open().await;
+            assert_eq!(business(&peer,&isolated["run_id"],"get_item_revision",query(2)).await["code"],"ITEM_REVISION_NOT_FOUND");
+            assert_eq!(call(&client,"get_run",json!({"run_id":run})).await["cursor"],6);
+        }
+    }).await.unwrap();
+}
