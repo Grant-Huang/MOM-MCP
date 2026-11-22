@@ -19,3 +19,23 @@ jobs:
         with:
           name: browser-evidence
           path: test-results/
+  trace-pilot:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Verify trace check positive and negative cases
+        id: trace
+        continue-on-error: true
+        run: node --test scripts/acceptance-trace.test.mjs
+      - name: Report pilot outcome
+        if: always()
+        env:
+          TRACE_OUTCOME: ${{ steps.trace.outcome }}
+        run: printf "Feature trace pilot outcome for %s is %s\n" "$GITHUB_SHA" "$TRACE_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
