@@ -13,6 +13,8 @@ pub enum Action {
     ReleaseQualityHold,
     RecordMeasurement,
     CompleteInspection,
+    CreateInspectionPlanRevision,
+    ActivateInspectionPlanRevision,
     CreateInspection,
     ListInspections,
     GetInspection,
@@ -147,6 +149,8 @@ impl Action {
             Self::ReleaseQualityHold,
             Self::RecordMeasurement,
             Self::CompleteInspection,
+            Self::CreateInspectionPlanRevision,
+            Self::ActivateInspectionPlanRevision,
             Self::CreateInspection,
             Self::ListInspections,
             Self::GetInspection,
@@ -185,6 +189,8 @@ impl Action {
             Self::ReleaseQualityHold => "release_quality_hold",
             Self::RecordMeasurement => "record_measurement",
             Self::CompleteInspection => "complete_inspection",
+            Self::CreateInspectionPlanRevision => "create_inspection_plan_revision",
+            Self::ActivateInspectionPlanRevision => "activate_inspection_plan_revision",
             Self::CreateInspection => "create_inspection",
             Self::ListInspections => "list_inspections",
             Self::GetInspection => "get_inspection",
@@ -231,7 +237,9 @@ impl Action {
             Self::ListOperations | Self::GetOperation | Self::ListDispatchQueue => {
                 &["工序", "派工", "operation", "dispatch", "queue"]
             }
-            Self::CreateInspection
+            Self::CreateInspectionPlanRevision
+            | Self::ActivateInspectionPlanRevision
+            | Self::CreateInspection
             | Self::ListInspections
             | Self::GetInspection
             | Self::RecordMeasurement
@@ -255,7 +263,9 @@ impl Action {
 
     pub fn spec(self) -> Spec {
         let (description, domain, effect, input, fields, side_effect, errors) = match self {
-            Self::CreateInspection
+            Self::CreateInspectionPlanRevision
+            | Self::ActivateInspectionPlanRevision
+            | Self::CreateInspection
             | Self::ListInspections
             | Self::GetInspection
             | Self::RecordMeasurement
@@ -279,6 +289,39 @@ impl Action {
                 let cursor = json!({"type":"integer","minimum":0,"maximum":i64::MAX});
                 let measurement = crate::quality::measurement_schema();
                 match self {
+                    Self::CreateInspectionPlanRevision | Self::ActivateInspectionPlanRevision => {
+                        let creating = self == Self::CreateInspectionPlanRevision;
+                        let mut required =
+                            vec!["plan_id", "revision", "expected_cursor", "idempotency_key"];
+                        let mut properties = json!({"plan_id":inspection_id,
+                            "revision":{"type":"integer","minimum":1,"maximum":u32::MAX},
+                            "expected_cursor":cursor,"idempotency_key":text()});
+                        if creating {
+                            required.push("characteristics");
+                            properties["characteristics"] =
+                                crate::quality::characteristics_schema();
+                        }
+                        (
+                            if creating {
+                                "创建检验规格版本"
+                            } else {
+                                "启用检验规格版本"
+                            },
+                            "quality",
+                            "write",
+                            object(&required, properties),
+                            json!({"plan":crate::quality::plan_schema(),"cursor":cursor}),
+                            self.name(),
+                            &[
+                                "INVALID_ARGUMENT",
+                                "PLAN_REVISION_ALREADY_EXISTS",
+                                "PLAN_REVISION_NOT_FOUND",
+                                "PLAN_REVISION_NOT_ACTIVATABLE",
+                                "VERSION_CONFLICT",
+                                "IDEMPOTENCY_CONFLICT",
+                            ][..],
+                        )
+                    }
                     Self::OpenNonconformance
                     | Self::PlaceQualityHold
                     | Self::DispositionNonconformance
@@ -349,6 +392,8 @@ impl Action {
                             "INSPECTION_COMPLETED",
                             "MEASUREMENT_ALREADY_EXISTS",
                             "MEASUREMENT_LIMIT_REACHED",
+                            "CHARACTERISTIC_NOT_IN_PLAN",
+                            "MEASUREMENT_SPECIFICATION_MISMATCH",
                             "VERSION_CONFLICT",
                             "IDEMPOTENCY_CONFLICT",
                         ][..],
@@ -368,6 +413,7 @@ impl Action {
                             "INSPECTION_NOT_FOUND",
                             "INSPECTION_COMPLETED",
                             "MEASUREMENT_REQUIRED",
+                            "PLAN_MEASUREMENTS_INCOMPLETE",
                             "VERSION_CONFLICT",
                             "IDEMPOTENCY_CONFLICT",
                         ][..],
@@ -384,7 +430,7 @@ impl Action {
                                 "expected_cursor",
                                 "idempotency_key",
                             ],
-                            json!({"inspection_id":inspection_id,"work_order":text(),"specification_version":text(),
+                            json!({"inspection_id":inspection_id,"work_order":text(),"specification_version":text(),"reinspection_of":inspection_id,
                                 "expected_cursor":cursor,"idempotency_key":text()}),
                         ),
                         json!({"inspection":row,"cursor":cursor}),
@@ -393,6 +439,9 @@ impl Action {
                             "INVALID_ARGUMENT",
                             "WORK_ORDER_NOT_FOUND",
                             "INSPECTION_ALREADY_EXISTS",
+                            "PLAN_REVISION_NOT_FOUND",
+                            "PLAN_REVISION_NOT_ACTIVE",
+                            "REINSPECTION_NOT_ACCEPTABLE",
                             "VERSION_CONFLICT",
                             "IDEMPOTENCY_CONFLICT",
                         ][..],
@@ -661,6 +710,7 @@ impl Action {
             output_fields.insert("template_work_order".into(), text());
         }
         if self == Self::GetInspection {
+            output_fields.insert("inspection_plan".into(), crate::quality::plan_schema());
             output_fields.insert(
                 "nonconformance".into(),
                 crate::quality::nonconformance_schema(),

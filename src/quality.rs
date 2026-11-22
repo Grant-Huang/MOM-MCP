@@ -1,6 +1,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 
 use crate::{
     catalog::{Action, object, text},
@@ -8,6 +9,137 @@ use crate::{
 };
 
 const MAX_MEASUREMENTS: usize = 100;
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Characteristic {
+    unit: String,
+    lower_limit: f64,
+    upper_limit: f64,
+}
+
+#[derive(Serialize)]
+struct InspectionPlan {
+    plan_id: String,
+    revision: u32,
+    specification_version: String,
+    characteristics: BTreeMap<String, Characteristic>,
+    status: String,
+}
+
+pub(crate) fn characteristics_schema() -> Value {
+    json!({"type":"object","minProperties":1,"maxProperties":MAX_MEASUREMENTS,
+        "propertyNames":{"pattern":"^[A-Za-z0-9_-]{1,64}$"},
+        "additionalProperties":object(&["unit","lower_limit","upper_limit"],
+            json!({"unit":text(),"lower_limit":{"type":"number"},"upper_limit":{"type":"number"}}))})
+}
+
+pub(crate) fn plan_schema() -> Value {
+    object(
+        &[
+            "plan_id",
+            "revision",
+            "specification_version",
+            "characteristics",
+            "status",
+        ],
+        json!({"plan_id":text(),"revision":{"type":"integer","minimum":1,"maximum":u32::MAX},
+            "specification_version":text(),"characteristics":characteristics_schema(),
+            "status":{"enum":["draft","active","superseded"]}}),
+    )
+}
+
+fn inspection_plan(
+    tx: &Transaction<'_>,
+    run: &str,
+    specification: &str,
+) -> anyhow::Result<Option<InspectionPlan>> {
+    let row = tx
+        .query_row(
+            "SELECT plan,revision,characteristics,status FROM quality_inspection_plans
+         WHERE run=?1 AND specification=?2",
+            params![run, specification],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    row.map(|(plan_id, revision, characteristics, status)| {
+        Ok(InspectionPlan {
+            plan_id,
+            revision,
+            specification_version: specification.into(),
+            characteristics: serde_json::from_str(&characteristics)?,
+            status,
+        })
+    })
+    .transpose()
+}
+
+fn write_plan(
+    tx: &Transaction<'_>,
+    run: &str,
+    action: Action,
+    args: &Map<String, Value>,
+) -> anyhow::Result<Result<Value, Rejection>> {
+    let plan_id = args["plan_id"].as_str().unwrap();
+    let revision = args["revision"].as_i64().unwrap();
+    let specification = format!("{plan_id}@{revision}");
+    if action == Action::CreateInspectionPlanRevision {
+        let Ok(characteristics) = serde_json::from_value::<BTreeMap<String, Characteristic>>(
+            args["characteristics"].clone(),
+        ) else {
+            return Ok(Err(Rejection::invalid("characteristics")));
+        };
+        if characteristics.is_empty()
+            || characteristics.len() > MAX_MEASUREMENTS
+            || characteristics.iter().any(|(name, item)| {
+                !identifier(name)
+                    || item.unit.is_empty()
+                    || item.unit.trim() != item.unit
+                    || item.unit.chars().count() > 256
+                    || !item.lower_limit.is_finite()
+                    || !item.upper_limit.is_finite()
+                    || item.lower_limit > item.upper_limit
+            })
+        {
+            return Ok(Err(Rejection::invalid("characteristics")));
+        }
+        let inserted = tx.execute(
+            "INSERT INTO quality_inspection_plans (run,plan,revision,specification,characteristics,status)
+             VALUES (?1,?2,?3,?4,?5,'draft') ON CONFLICT(run,plan,revision) DO NOTHING",
+            params![run,plan_id,revision,specification,serde_json::to_string(&characteristics)?],
+        )?;
+        if inserted == 0 {
+            return Ok(Err(reject("PLAN_REVISION_ALREADY_EXISTS", "revision")));
+        }
+    } else {
+        let Some(plan) = inspection_plan(tx, run, &specification)? else {
+            return Ok(Err(reject("PLAN_REVISION_NOT_FOUND", "revision")));
+        };
+        let active: Option<i64> = tx.query_row(
+            "SELECT revision FROM quality_inspection_plans WHERE run=?1 AND plan=?2 AND status='active'",
+            params![run,plan_id], |row| row.get(0),
+        ).optional()?;
+        if plan.status != "draft" || active.is_some_and(|current| current >= revision) {
+            return Ok(Err(reject("PLAN_REVISION_NOT_ACTIVATABLE", "revision")));
+        }
+        tx.execute(
+            "UPDATE quality_inspection_plans SET status='superseded' WHERE run=?1 AND plan=?2 AND status='active'",
+            params![run,plan_id],
+        )?;
+        tx.execute(
+            "UPDATE quality_inspection_plans SET status='active' WHERE run=?1 AND plan=?2 AND revision=?3",
+            params![run,plan_id,revision],
+        )?;
+    }
+    Ok(Ok(json!({"plan":inspection_plan(tx,run,&specification)?})))
+}
 
 #[derive(Serialize)]
 struct Inspection {
@@ -220,8 +352,15 @@ pub(crate) fn invoke(
     action: Action,
     arguments: &Map<String, Value>,
     cursor: i64,
+    versioned_plans: bool,
 ) -> anyhow::Result<Result<Value, Rejection>> {
-    for field in ["inspection_id", "after_inspection_id", "reinspection_id"] {
+    for field in [
+        "inspection_id",
+        "after_inspection_id",
+        "reinspection_id",
+        "reinspection_of",
+        "plan_id",
+    ] {
         if arguments
             .get(field)
             .and_then(Value::as_str)
@@ -260,13 +399,20 @@ pub(crate) fn invoke(
             "next_after_inspection_id":next})));
     }
 
-    let id = arguments["inspection_id"].as_str().unwrap();
+    let id = arguments
+        .get("inspection_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if action == Action::GetInspection {
         let Some(inspection) = inspection(&tx, run, id)? else {
             return Ok(Err(reject("INSPECTION_NOT_FOUND", "inspection_id")));
         };
         let measurements = measurements(&tx, run, id)?;
+        let plan = inspection_plan(&tx, run, &inspection.specification_version)?;
         let mut response = json!({"ok":true,"run_id":run,"inspection":inspection});
+        if let Some(plan) = plan {
+            response["inspection_plan"] = json!(plan);
+        }
         if !measurements.is_empty() {
             response["measurements"] = json!(measurements);
         }
@@ -296,12 +442,49 @@ pub(crate) fn invoke(
         return Ok(Err(reject("VERSION_CONFLICT", "expected_cursor")));
     }
 
-    let mut response = if action == Action::CreateInspection {
+    let mut response = if matches!(
+        action,
+        Action::CreateInspectionPlanRevision | Action::ActivateInspectionPlanRevision
+    ) {
+        match write_plan(&tx, run, action, arguments)? {
+            Ok(response) => response,
+            Err(error) => return Ok(Err(error)),
+        }
+    } else if action == Action::CreateInspection {
         let specification = arguments["specification_version"].as_str().unwrap();
         if specification.trim().is_empty() {
             return Ok(Err(Rejection::invalid("specification_version")));
         }
         let work_order = work_order.unwrap();
+        let reinspection_of = arguments.get("reinspection_of").and_then(Value::as_str);
+        if versioned_plans {
+            let Some(plan) = inspection_plan(&tx, run, specification)? else {
+                return Ok(Err(reject(
+                    "PLAN_REVISION_NOT_FOUND",
+                    "specification_version",
+                )));
+            };
+            if let Some(original) = reinspection_of {
+                let valid = inspection(&tx, run, original)?.is_some_and(|previous| {
+                    previous.status == "failed"
+                        && previous.work_order == work_order
+                        && previous.specification_version == specification
+                });
+                if !valid {
+                    return Ok(Err(reject(
+                        "REINSPECTION_NOT_ACCEPTABLE",
+                        "reinspection_of",
+                    )));
+                }
+            } else if plan.status != "active" {
+                return Ok(Err(reject(
+                    "PLAN_REVISION_NOT_ACTIVE",
+                    "specification_version",
+                )));
+            }
+        } else if reinspection_of.is_some() {
+            return Ok(Err(Rejection::invalid("reinspection_of")));
+        }
         let inserted = tx.execute(
             "INSERT INTO quality_inspections (run,id,work_order,specification_version)
              VALUES (?1,?2,?3,?4) ON CONFLICT(run,id) DO NOTHING",
@@ -332,6 +515,7 @@ pub(crate) fn invoke(
                 return Ok(Err(reject("INSPECTION_COMPLETED", "inspection_id")));
             }
             let recorded = measurements(&tx, run, id)?;
+            let plan = inspection_plan(&tx, run, &inspection.specification_version)?;
             match action {
                 Action::RecordMeasurement => {
                     let characteristic = arguments["characteristic"].as_str().unwrap();
@@ -346,6 +530,23 @@ pub(crate) fn invoke(
                     let upper_limit = arguments["upper_limit"].as_f64().unwrap();
                     if lower_limit > upper_limit {
                         return Ok(Err(Rejection::invalid("upper_limit")));
+                    }
+                    if let Some(plan) = &plan {
+                        let Some(expected) = plan.characteristics.get(characteristic) else {
+                            return Ok(Err(reject("CHARACTERISTIC_NOT_IN_PLAN", "characteristic")));
+                        };
+                        for (field, matches) in [
+                            ("unit", unit == expected.unit),
+                            ("lower_limit", lower_limit == expected.lower_limit),
+                            ("upper_limit", upper_limit == expected.upper_limit),
+                        ] {
+                            if !matches {
+                                return Ok(Err(reject(
+                                    "MEASUREMENT_SPECIFICATION_MISMATCH",
+                                    field,
+                                )));
+                            }
+                        }
                     }
                     if recorded
                         .iter()
@@ -378,6 +579,12 @@ pub(crate) fn invoke(
                 Action::CompleteInspection => {
                     if recorded.is_empty() {
                         return Ok(Err(reject("MEASUREMENT_REQUIRED", "inspection_id")));
+                    }
+                    if plan
+                        .as_ref()
+                        .is_some_and(|plan| plan.characteristics.len() != recorded.len())
+                    {
+                        return Ok(Err(reject("PLAN_MEASUREMENTS_INCOMPLETE", "inspection_id")));
                     }
                     inspection.status = if recorded.iter().all(|item| item.passed) {
                         "passed"
