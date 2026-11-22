@@ -227,6 +227,11 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                 && definition.capabilities.contains(&Action::ReleaseWorkOrder)),
         "draft capabilities require work order creation and release"
     );
+    anyhow::ensure!(
+        !definition.capabilities.contains(&Action::ReleaseWorkOrders)
+            || definition.capabilities.contains(&Action::ReleaseWorkOrder),
+        "batch release requires single work order release"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -304,6 +309,9 @@ impl Scenarios {
             include_str!("../fixtures/cnc-public-orders.json"),
             include_str!("../fixtures/cnc-order-release.json"),
             include_str!("../fixtures/cnc-order-drafts.json"),
+            include_str!("../fixtures/cnc-batch-release.json"),
+            include_str!("../fixtures/assembly-batch-release.json"),
+            include_str!("../fixtures/assembly-shortage-batch-release.json"),
             include_str!("../fixtures/assembly-order-drafts.json"),
             include_str!("../fixtures/assembly-order-release.json"),
             include_str!("../fixtures/assembly-shortage-order-release.json"),
@@ -694,6 +702,107 @@ impl Scenarios {
                 "UPDATE scenario_runs SET cursor=cursor+1 WHERE id=?1",
                 [run],
             )?;
+            tx.execute(
+                "INSERT INTO scenario_requests VALUES (?1,?2,?3,?4)",
+                params![run, key, request, response.to_string()],
+            )?;
+            tx.commit()?;
+            return Ok(Ok(response));
+        }
+        if action == Action::ReleaseWorkOrders {
+            let key = parameters["idempotency_key"].as_str().unwrap();
+            let request = json!({"action":action,"arguments":parameters}).to_string();
+            let saved: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT request,response FROM scenario_requests WHERE run=?1 AND key=?2",
+                    params![run, key],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((original, response)) = saved {
+                return Ok(if original == request {
+                    Ok(serde_json::from_str(&response)?)
+                } else {
+                    Err(reject("IDEMPOTENCY_CONFLICT", "idempotency_key"))
+                });
+            }
+            if parameters["expected_cursor"].as_i64() != Some(cursor) {
+                return Ok(Err(reject("VERSION_CONFLICT", "expected_cursor")));
+            }
+            let mut apply_item: Box<
+                dyn FnMut(&Map<String, Value>, i64) -> anyhow::Result<(Value, bool)>,
+            > = if let Some(setup) = &definition.assembly {
+                let model = simulation::load_model(
+                    &definition.model,
+                    definition.model_version,
+                    &definition.model_parameters,
+                )
+                .map_err(anyhow::Error::msg)?;
+                let mut simulation = stored.unwrap_or_else(|| {
+                    Simulation::new(
+                        seed.parse().expect("stored seed"),
+                        &definition.event_rules,
+                        model.as_ref(),
+                    )
+                });
+                let tx = &tx;
+                let rules = &definition.event_rules;
+                Box::new(move |args, version| {
+                    crate::assembly::invoke(
+                        tx,
+                        run,
+                        setup,
+                        Action::ReleaseWorkOrder,
+                        args,
+                        version,
+                        true,
+                        &mut simulation,
+                        rules,
+                        model.as_ref(),
+                    )
+                })
+            } else if let Some(setup) = &definition.manufacturing {
+                Box::new(|args, version| {
+                    crate::mes::invoke(
+                        &tx,
+                        run,
+                        setup,
+                        &definition.work_orders,
+                        Action::ReleaseWorkOrder,
+                        args,
+                        version,
+                    )
+                })
+            } else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            let mut current = cursor;
+            let mut results = Vec::new();
+            let mut seen = std::collections::BTreeSet::new();
+            // The prefix exceeds the public key length, so no direct request can claim an item key.
+            let prefix = "_".repeat(257);
+            for (index, id) in parameters["work_orders"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+            {
+                let mut result = if seen.insert(id.as_str().unwrap()) {
+                    let args = json!({"work_order":id,"expected_cursor":current,
+                        "idempotency_key":format!("{prefix}{index}:{key}")});
+                    let (response, changed) = apply_item(args.as_object().unwrap(), current)?;
+                    if changed {
+                        current += 1;
+                    }
+                    response
+                } else {
+                    json!({"ok":false,"code":"DUPLICATE_WORK_ORDER"})
+                };
+                result["work_order"] = id.clone();
+                results.push(result);
+            }
+            drop(apply_item);
+            let response = json!({"ok":true,"run_id":run,"cursor":current,"results":results});
             tx.execute(
                 "INSERT INTO scenario_requests VALUES (?1,?2,?3,?4)",
                 params![run, key, request, response.to_string()],

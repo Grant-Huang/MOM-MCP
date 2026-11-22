@@ -13,6 +13,7 @@ pub enum Action {
     UpdateDraftOrder,
     GetReleaseReadiness,
     ReleaseWorkOrder,
+    ReleaseWorkOrders,
     GetMaterial,
     HoldMaterial,
     MesStatus,
@@ -114,6 +115,7 @@ impl Action {
         [
             Self::GetWorkOrder,
             Self::ListWorkOrders,
+            Self::ReleaseWorkOrders,
             Self::CreateWorkOrder,
             Self::UpdateDraftOrder,
             Self::GetMaterial,
@@ -136,6 +138,7 @@ impl Action {
         match self {
             Self::GetWorkOrder => "get_work_order",
             Self::ListWorkOrders => "list_work_orders",
+            Self::ReleaseWorkOrders => "release_work_orders",
             Self::CreateWorkOrder => "create_work_order",
             Self::UpdateDraftOrder => "update_draft_order",
             Self::GetMaterial => "get_material",
@@ -160,6 +163,7 @@ impl Action {
             | Self::CreateWorkOrder
             | Self::UpdateDraftOrder
             | Self::GetReleaseReadiness
+            | Self::ReleaseWorkOrders
             | Self::ReleaseWorkOrder => &["工单", "work order", "order"],
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
             Self::HoldMaterial => &[
@@ -199,6 +203,37 @@ impl Action {
                     "next_after_work_order":{"type":["null","string"]}}),
                 "none",
                 &["INVALID_ARGUMENT"][..],
+            ),
+            Self::ReleaseWorkOrders => (
+                "批量下达工单并逐项返回提交结果",
+                "production",
+                "write",
+                object(
+                    &["work_orders", "expected_cursor", "idempotency_key"],
+                    json!({
+                        "work_orders":{"type":"array","minItems":1,"maxItems":50,"items":text()},
+                        "expected_cursor":{"type":"integer","minimum":0,"maximum":i64::MAX},
+                        "idempotency_key":text()
+                    }),
+                ),
+                json!({"cursor":{"type":"integer","minimum":0},"results":{"type":"array","items":{
+                    "type":"object","required":["work_order","ok"],"properties":{
+                        "work_order":text(),"ok":{"type":"boolean"},"code":text(),"status":{"const":"released"},
+                        "cursor":{"type":"integer","minimum":0},"snapshot":{"type":"object"}
+                    }
+                }}}),
+                "release_eligible_orders_and_freeze_execution_definitions",
+                &[
+                    "INVALID_ARGUMENT",
+                    "VERSION_CONFLICT",
+                    "IDEMPOTENCY_CONFLICT",
+                    "DUPLICATE_WORK_ORDER",
+                    "WORK_ORDER_NOT_FOUND",
+                    "INVALID_STATE",
+                    "MATERIAL_SHORTAGE",
+                    "MATERIAL_HELD",
+                    "CELL_NOT_CAPABLE",
+                ][..],
             ),
             Self::CreateWorkOrder | Self::UpdateDraftOrder => {
                 let create = self == Self::CreateWorkOrder;
@@ -491,13 +526,12 @@ pub fn validate(schema: &Value, args: &Map<String, Value>) -> Result<(), Rejecti
                 n >= rule["minimum"].as_u64().unwrap_or(0)
                     && n <= rule["maximum"].as_u64().unwrap_or(u64::MAX)
             }),
-            "string" => value.as_str().is_some_and(|s| {
-                let len = s.chars().count() as u64;
-                len >= rule["minLength"].as_u64().unwrap_or(0)
-                    && len <= rule["maxLength"].as_u64().unwrap_or(u64::MAX)
-                    && rule["enum"]
-                        .as_array()
-                        .is_none_or(|values| values.contains(value))
+            "string" => valid_text(rule, value),
+            "array" => value.as_array().is_some_and(|items| {
+                let len = items.len() as u64;
+                len >= rule["minItems"].as_u64().unwrap_or(0)
+                    && len <= rule["maxItems"].as_u64().unwrap_or(u64::MAX)
+                    && items.iter().all(|item| valid_text(&rule["items"], item))
             }),
             _ => unreachable!("unsupported registry schema"),
         };
@@ -506,4 +540,15 @@ pub fn validate(schema: &Value, args: &Map<String, Value>) -> Result<(), Rejecti
         }
     }
     Ok(())
+}
+
+fn valid_text(rule: &Value, value: &Value) -> bool {
+    value.as_str().is_some_and(|s| {
+        let len = s.chars().count() as u64;
+        len >= rule["minLength"].as_u64().unwrap_or(0)
+            && len <= rule["maxLength"].as_u64().unwrap_or(u64::MAX)
+            && rule["enum"]
+                .as_array()
+                .is_none_or(|values| values.contains(value))
+    })
 }

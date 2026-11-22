@@ -2688,3 +2688,61 @@ async fn p8b_04_create_and_update_draft() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8b_05_batch_release_partial_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        for (scenario, version, first, second, second_result) in [
+            ("cnc", 6, "WO-1", "WO-2", "released"),
+            ("assembly", 7, "WO-E", "WO-L", "released"),
+            ("assembly-shortage", 4, "WO-E", "WO-L", "MATERIAL_SHORTAGE"),
+        ] {
+            let opened = call(&client, "open_scenario", json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(opened["ok"], true, "{opened}");
+            let run = &opened["run_id"];
+            let invoke = |name: &str, arguments| call(&client, "call_tool",
+                json!({"run_id":run,"name":name,"arguments":arguments}));
+            let tools = call(&client, "search_tools", json!({"run_id":run})).await;
+            assert!(tools["tools"].as_array().unwrap().iter().any(|entry| entry["name"] == "release_work_orders"));
+            let initial = if scenario == "assembly-shortage" {
+                let replaced = invoke("assembly_substitute", json!({"work_order":first,"part":"DRIVE-ALT","idempotency_key":"sub"})).await;
+                assert_eq!(replaced["ok"], true, "{replaced}");
+                1
+            } else {0};
+            let empty = invoke("release_work_orders", json!({"work_orders":[],"expected_cursor":initial,"idempotency_key":"bad"})).await;
+            assert_eq!(empty["code"],"INVALID_ARGUMENT");
+            let invalid = invoke("release_work_orders", json!({"work_orders":[first,42],"expected_cursor":initial,"idempotency_key":"bad"})).await;
+            assert_eq!(invalid["code"],"INVALID_ARGUMENT");
+            let request = json!({"work_orders":[first,"UNKNOWN",first,second],"expected_cursor":initial,"idempotency_key":"batch"});
+            let mut stale = request.clone();
+            stale["expected_cursor"] = json!(initial + 1);
+            assert_eq!(invoke("release_work_orders",stale.clone()).await["code"],"VERSION_CONFLICT");
+            let receipt = invoke("release_work_orders",request.clone()).await;
+            assert_eq!(receipt["ok"],true, "{receipt}");
+            let items = receipt["results"].as_array().unwrap();
+            assert_eq!(items.len(),4);
+            assert_eq!(items[0]["status"],"released");
+            assert_eq!(items[0]["cursor"],initial + 1);
+            assert_eq!(items[1]["code"],"WORK_ORDER_NOT_FOUND");
+            assert_eq!(items[1]["work_order"],"UNKNOWN");
+            assert_eq!(items[2]["code"],"DUPLICATE_WORK_ORDER");
+            let last_cursor = if second_result == "released" {
+                assert_eq!(items[3]["status"],second_result);
+                initial + 2
+            } else {
+                assert_eq!(items[3]["code"],second_result);
+                assert_eq!(invoke("get_work_order",json!({"work_order":second})).await["status"],"planned");
+                initial + 1
+            };
+            assert_eq!(receipt["cursor"],last_cursor);
+            assert_eq!(invoke("release_work_orders",request).await,receipt);
+            assert_eq!(invoke("release_work_orders",stale).await["code"],"IDEMPOTENCY_CONFLICT");
+            let all_rejected = invoke("release_work_orders",json!({"work_orders":[first],"expected_cursor":last_cursor,"idempotency_key":"again"})).await;
+            assert_eq!(all_rejected["results"][0]["code"],"INVALID_STATE");
+            assert_eq!(all_rejected["cursor"],last_cursor);
+            assert_eq!(call(&client,"get_run",json!({"run_id":run})).await["cursor"],last_cursor);
+        }
+    }).await.unwrap();
+}
