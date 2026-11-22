@@ -7,6 +7,10 @@ use crate::scenario::Rejection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    OpenNonconformance,
+    PlaceQualityHold,
+    DispositionNonconformance,
+    ReleaseQualityHold,
     RecordMeasurement,
     CompleteInspection,
     CreateInspection,
@@ -137,6 +141,10 @@ pub(crate) fn text() -> Value {
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
+            Self::OpenNonconformance,
+            Self::PlaceQualityHold,
+            Self::DispositionNonconformance,
+            Self::ReleaseQualityHold,
             Self::RecordMeasurement,
             Self::CompleteInspection,
             Self::CreateInspection,
@@ -171,6 +179,10 @@ impl Action {
 
     fn name(self) -> &'static str {
         match self {
+            Self::OpenNonconformance => "open_nonconformance",
+            Self::PlaceQualityHold => "place_quality_hold",
+            Self::DispositionNonconformance => "disposition_nonconformance",
+            Self::ReleaseQualityHold => "release_quality_hold",
             Self::RecordMeasurement => "record_measurement",
             Self::CompleteInspection => "complete_inspection",
             Self::CreateInspection => "create_inspection",
@@ -223,7 +235,11 @@ impl Action {
             | Self::ListInspections
             | Self::GetInspection
             | Self::RecordMeasurement
-            | Self::CompleteInspection => &["检验", "质量", "inspection", "quality"],
+            | Self::CompleteInspection
+            | Self::OpenNonconformance
+            | Self::PlaceQualityHold
+            | Self::DispositionNonconformance
+            | Self::ReleaseQualityHold => &["检验", "质量", "inspection", "quality"],
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
             Self::HoldMaterial => &[
                 "质量冻结",
@@ -243,7 +259,11 @@ impl Action {
             | Self::ListInspections
             | Self::GetInspection
             | Self::RecordMeasurement
-            | Self::CompleteInspection => {
+            | Self::CompleteInspection
+            | Self::OpenNonconformance
+            | Self::PlaceQualityHold
+            | Self::DispositionNonconformance
+            | Self::ReleaseQualityHold => {
                 let inspection_id = json!({"type":"string","minLength":1,"maxLength":64,
                     "pattern":"^[A-Za-z0-9_-]+$"});
                 let row = object(
@@ -259,6 +279,49 @@ impl Action {
                 let cursor = json!({"type":"integer","minimum":0,"maximum":i64::MAX});
                 let measurement = crate::quality::measurement_schema();
                 match self {
+                    Self::OpenNonconformance
+                    | Self::PlaceQualityHold
+                    | Self::DispositionNonconformance
+                    | Self::ReleaseQualityHold => {
+                        let description = match self {
+                            Self::OpenNonconformance => "登记检验不合格",
+                            Self::PlaceQualityHold => "冻结不合格工单的完工及放行",
+                            Self::DispositionNonconformance => "提交复检、让步或报废处置",
+                            _ => "解除已处置不合格的质量冻结",
+                        };
+                        let mut required = vec![
+                            "inspection_id",
+                            "responsible",
+                            "reason",
+                            "evidence",
+                            "expected_cursor",
+                            "idempotency_key",
+                        ];
+                        let mut properties = json!({"inspection_id":inspection_id,"responsible":text(),"reason":text(),
+                            "evidence":text(),"expected_cursor":cursor,"idempotency_key":text()});
+                        if self == Self::DispositionNonconformance {
+                            required.push("decision");
+                            properties["decision"] = json!({"type":"string","enum":["reinspection","concession","scrap"]});
+                            properties["reinspection_id"] = inspection_id;
+                        }
+                        (
+                            description,
+                            "quality",
+                            "write",
+                            object(&required, properties),
+                            json!({"nonconformance":crate::quality::nonconformance_schema(),"cursor":cursor}),
+                            self.name(),
+                            &[
+                                "INVALID_ARGUMENT",
+                                "INSPECTION_NOT_FOUND",
+                                "FAILED_INSPECTION_REQUIRED",
+                                "NONCONFORMANCE_STATE_INVALID",
+                                "REINSPECTION_NOT_ACCEPTABLE",
+                                "VERSION_CONFLICT",
+                                "IDEMPOTENCY_CONFLICT",
+                            ][..],
+                        )
+                    }
                     Self::RecordMeasurement => (
                         "登记检验特性的实测值及规格限值",
                         "quality",
@@ -598,6 +661,10 @@ impl Action {
             output_fields.insert("template_work_order".into(), text());
         }
         if self == Self::GetInspection {
+            output_fields.insert(
+                "nonconformance".into(),
+                crate::quality::nonconformance_schema(),
+            );
             output_fields.insert(
                 "measurements".into(),
                 json!({"type":"array","items":crate::quality::measurement_schema()}),
