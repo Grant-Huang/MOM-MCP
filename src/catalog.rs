@@ -37,6 +37,11 @@ pub enum Action {
     PauseOperation,
     ResumeOperation,
     ReportOperation,
+    PostOperationReport,
+    ListOperationReports,
+    ReverseOperationReport,
+    CompleteOperation,
+    GetCommandResult,
     InspectUnits,
     Disposition,
     CloseOrder,
@@ -128,6 +133,7 @@ impl Action {
         [
             Self::GetWorkOrder,
             Self::ListWorkOrders,
+            Self::GetCommandResult,
             Self::ListOperations,
             Self::GetOperation,
             Self::ListDispatchQueue,
@@ -155,6 +161,7 @@ impl Action {
         match self {
             Self::GetWorkOrder => "get_work_order",
             Self::ListWorkOrders => "list_work_orders",
+            Self::GetCommandResult => "get_command_result",
             Self::ListOperations => "list_operations",
             Self::GetOperation => "get_operation",
             Self::ListDispatchQueue => "list_dispatch_queue",
@@ -294,6 +301,15 @@ impl Action {
                         "occupied_by":{"type":["null","string"]}}))}),
                 "none",
                 &["INVALID_ARGUMENT", "RESOURCE_NOT_FOUND"][..],
+            ),
+            Self::GetCommandResult => (
+                "按幂等键查询已提交的业务命令结果",
+                "production",
+                "read",
+                object(&["idempotency_key"], json!({"idempotency_key":text()})),
+                json!({"receipt":{"type":"object"}}),
+                "none",
+                &["INVALID_ARGUMENT", "COMMAND_RESULT_NOT_FOUND"][..],
             ),
             Self::ReleaseWorkOrders => (
                 "批量下达工单并逐项返回提交结果",

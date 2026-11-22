@@ -120,6 +120,30 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "production",
     ),
     (
+        Action::PostOperationReport,
+        "post_operation_report",
+        "分笔登记当前工序生产实绩",
+        "production",
+    ),
+    (
+        Action::ListOperationReports,
+        "list_operation_reports",
+        "查询工序实绩与冲销情况",
+        "production",
+    ),
+    (
+        Action::ReverseOperationReport,
+        "reverse_operation_report",
+        "冲销无下游依赖的工序实绩",
+        "production",
+    ),
+    (
+        Action::CompleteOperation,
+        "complete_operation",
+        "确认实绩达标并完成工序",
+        "production",
+    ),
+    (
         Action::ReportOperation,
         "report_operation",
         "报工并记录用料与实绩",
@@ -200,6 +224,27 @@ pub fn spec(action: Action) -> Spec {
         }
         Action::InspectUnits => &["work_order", "result", "idempotency_key"],
         Action::Disposition => &["work_order", "result", "reason", "idempotency_key"],
+        Action::ListOperationReports => &["work_order", "operation"],
+        Action::PostOperationReport => &[
+            "work_order",
+            "operation",
+            "quantity",
+            "idempotency_key",
+            "expected_cursor",
+        ],
+        Action::ReverseOperationReport => &[
+            "work_order",
+            "report_id",
+            "reason",
+            "idempotency_key",
+            "expected_cursor",
+        ],
+        Action::CompleteOperation => &[
+            "work_order",
+            "operation",
+            "idempotency_key",
+            "expected_cursor",
+        ],
         Action::ReverseReport => &["work_order", "report_id", "reason", "idempotency_key"],
         _ => unreachable!(),
     };
@@ -224,7 +269,10 @@ pub fn spec(action: Action) -> Spec {
     }
     let read = matches!(
         action,
-        Action::MesStatus | Action::Trace | Action::GetReleaseReadiness
+        Action::MesStatus
+            | Action::Trace
+            | Action::GetReleaseReadiness
+            | Action::ListOperationReports
     );
     if let Some(equipment) = fields.get_mut("equipment_state") {
         equipment["enum"] = json!(["available", "down"]);
@@ -254,7 +302,10 @@ pub fn spec(action: Action) -> Spec {
     ) {
         fields.insert("operation".into(), text());
     }
-    if action == Action::ReportOperation {
+    if matches!(
+        action,
+        Action::ReportOperation | Action::PostOperationReport
+    ) {
         fields.insert(
             "quantity".into(),
             json!({"type":"integer","minimum":1,"maximum":QUANTITY}),
@@ -370,6 +421,91 @@ pub fn spec(action: Action) -> Spec {
             preconditions: &["run_open", "tool_enabled_in_scenario"],
             side_effect: "none",
             errors: &["INVALID_ARGUMENT", "WORK_ORDER_NOT_FOUND"],
+            visibility: "run",
+        };
+    }
+    if matches!(
+        action,
+        Action::PostOperationReport
+            | Action::ListOperationReports
+            | Action::ReverseOperationReport
+            | Action::CompleteOperation
+    ) {
+        let report = object(
+            &["id", "order", "step", "quantity", "batch", "reversed"],
+            json!({
+                "id":text(),"order":text(),"step":{"type":"integer","minimum":0},
+                "quantity":{"type":"integer","minimum":1},"batch":{"type":["string","null"]},
+                "reversed":{"type":"boolean"},"serial_numbers":{"type":"array","items":text()}
+            }),
+        );
+        let success = match action {
+            Action::ListOperationReports => object(
+                &["ok", "work_order", "operation", "reports"],
+                json!({
+                    "ok":{"const":true},"work_order":text(),"operation":text(),
+                    "reports":{"type":"array","items":report}
+                }),
+            ),
+            Action::PostOperationReport => object(
+                &[
+                    "ok",
+                    "report",
+                    "serial_numbers",
+                    "reported_quantity",
+                    "remaining",
+                    "cursor",
+                ],
+                json!({
+                    "ok":{"const":true},"report":report,"serial_numbers":{"type":"array","items":text()},
+                    "reported_quantity":{"type":"integer","minimum":0},"remaining":{"type":"integer","minimum":0},
+                    "cursor":{"type":"integer","minimum":0}
+                }),
+            ),
+            Action::CompleteOperation => object(
+                &["ok", "work_order", "operation", "status", "cursor"],
+                json!({
+                    "ok":{"const":true},"work_order":text(),"operation":text(),"status":{"const":"completed"},
+                    "cursor":{"type":"integer","minimum":0}
+                }),
+            ),
+            _ => object(
+                &["ok", "work_order", "report_id", "reversed", "cursor"],
+                json!({
+                    "ok":{"const":true},"work_order":text(),"report_id":text(),"reversed":{"const":true},
+                    "cursor":{"type":"integer","minimum":0}
+                }),
+            ),
+        };
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: if read { "read" } else { "write" },
+            input: object(required, Value::Object(fields)),
+            output: json!({"oneOf":[success,{"type":"object","required":["ok","code"],"properties":{"ok":{"const":false},"code":text()}}]}),
+            preconditions: &["run_open", "tool_enabled_in_scenario"],
+            side_effect: if read {
+                "none"
+            } else {
+                "update_operation_actuals_or_completion"
+            },
+            errors: &[
+                "INVALID_ARGUMENT",
+                "WORK_ORDER_NOT_FOUND",
+                "INVALID_STATE",
+                "WORK_ORDER_HELD",
+                "OPERATION_OUT_OF_SEQUENCE",
+                "MATERIAL_SHORTAGE",
+                "MATERIAL_HELD",
+                "REPORT_EXCEEDS_REMAINING",
+                "REPORT_NOT_FOUND",
+                "REPORT_HAS_DEPENDENCIES",
+                "RESOURCE_BUSY",
+                "OPERATION_QUANTITY_INCOMPLETE",
+                "VERSION_CONFLICT",
+                "IDEMPOTENCY_CONFLICT",
+            ],
             visibility: "run",
         };
     }
@@ -750,6 +886,25 @@ pub fn invoke(
     cursor: i64,
 ) -> anyhow::Result<(Value, bool)> {
     let mut state = load(tx, run, setup, orders)?;
+    if action == Action::ListOperationReports {
+        let order = args["work_order"].as_str().unwrap();
+        if !state.orders.contains_key(order) {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        }
+        let operation = args["operation"].as_str().unwrap();
+        let Some(step) = ROUTE.iter().position(|candidate| *candidate == operation) else {
+            return Ok((error("OPERATION_OUT_OF_SEQUENCE"), false));
+        };
+        let reports: Vec<_> = state
+            .reports
+            .iter()
+            .filter(|report| report.order == order && report.step == step)
+            .collect();
+        return Ok((
+            json!({"ok":true,"work_order":order,"operation":operation,"reports":reports}),
+            false,
+        ));
+    }
     if action == Action::Trace {
         let subject = args["subject"].as_str().unwrap();
         let links: Vec<_> = state
@@ -825,6 +980,11 @@ pub fn invoke(
                     actions
                 }
                 Phase::Paused => vec!["resume_operation"],
+                Phase::Running
+                    if !held && reported_quantity(&state.reports, id, order.step) == QUANTITY =>
+                {
+                    vec!["complete_operation"]
+                }
                 Phase::Running if !held && (order.step != 0 || state.stock > 0) => {
                     vec!["report_operation"]
                 }
@@ -962,15 +1122,17 @@ fn apply(
         .and_then(Value::as_str)
         .and_then(|center| occupant(state, center, id))
         .map(str::to_owned);
-    let reverse_busy = action == Action::ReverseReport
-        && state.orders.get(id).is_some_and(|order| {
-            order.phase == Phase::Ready
-                && order
-                    .step
-                    .checked_sub(1)
-                    .and_then(|step| order.assigned_centers.get(&step))
-                    .is_some_and(|center| occupant(state, center, id).is_some())
-        });
+    let reverse_busy = matches!(
+        action,
+        Action::ReverseReport | Action::ReverseOperationReport
+    ) && state.orders.get(id).is_some_and(|order| {
+        order.phase == Phase::Ready
+            && order
+                .step
+                .checked_sub(1)
+                .and_then(|step| order.assigned_centers.get(&step))
+                .is_some_and(|center| occupant(state, center, id).is_some())
+    });
     let Some(order) = state.orders.get_mut(id) else {
         return error("WORK_ORDER_NOT_FOUND");
     };
@@ -987,6 +1149,8 @@ fn apply(
             | Action::PauseOperation
             | Action::ResumeOperation
             | Action::ReportOperation
+            | Action::PostOperationReport
+            | Action::CompleteOperation
     ) && ROUTE.get(order.step).copied() != args["operation"].as_str()
     {
         return error("OPERATION_OUT_OF_SEQUENCE");
@@ -1187,7 +1351,7 @@ fn apply(
             }
             order.phase = Phase::Running;
         }
-        Action::ReportOperation if order.phase == Phase::Running => {
+        Action::ReportOperation | Action::PostOperationReport if order.phase == Phase::Running => {
             if held {
                 return error("MATERIAL_HELD");
             }
@@ -1231,7 +1395,7 @@ fn apply(
                 state.ledger.push(json!({"kind":"consumption","report_id":report.id,"batch":LOT,"delta":-(quantity as i64)}));
             }
             let outstanding = remaining - quantity;
-            if outstanding == 0 {
+            if outstanding == 0 && action == Action::ReportOperation {
                 order.step += 1;
                 order.phase = Phase::Ready;
             }
@@ -1239,6 +1403,20 @@ fn apply(
                 "reported_quantity":completed+quantity,"remaining":outstanding});
             state.reports.push(report);
             return response;
+        }
+        Action::CompleteOperation if order.phase == Phase::Running => {
+            if held {
+                return error("MATERIAL_HELD");
+            }
+            let remaining = QUANTITY - reported_quantity(&state.reports, id, order.step);
+            if remaining > 0 {
+                return json!({"ok":false,"code":"OPERATION_QUANTITY_INCOMPLETE","remaining":remaining});
+            }
+            let operation = ROUTE[order.step];
+            state.ledger.push(json!({"kind":"operation_complete","work_order":id,"operation":operation,"cursor":revision}));
+            order.step += 1;
+            order.phase = Phase::Ready;
+            return json!({"ok":true,"work_order":id,"operation":operation,"status":"completed"});
         }
         Action::InspectUnits if order.phase == Phase::Dispatched && order.step == 2 => {
             if held {
@@ -1265,7 +1443,12 @@ fn apply(
             }
             order.phase = Phase::Closed;
         }
-        Action::ReverseReport if matches!(order.phase, Phase::Ready | Phase::Running) => {
+        Action::ReverseReport | Action::ReverseOperationReport => {
+            if action == Action::ReverseReport
+                && !matches!(order.phase, Phase::Ready | Phase::Running)
+            {
+                return error("INVALID_STATE");
+            }
             let Some(index) = state
                 .reports
                 .iter()
@@ -1300,6 +1483,9 @@ fn apply(
             report.reversed = true;
             order.step = report.step;
             order.phase = Phase::Running;
+            if action == Action::ReverseOperationReport {
+                return json!({"ok":true,"work_order":id,"report_id":report.id,"reversed":true});
+            }
         }
         _ => return error("INVALID_STATE"),
     }

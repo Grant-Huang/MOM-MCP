@@ -298,6 +298,18 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                                 && alternates.iter().all(|alternate| identifier(alternate)))))),
         "resource reassignment requires exclusive dispatch and valid work centers"
     );
+    anyhow::ensure!(
+        !definition.capabilities.iter().any(|action| matches!(
+            action,
+            Action::PostOperationReport
+                | Action::ListOperationReports
+                | Action::ReverseOperationReport
+                | Action::CompleteOperation
+        )) || (definition.manufacturing.is_some()
+            && !definition.capabilities.contains(&Action::ReportOperation)
+            && !definition.capabilities.contains(&Action::ReverseReport)),
+        "public operation actuals require manufacturing and exclude legacy write commands"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -383,6 +395,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-resource-dispatch.json"),
             include_str!("../fixtures/cnc-resource-occupancy.json"),
             include_str!("../fixtures/cnc-operation-lifecycle.json"),
+            include_str!("../fixtures/cnc-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
             include_str!("../fixtures/assembly-resource-dispatch.json"),
@@ -701,6 +714,21 @@ impl Scenarios {
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if action == Action::GetCommandResult {
+            let key = parameters["idempotency_key"].as_str().unwrap();
+            let saved: Option<String> = tx
+                .query_row(
+                    "SELECT response FROM scenario_requests WHERE run=?1 AND key=?2",
+                    params![run, key],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(saved) = saved else {
+                return Ok(Err(reject("COMMAND_RESULT_NOT_FOUND", "idempotency_key")));
+            };
+            let receipt: Value = serde_json::from_str(&saved)?;
+            return Ok(Ok(json!({"ok":true,"run_id":run,"receipt":receipt})));
         }
         if action == Action::GetResourceCapability {
             let center = parameters["work_center"].as_str().unwrap();
@@ -1028,6 +1056,23 @@ impl Scenarios {
                 parameters,
                 cursor,
             )?;
+            if action == Action::MesStatus
+                && definition
+                    .capabilities
+                    .contains(&Action::PostOperationReport)
+                && response["ok"] == true
+            {
+                if let Some(actions) = response["available_actions"].as_array_mut() {
+                    for action in actions.iter_mut() {
+                        if *action == "report_operation" {
+                            *action = json!("post_operation_report");
+                        }
+                        if *action == "reverse_report" {
+                            *action = json!("reverse_operation_report");
+                        }
+                    }
+                }
+            }
             if action == Action::MesStatus
                 && definition.capabilities.contains(&Action::CloseWorkOrder)
                 && response["available_actions"] == json!(["close_order"])
