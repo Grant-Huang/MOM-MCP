@@ -67,6 +67,12 @@ AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收。其 DES Observe
 
 Carbon 上游 MCP 路由要求 Business 权益，默认 ERP 镜像下载也返回未授权。Carbon 仍缺获授权实例的 MCP 工单读取及跨公司验证。夹具结果不代表 MCP 载荷、权限执行或 RLS 已实测。 [上游 MCP 权益检查](https://github.com/crbnos/carbon/blob/05bd067/apps/erp/app/routes/api%2B/mcp%2B/_index.ts#L110)
 
+### Carbon MCP 实例验收入口
+
+在获授权的 Business 或以上测试实例中预置两条合成工单。一条属于测试身份可访问的公司，另一条由测试管理员确认存在于该身份无权访问的公司。通过环境注入 `MOM_CARBON_MCP_URL`、`MOM_CARBON_TOKEN`、`MOM_CARBON_VISIBLE_JOB_ID` 和 `MOM_CARBON_OTHER_COMPANY_JOB_ID`，运行 `node docs/references/mcp/carbon-mcp-smoke.mjs`。探针使用 HTTPS，固定 legacy MCP JSON 协议，先描述 `production_getJob`，再对两个已知样本执行只读调用。根据固定版本源码，单条工单通过 MCP 文本块承载 JSON，读取仅投影 `id`、`jobId`、`status` 和可选 `updatedAt`。 [Carbon MCP 实现](https://github.com/crbnos/carbon/blob/05bd067/packages/ee/src/mcp/server.ts) · [结果格式](https://github.com/crbnos/carbon/blob/05bd067/packages/ee/src/mcp/format-result.ts)
+
+探针只输出脱敏结果。HTTP 402 表示当前实例未通过 MCP 权益检查。另一公司返回工具错误时，须由实例负责人从受信侧核对确实因不可见而拒绝，并排除服务故障，才能签收公司隔离。记录部署版本、身份权限范围和复核结论。离线检查命令为 `node --test docs/references/mcp/carbon-mcp-smoke.test.mjs`，覆盖成功、权益拒绝、跨公司意外成功及返回对象不匹配。当前未配置获授权实例，未执行现场验收。
+
 ## M3 Observe 联审契约
 
 候选版本 v1，待 AgentNexus 与 MOM-MCP 联审冻结。首期限定单对象、单已绑定来源的只读工单观测。三系统类型、来源身份、字段和映射策略见 [工单观测本体约定 v0.1](WORK_ORDER_ONTOLOGY.md)。基线为 MOM-MCP `81513b0` 与 AgentNexus `8debd3e`，分别对应两套本地 HTTP 样本与 M2-5 DES 浏览器验收。现有 DES Observe 按 `world_id` 取模拟快照，生产 Observe 需要对象选择及生产身份绑定。 [World Adapter Observe](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/docs/mom/WORLD_ADAPTER.md#41-observe) · [DES Observe 实现](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/mom_world_des.rs#L680)
@@ -122,3 +128,54 @@ Carbon 上游 MCP 路由要求 Business 权益，默认 ERP 镜像下载也返�
 | OpenMES | 在固定版本运行 [样本测试](references/mcp/openmes-adapter-sample.php)，用 Laravel HTTP 内核读取 `PENDING`，执行接受后再读取 `ACCEPTED`。与访问范围用例合计 2 项测试和 16 条断言通过。 | 接受接口校验授权与前置状态，并持久化状态转换。尚无与 Odoo 库存或工序副作用等价的证据。 [接受实现](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Http/Controllers/Api/V1/WorkOrderController.php#L136) |
 
 两套试验用本地合成数据准备读取样本。公开适配器的首期能力仍为只读。候选契约保留上述四个源值，规范状态在取得等价证据前保持为空。`progress` 与 `IN_PROGRESS` 仍待运行证据和联审确认。
+
+### Rust HTTP 读取试实现
+
+Odoo JSON-2 和 OpenMES HTTP 已接入 Rust 工单投影。调用方从可信配置创建一个绑定到租户、站点及源实例的读取器，向其提交已经授权的源工单 ID。读取器发出固定查询，校验返回对象与 ID 匹配，再返回内部观测。读取器无模拟回退分支。宿主仍负责生产绑定解析、调用方授权、来源实例选择和公开错误转换。
+
+端点配置为 HTTPS 来源根地址，回环 HTTP 仅用于本地联调。读取器不跟随重定向，单次请求设有时限及响应大小上限。Odoo 成功空数组与 OpenMES 403／404 返回不可见；OpenMES 401、上游故障和异常传输返回来源不可用。源响应正文和凭据不进入错误结果。
+
+运行 `cargo test --locked --test external_http` 复跑。测试使用本地回环 HTTP 服务验证请求方式、标头、查询条件、成功投影和失败分类。此前 Odoo 与 OpenMES 的真实应用样本用于确定接口形状。本切片的 Rust 客户端仍待两套实际应用联调，Carbon MCP 传输及 AgentNexus Observe 另行验收。
+
+### Rust Carbon MCP 读取试实现
+
+Carbon 使用同一个绑定读取器和工单投影。候选实现对站点配置的来源根地址固定调用 `/api/mcp`，协商 `2025-11-25` 的无会话 JSON 传输，随后只通过 `call_tool` 执行 `production_getJob`。客户端只请求已声明的工单字段，检查 RPC 关联 ID，解码单条文本 JSON，再校验源工单身份。沿用 HTTP 读取器的 HTTPS、无重定向、时限及响应大小限制。
+
+HTTP 402 保留为权益未开通。Carbon 工具级拒绝单独返回且不附上游正文，调用方仍需获授权实例和受信侧证据，才能区分记录不可见与上游故障。读取器无模拟回退路径。运行 `cargo test --locked --test external_http` 验证回环协议夹具。本切片尚未对获授权的 Carbon 实例运行，也尚未接入 AgentNexus Observe。
+
+### Rust 客户端的实际应用复跑
+
+从仓库根目录执行：
+
+```sh
+cargo run --locked --example external_order_smoke -- VENDOR HTTPS_OR_LOOPBACK_ORIGIN VISIBLE_ID OUT_OF_SCOPE_ID EXPECTED_SOURCE_STATUS
+```
+
+使用获授权测试环境中的合成工单。通过环境传入 `MOM_SAMPLE_TOKEN`。Odoo 还需要 `MOM_ODOO_DATABASE`。第二条工单应已由受信侧确认存在，但超出该身份的公司或产线范围。示例复用正式候选读取器，断言首条记录的源 ID和源状态正确、规范状态为空，且第二条返回不可见。输出仅含来源和通过结果。
+
+本地复跑沿用上文固定版本及隔离数据。OpenMES 用 Laravel 实际 HTTP 服务与 SQLite，由只属于本产线的 Operator 读取 `PENDING`，另一产线工单返回不可见。Odoo 用本地 Community 19.0 与 PostgreSQL，由单公司制造用户读取 `draft`，另一公司工单返回不可见。两套验证均直接执行本仓库 Rust 读取器。
+
+### 生产 Observe 的宿主接线候选
+
+MOM-MCP 提供 `ExternalObserve` 供受信宿主集成。宿主从站点配置注册来源，使用租户、站点和来源实例的完整键，来源实例选择可公开的稳定别名。每次请求把世界与不透明工单引用交给宿主解析和授权回调。只有回调返回的受权目标才能选择读取器。未知目标或被拒绝的请求不会调用任何来源，已选择来源的故障直接返回，生产读取模块没有模拟分支。
+
+Observe 候选结果保留不透明引用、来源别名、观测时点、显示号、源状态及映射信息。宿主再构建公开响应包络。内部记录 ID、租户键、端点、凭据及上游错误正文不会序列化进候选结果。Carbon 权益或无法归类的工具拒绝暂归入来源不可用；待真实取证后评审公开分类。
+
+运行 `cargo test --locked --test external_observe`。回环测试覆盖每次调用重新授权、撤权、未配置及故障来源不向其他来源发送请求、重复配置拒绝，以及输出中省略内部绑定字段。AgentNexus M3 的认证世界绑定、引用签发、公开 DTO 和真实来源联调仍待接线；当前组件不提供公开 HTTP 入口。
+
+### AgentNexus M3 接线提案
+
+核对 AgentNexus `8debd3e`。当前 World Adapter 路由挂在 MOM 模拟路径，生产世界尚无真实身份入口。已有 DES Observe 接收 `world_id` 并读取模拟快照。身份契约明确真实登录仍待决定。 [宿主路由](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/main.rs#L135) · [身份契约](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/docs/contracts/identity-and-approval.md#5-待决定)
+
+候选接线先采用已认证的受信服务身份做 M3 只读联调。联审须确认哪一服务签发凭证、AgentNexus 如何校验签发方、受众与时效、绑定存储与撤权来源，以及后续如何接企业会话。生产 Observe 入口仅在上述事项获批并有可用配置后开放。模拟角色头和客户端提交的租户、站点或来源地址均不构成生产授权。
+
+| 接线位置 | 职责 |
+|---|---|
+| AgentNexus 认证入口 | 验证服务身份，从可信凭证取得主体。身份校验失败即拒绝，来源调用数应为零。 |
+| AgentNexus 生产绑定解析 | 逐请求按主体、世界、工单引用和读取权限查询当前授权。配置从受信站点取得。返回受权源位置和记录 ID 至 MOM-MCP 内部组件。 |
+| MOM-MCP 读取与投影 | 只调用已选择的来源。源故障返回来源不可用，禁止切换到模拟或其他来源。 |
+| AgentNexus 响应映射 | 将内部观测组装为 M3 公共 DTO。联审冻结对象引用、只读快照标识、无游标表示及错误码。 |
+
+首个跨仓验收应使用真实宿主身份入口检查合法读取、未认证、跨世界、撤权及已绑定来源失败。通过计数和脱敏报告证明拒绝请求对来源零访问，断言失效来源零回退。对 Odoo、OpenMES、Carbon 重复相同读取意图。跨仓改动进入 AgentNexus 的公开接口及权限评审流程后再实施。
+
+MOM-MCP 侧已用 `cargo test --locked --test external_observe one_observe_entry_reads_three_authorized_worlds` 验证同一宿主 API 经受权解析回调调通三种回环协议。三个世界使用相同不透明引用和显示号，各自读回正确来源与原始状态。测试身份和数据均为夹具。这组证据覆盖宿主 API 串联，实际 AgentNexus 入口、授权实例和站点验收单独取证。
