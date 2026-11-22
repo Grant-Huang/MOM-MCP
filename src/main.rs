@@ -4,6 +4,7 @@ mod fabrication;
 mod mes;
 mod operations;
 mod probe;
+mod quality;
 mod scenario;
 mod simulation;
 mod smt;

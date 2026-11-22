@@ -59,7 +59,7 @@ impl Rejection {
     }
 }
 
-fn reject(code: &'static str, field: &'static str) -> Rejection {
+pub(crate) fn reject(code: &'static str, field: &'static str) -> Rejection {
     Rejection {
         code,
         field: field.into(),
@@ -390,6 +390,11 @@ impl Scenarios {
                  demand TEXT NOT NULL, serial TEXT,
                  PRIMARY KEY (run, id)
              );
+             CREATE TABLE IF NOT EXISTS quality_inspections (
+                 run TEXT NOT NULL, id TEXT NOT NULL, work_order TEXT NOT NULL,
+                 specification_version TEXT NOT NULL,
+                 PRIMARY KEY (run, id)
+             );
              CREATE TABLE IF NOT EXISTS scenario_requests (
                  run TEXT NOT NULL, key TEXT NOT NULL, request TEXT NOT NULL, response TEXT NOT NULL,
                  PRIMARY KEY (run, key)
@@ -411,6 +416,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-operation-lifecycle.json"),
             include_str!("../fixtures/cnc-operation-reports.json"),
             include_str!("../fixtures/cnc-des-recovery.json"),
+            include_str!("../fixtures/cnc-inspections.json"),
+            include_str!("../fixtures/assembly-inspections.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -737,6 +744,19 @@ impl Scenarios {
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if matches!(
+            action,
+            Action::CreateInspection | Action::ListInspections | Action::GetInspection
+        ) {
+            return crate::quality::invoke(
+                tx,
+                run,
+                &definition.work_orders,
+                action,
+                parameters,
+                cursor,
+            );
         }
         if action == Action::RequestMaintenance {
             let Some(setup) = definition
