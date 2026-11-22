@@ -40,4 +40,21 @@ class AdapterSampleSmokeTest extends TestCase
         $this->getJson('/api/v1/work-orders/999999')->assertNotFound();
         fwrite(STDOUT, json_encode(array_intersect_key($response->json('data'), array_flip(['id','order_no','status','updated_at']))) . PHP_EOL);
     }
+    public function test_accept_transitions_pending_to_accepted(): void
+    {
+        $this->seed(RolesAndPermissionsSeeder::class);
+        $actor = User::factory()->create();
+        $actor->assignRole('Admin');
+        $order = WorkOrder::factory()->create();
+        $token = $actor->createToken('adapter-lifecycle')->plainTextToken;
+        $path = "/api/v1/work-orders/{$order->id}";
+
+        $this->withToken($token)->getJson($path)->assertOk()
+            ->assertJsonPath('data.status', 'PENDING');
+        Auth::forgetGuards();
+        $this->postJson("$path/accept")->assertOk();
+        Auth::forgetGuards();
+        $this->getJson($path)->assertOk()->assertJsonPath('data.status', 'ACCEPTED');
+        fwrite(STDOUT, "OpenMES lifecycle: PENDING -> ACCEPTED\n");
+    }
 }
