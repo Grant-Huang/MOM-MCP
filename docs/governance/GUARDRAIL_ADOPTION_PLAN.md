@@ -70,3 +70,5 @@ Daily 和 Weekly 拟采用只读身份和报告工件。PR 所需检查由对应
 上传件《AGENT_GUARDRAILS_MASTER.md》§1–5、§7–14 和《IMPLEMENTATION_PLAYBOOK.md》§2、§5–13。原件 SHA-256 分别为 `3cea3e666004a158f577fa7f330ffaa3d237a7e90df768f6462484b5bb02058d` 与 `f262f60f7c50a72eb814b93cd54c106bb9bc5edc481b2388f851f891f62e58b0`。
 
 G2 的 PR 风险建议、复核职责及证据操作见 [PR 风险与独立审查试点](PR_REVIEW_PILOT.md)。
+
+G2 的 Daily 补跑、Weekly 证据窗口与失效处理见 [周期审计](PERIODIC_AUDIT.md)。
