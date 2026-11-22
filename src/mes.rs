@@ -24,6 +24,12 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "production",
     ),
     (
+        Action::ReleaseWorkOrder,
+        "release_work_order",
+        "下达工单并固化执行定义",
+        "production",
+    ),
+    (
         Action::ReleaseOrder,
         "release_order",
         "下达工单并冻结工艺版本",
@@ -99,6 +105,7 @@ pub fn spec(action: Action) -> Spec {
         Action::Trace => &["subject"],
         Action::ReviseRoute => &["route_version", "idempotency_key"],
         Action::SetEquipment => &["equipment_state", "idempotency_key"],
+        Action::ReleaseWorkOrder => &["work_order", "idempotency_key", "expected_cursor"],
         Action::ReleaseOrder | Action::CloseOrder => &["work_order", "idempotency_key"],
         Action::IssueMaterial => &["work_order", "batch", "idempotency_key"],
         Action::DispatchOperation | Action::StartOperation | Action::ReportOperation => {
@@ -146,6 +153,32 @@ pub fn spec(action: Action) -> Spec {
             "expected_cursor".into(),
             json!({"type":"integer","minimum":0,"maximum":i64::MAX}),
         );
+    }
+    if action == Action::ReleaseWorkOrder {
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: "write",
+            input: object(required, Value::Object(fields)),
+            output: json!({"type":"object","required":["ok"],"properties":{
+                "ok":{"type":"boolean"},"work_order":text(),"status":{"const":"released"},
+                "cursor":{"type":"integer","minimum":0},"snapshot":{"type":"object"},"code":text()
+            }}),
+            preconditions: &["run_open", "work_order_planned", "release_conditions_met"],
+            side_effect: "release_order_and_freeze_execution_definition",
+            errors: &[
+                "INVALID_ARGUMENT",
+                "WORK_ORDER_NOT_FOUND",
+                "INVALID_STATE",
+                "MATERIAL_SHORTAGE",
+                "MATERIAL_HELD",
+                "CELL_NOT_CAPABLE",
+                "VERSION_CONFLICT",
+                "IDEMPOTENCY_CONFLICT",
+            ],
+            visibility: "run",
+        };
     }
     if action == Action::GetReleaseReadiness {
         return Spec {
@@ -530,7 +563,7 @@ fn apply(
         return error("OPERATION_OUT_OF_SEQUENCE");
     }
     match action {
-        Action::ReleaseOrder => {
+        Action::ReleaseOrder | Action::ReleaseWorkOrder => {
             if let Some(code) = release_blocker(&order.phase, state.stock, held) {
                 return if code == "MATERIAL_SHORTAGE" {
                     shortage(state.stock)
@@ -540,6 +573,10 @@ fn apply(
             }
             order.route_version = Some(state.route_version.clone());
             order.phase = Phase::Ready;
+            if action == Action::ReleaseWorkOrder {
+                return json!({"ok":true,"work_order":id,"status":"released",
+                    "snapshot":{"route_version":order.route_version}});
+            }
         }
         Action::DispatchOperation if order.phase == Phase::Ready => order.phase = Phase::Dispatched,
         Action::IssueMaterial if order.phase == Phase::Dispatched && order.step == 0 => {

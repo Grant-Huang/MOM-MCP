@@ -10,6 +10,7 @@ pub enum Action {
     GetWorkOrder,
     ListWorkOrders,
     GetReleaseReadiness,
+    ReleaseWorkOrder,
     GetMaterial,
     HoldMaterial,
     MesStatus,
@@ -148,9 +149,10 @@ impl Action {
 
     fn keywords(self) -> &'static [&'static str] {
         match self {
-            Self::GetWorkOrder | Self::ListWorkOrders | Self::GetReleaseReadiness => {
-                &["工单", "work order", "order"]
-            }
+            Self::GetWorkOrder
+            | Self::ListWorkOrders
+            | Self::GetReleaseReadiness
+            | Self::ReleaseWorkOrder => &["工单", "work order", "order"],
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
             Self::HoldMaterial => &[
                 "质量冻结",
