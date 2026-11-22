@@ -577,3 +577,19 @@ spec = "acceptance/P9A.md"
 features = ["F08", "F09"]
 layers = ["playwright"]
 tests = { playwright = "P9A-05 Validate and activate a BOM" }
+
+[[case]]
+id = "P9A-06"
+phase = "P9A"
+spec = "acceptance/P9A.md"
+features = ["F08", "F09", "F10"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9a_06_route_revision_dependencies" }
+
+[[case]]
+id = "P9A-07"
+phase = "P9A"
+spec = "acceptance/P9A.md"
+features = ["F08", "F09"]
+layers = ["playwright"]
+tests = { playwright = "P9A-07 Configure and activate a route" }

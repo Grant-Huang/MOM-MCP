@@ -390,6 +390,13 @@ impl Scenarios {
                  demand TEXT NOT NULL, serial TEXT,
                  PRIMARY KEY (run, id)
              );
+             CREATE TABLE IF NOT EXISTS master_routes (
+                 run TEXT NOT NULL, item TEXT NOT NULL, revision INTEGER NOT NULL,
+                 operations TEXT NOT NULL, status TEXT NOT NULL,
+                 PRIMARY KEY (run,item,revision)
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS master_active_route
+                 ON master_routes (run,item) WHERE status='active';
              CREATE TABLE IF NOT EXISTS master_boms (
                  run TEXT NOT NULL, item TEXT NOT NULL, revision INTEGER NOT NULL,
                  components TEXT NOT NULL, status TEXT NOT NULL,
@@ -467,6 +474,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-item-revisions.json"),
             include_str!("../fixtures/cnc-bom-revisions.json"),
             include_str!("../fixtures/assembly-bom-revisions.json"),
+            include_str!("../fixtures/cnc-route-revisions.json"),
+            include_str!("../fixtures/assembly-route-revisions.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -787,10 +796,13 @@ impl Scenarios {
             return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
         }
         let bom_enabled = definition.capabilities.contains(&Action::CreateBomRevision);
-        let spec = if action == Action::ActivateRevision && !bom_enabled {
-            crate::items::spec(action, false)
-        } else {
-            action.spec()
+        let route_enabled = definition
+            .capabilities
+            .contains(&Action::CreateRouteRevision);
+        let spec = match action {
+            Action::ActivateRevision => crate::items::spec(action, bom_enabled, route_enabled),
+            Action::ValidateRevision => crate::bom::validation_spec(route_enabled),
+            _ => action.spec(),
         };
         if name == "describe_tool" {
             return Ok(Ok(json!({"ok":true,"tool":spec})));
@@ -798,6 +810,12 @@ impl Scenarios {
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if action.is_route_action()
+            || (matches!(action, Action::ActivateRevision | Action::ValidateRevision)
+                && parameters["revision_type"] == "route")
+        {
+            return crate::routes::invoke(tx, run, action, parameters, cursor);
         }
         if action.is_bom_action()
             || (action == Action::ActivateRevision && parameters["revision_type"] == "bom")

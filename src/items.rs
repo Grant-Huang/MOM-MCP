@@ -34,7 +34,7 @@ struct Revision {
     status: String,
 }
 
-pub(crate) fn spec(action: Action, allow_bom: bool) -> Spec {
+pub(crate) fn spec(action: Action, allow_bom: bool, allow_route: bool) -> Spec {
     let id = json!({"type":"string","minLength":1,"maxLength":64,"pattern":"^[A-Za-z0-9_-]+$"});
     let unit = json!({"type":"string","enum":UNITS});
     let revision = json!({"type":"integer","minimum":1,"maximum":u32::MAX});
@@ -130,16 +130,37 @@ pub(crate) fn spec(action: Action, allow_bom: bool) -> Spec {
             required.push("revision_type");
             fields.insert(
                 "revision_type".into(),
-                json!({"type":"string","enum":if allow_bom {&["item","bom"][..]} else {&["item"][..]}}),
+                json!({"type":"string","enum":match (allow_bom,allow_route) {(true,true)=>&["item","bom","route"][..],(true,false)=>&["item","bom"][..],(false,true)=>&["item","route"][..],_=>&["item"][..]}}),
             );
             (
-                if allow_bom {
+                if allow_bom || allow_route {
                     "启用主数据版本"
                 } else {
                     "启用物料版本"
                 },
                 json!({"item_revision":row}),
-                if allow_bom {
+                if allow_route {
+                    &[
+                        "INVALID_ARGUMENT",
+                        "ITEM_REVISION_NOT_FOUND",
+                        "ITEM_REVISION_NOT_ACTIVATABLE",
+                        "ROUTE_REVISION_NOT_FOUND",
+                        "ROUTE_REVISION_IMMUTABLE",
+                        "ROUTE_REVISION_NOT_ACTIVATABLE",
+                        "ROUTE_OPERATIONS_REQUIRED",
+                        "ROUTE_ITEM_REVISION_NOT_PUBLISHED",
+                        "BOM_REVISION_NOT_FOUND",
+                        "BOM_REVISION_IMMUTABLE",
+                        "BOM_REVISION_NOT_ACTIVATABLE",
+                        "BOM_COMPONENTS_REQUIRED",
+                        "COMPONENT_REVISION_NOT_FOUND",
+                        "COMPONENT_UNIT_MISMATCH",
+                        "COMPONENT_BOM_NOT_FOUND",
+                        "BOM_DEPENDENCY_NOT_PUBLISHED",
+                        "VERSION_CONFLICT",
+                        "IDEMPOTENCY_CONFLICT",
+                    ][..]
+                } else if allow_bom {
                     &[
                         "INVALID_ARGUMENT",
                         "ITEM_REVISION_NOT_FOUND",
@@ -182,6 +203,13 @@ pub(crate) fn spec(action: Action, allow_bom: bool) -> Spec {
             &["ok", "run_id", "cursor", "bom_revision"],
             json!({"ok":{"const":true},"run_id":text(),"cursor":{"type":"integer","minimum":0},
                 "bom_revision":crate::bom::revision_schema()}),
+        ));
+    }
+    if action == Action::ActivateRevision && allow_route {
+        output["oneOf"].as_array_mut().unwrap().push(object(
+            &["ok", "run_id", "cursor", "route_revision"],
+            json!({"ok":{"const":true},"run_id":text(),"cursor":{"type":"integer","minimum":0},
+                "route_revision":crate::routes::revision_schema()}),
         ));
     }
     Spec {

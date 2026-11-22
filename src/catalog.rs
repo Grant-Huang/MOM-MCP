@@ -7,6 +7,9 @@ use crate::scenario::Rejection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    CreateRouteRevision,
+    GetRouteRevision,
+    SetRouteOperations,
     CreateBomRevision,
     GetBomRevision,
     SetBomComponents,
@@ -153,6 +156,9 @@ pub(crate) fn text() -> Value {
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
+            Self::CreateRouteRevision,
+            Self::GetRouteRevision,
+            Self::SetRouteOperations,
             Self::CreateBomRevision,
             Self::GetBomRevision,
             Self::SetBomComponents,
@@ -203,6 +209,9 @@ impl Action {
 
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::CreateRouteRevision => "create_route_revision",
+            Self::GetRouteRevision => "get_route_revision",
+            Self::SetRouteOperations => "set_route_operations",
             Self::CreateBomRevision => "create_bom_revision",
             Self::GetBomRevision => "get_bom_revision",
             Self::SetBomComponents => "set_bom_components",
@@ -278,6 +287,7 @@ impl Action {
             | Self::PlaceQualityHold
             | Self::DispositionNonconformance
             | Self::ReleaseQualityHold => &["检验", "质量", "inspection", "quality"],
+            action if action.is_route_action() => &["工艺路线", "route", "revision"],
             action if action.is_bom_action() => &["物料清单", "bom", "revision"],
             action if action.is_item_action() => &["物料", "版本", "item", "revision"],
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
@@ -315,12 +325,22 @@ impl Action {
         )
     }
 
+    pub(crate) fn is_route_action(self) -> bool {
+        matches!(
+            self,
+            Self::CreateRouteRevision | Self::GetRouteRevision | Self::SetRouteOperations
+        )
+    }
+
     pub fn spec(self) -> Spec {
+        if self.is_route_action() {
+            return crate::routes::spec(self);
+        }
         if self.is_bom_action() {
             return crate::bom::spec(self);
         }
         if self.is_item_action() {
-            return crate::items::spec(self, true);
+            return crate::items::spec(self, true, true);
         }
         let (description, domain, effect, input, fields, side_effect, errors) = match self {
             Self::CreateInspectionPlanRevision
