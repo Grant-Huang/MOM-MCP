@@ -31,6 +31,7 @@ pub enum Action {
     ReviseRoute,
     SetEquipment,
     DispatchOperation,
+    ReassignOperation,
     IssueMaterial,
     StartOperation,
     ReportOperation,

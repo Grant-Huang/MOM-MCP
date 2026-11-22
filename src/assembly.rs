@@ -133,6 +133,8 @@ pub fn spec(action: Action) -> Spec {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Setup {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exclusive_dispatch: bool,
     stock: BTreeMap<String, usize>,
     orders: BTreeMap<String, OrderDefinition>,
     cells: BTreeMap<String, Vec<String>>,
@@ -478,6 +480,18 @@ pub fn operations(
     Ok(rows)
 }
 
+fn cell_occupant<'a>(state: &'a State, cell: &str, except: &str) -> Option<&'a str> {
+    state
+        .orders
+        .iter()
+        .find(|(id, order)| {
+            id.as_str() != except
+                && order.phase == Phase::Dispatched
+                && order.cell.as_deref() == Some(cell)
+        })
+        .map(|(id, _)| id.as_str())
+}
+
 pub fn resource_capability(
     tx: &Transaction<'_>,
     run: &str,
@@ -491,9 +505,14 @@ pub fn resource_capability(
             "available":state.bench.is_none(),"occupied_by":state.bench}),
         ));
     }
+    let state = load(tx, run, setup)?;
+    let occupied_by = setup
+        .exclusive_dispatch
+        .then(|| cell_occupant(&state, center, ""))
+        .flatten();
     Ok(setup.cells.get(center).map(|configurations| {
         json!({"work_center":center,
-        "operations":["build"],"configurations":configurations,"available":true,"occupied_by":null})
+        "operations":["build"],"configurations":configurations,"available":occupied_by.is_none(),"occupied_by":occupied_by})
     }))
 }
 
@@ -608,6 +627,7 @@ pub fn invoke(
             | Action::CompleteWorkOrder
             | Action::CloseWorkOrder
             | Action::DispatchOperation
+            | Action::ReassignOperation
             | Action::SetDispatchPriority
     ) && args["expected_cursor"].as_i64() != Some(cursor)
     {
@@ -680,6 +700,16 @@ fn apply(
             return failure("TEST_PRIORITY_BLOCKED");
         }
     }
+    let busy = setup
+        .exclusive_dispatch
+        .then(|| {
+            args.get("work_center")
+                .or_else(|| args.get("cell"))
+                .and_then(Value::as_str)
+                .and_then(|center| cell_occupant(state, center, id))
+                .map(str::to_owned)
+        })
+        .flatten();
     let order = state.orders.get_mut(id).unwrap();
     match action {
         Action::HoldWorkOrder
@@ -768,15 +798,15 @@ fn apply(
             order.substitute = Some(part.into());
             return json!({"ok":true,"part":part,"qualification":qualification});
         }
-        Action::AssemblyDispatch | Action::DispatchOperation => {
-            if action == Action::DispatchOperation && args["operation"] != "build" {
+        Action::AssemblyDispatch | Action::DispatchOperation | Action::ReassignOperation => {
+            if action != Action::AssemblyDispatch && args["operation"] != "build" {
                 return failure(if args["operation"] == "final_test" {
                     "OPERATION_NOT_DISPATCHABLE"
                 } else {
                     "OPERATION_NOT_FOUND"
                 });
             }
-            let Some(cell) = args[if action == Action::DispatchOperation {
+            let Some(cell) = args[if action != Action::AssemblyDispatch {
                 "work_center"
             } else {
                 "cell"
@@ -789,7 +819,13 @@ fn apply(
             });
             let shortages = missing(&required(setup, order), &state.stock);
             if let Some(code) = dispatch_blocker(
-                matches!(order.phase, Phase::Planned | Phase::Released),
+                if action == Action::ReassignOperation {
+                    setup.exclusive_dispatch
+                        && order.phase == Phase::Dispatched
+                        && order.cell.as_deref() != Some(cell)
+                } else {
+                    matches!(order.phase, Phase::Planned | Phase::Released)
+                },
                 capable,
                 &shortages,
             ) {
@@ -798,6 +834,9 @@ fn apply(
                 } else {
                     failure(code)
                 };
+            }
+            if let Some(owner) = busy {
+                return json!({"ok":false,"code":"RESOURCE_BUSY","occupied_by":owner});
             }
             order.cell = Some(cell.into());
             order.phase = Phase::Dispatched;
