@@ -67,6 +67,12 @@ AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收。其 DES Observe
 
 Carbon 上游 MCP 路由要求 Business 权益，默认 ERP 镜像下载也返回未授权。Carbon 仍缺获授权实例的 MCP 工单读取及跨公司验证。夹具结果不代表 MCP 载荷、权限执行或 RLS 已实测。 [上游 MCP 权益检查](https://github.com/crbnos/carbon/blob/05bd067/apps/erp/app/routes/api%2B/mcp%2B/_index.ts#L110)
 
+### Carbon MCP 实例验收入口
+
+在获授权的 Business 或以上测试实例中预置两条合成工单。一条属于测试身份可访问的公司，另一条由测试管理员确认存在于该身份无权访问的公司。通过环境注入 `MOM_CARBON_MCP_URL`、`MOM_CARBON_TOKEN`、`MOM_CARBON_VISIBLE_JOB_ID` 和 `MOM_CARBON_OTHER_COMPANY_JOB_ID`，运行 `node docs/references/mcp/carbon-mcp-smoke.mjs`。探针使用 HTTPS，固定 legacy MCP JSON 协议，先描述 `production_getJob`，再对两个已知样本执行只读调用。根据固定版本源码，单条工单通过 MCP 文本块承载 JSON，读取仅投影 `id`、`jobId`、`status` 和可选 `updatedAt`。 [Carbon MCP 实现](https://github.com/crbnos/carbon/blob/05bd067/packages/ee/src/mcp/server.ts) · [结果格式](https://github.com/crbnos/carbon/blob/05bd067/packages/ee/src/mcp/format-result.ts)
+
+探针只输出脱敏结果。HTTP 402 表示当前实例未通过 MCP 权益检查。另一公司返回工具错误时，须由实例负责人从受信侧核对确实因不可见而拒绝，并排除服务故障，才能签收公司隔离。记录部署版本、身份权限范围和复核结论。离线检查命令为 `node --test docs/references/mcp/carbon-mcp-smoke.test.mjs`，覆盖成功、权益拒绝、跨公司意外成功及返回对象不匹配。当前未配置获授权实例，未执行现场验收。
+
 ## M3 Observe 联审契约
 
 候选版本 v1，待 AgentNexus 与 MOM-MCP 联审冻结。首期限定单对象、单已绑定来源的只读工单观测。三系统类型、来源身份、字段和映射策略见 [工单观测本体约定 v0.1](WORK_ORDER_ONTOLOGY.md)。基线为 MOM-MCP `81513b0` 与 AgentNexus `8debd3e`，分别对应两套本地 HTTP 样本与 M2-5 DES 浏览器验收。现有 DES Observe 按 `world_id` 取模拟快照，生产 Observe 需要对象选择及生产身份绑定。 [World Adapter Observe](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/docs/mom/WORLD_ADAPTER.md#41-observe) · [DES Observe 实现](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/mom_world_des.rs#L680)
