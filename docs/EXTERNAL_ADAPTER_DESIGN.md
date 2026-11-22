@@ -60,3 +60,39 @@ Odoo 作为第三个候选，首期仍选择两种可运行接口。Odoo 制造�
 Odoo 已观测到的空数组和 OpenMES 的 403／404 须分别解释。适配层应保留可公开的拒绝或不可见语义，并避免以跨范围查询推断存在性。Odoo `draft` 与 OpenMES `PENDING` 各自保留源值，需按生命周期证据评审是否可映射为同一规范状态。另用 [HTTP 样本脚本](references/mcp/openmes-adapter-http-smoke.sh) 在相同 OpenMES 版本、隔离 SQLite 和 PHP 8.5.13 环境启动回环 HTTP 服务。将脚本复制到已安装 Composer 依赖的 OpenMES backend 目录，运行 `sh openmes-adapter-http-smoke.sh`。真实请求复现了表中的四项结果，200 返回的四个字段一致。实际站点网络、部署身份与 AgentNexus Observe 联调仍待验证。
 
 AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收。其 DES Observe 当前按 `world_id` 读取已发布的模拟快照。生产工单读取需要 M3 绑定与对象选择契约，联审需确认生产身份、授权范围、适配调用位置和响应错误归属。 [DES Observe 实现](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/mom_world_des.rs#L680)
+
+## M3 Observe 联审契约
+
+候选版本 v1，待 AgentNexus 与 MOM-MCP 联审冻结。首期限定单对象、单已绑定来源的只读工单观测。基线为 MOM-MCP `81513b0` 与 AgentNexus `8debd3e`，分别对应两套本地 HTTP 样本与 M2-5 DES 浏览器验收。现有 DES Observe 按 `world_id` 取模拟快照，生产 Observe 需要对象选择及生产身份绑定。 [World Adapter Observe](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/docs/mom/WORLD_ADAPTER.md#41-observe) · [DES Observe 实现](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/mom_world_des.rs#L680)
+
+### 请求、授权与返回
+
+- AgentNexus 接收已认证会话的 `Observe(world_id, selection)`。首期 `selection` 指定一个 `{type: "work_order", id: "..."}`。宿主按可信会话解析租户、站点、生产世界、授权范围和适配器绑定。调用方不能覆盖来源地址或凭据。
+- `id` 为指定生产世界内的不透明对象引用，由已授权的来源引用或联调夹具提供。AgentNexus 将其解析为绑定范围内的源记录 ID。解析失败或越权在访问来源前拒绝。同一数字源 ID 在不同来源形成不同对象引用。
+- MOM-MCP 适配器读取已绑定来源，校验响应对象与请求匹配，并返回公共语义和受控来源标识。宿主按公开权限组装 `protocol_version`、`request_id`、`world_id`、`objects` 与 `as_of`。对象包含 `ref`、`source`、`observed_at` 和 `state`。候选 `state` 字段为 `display_number`、`source_status`、可空的 `normalized_status`、`mapping_version` 和可选的 `mapping_issue`、`source_updated_at`。
+- 有源更新时间时转为 RFC 3339 UTC。Odoo 样本时间无偏移，需核实上游 UTC 约定再转换。更新时间与观测时间分别保留。两套响应均未证明提供可复核的对象版本，首期省略 `object_version`。
+- 对接 World Adapter 的 `per_source` 一致性口径。来源标记为仅支持快照重读。建议返回空的可续读游标，并且不声明 Subscribe 能力。游标字段的可空性、水位形状和 DTO 兼容策略需在联审中确认。
+
+### 来源字段与语义映射
+
+| 业务信息 | Odoo Community 19.0 | OpenMES |
+|---|---|---|
+| 读取意图 | JSON-2 `mrp.production/search_read` 按 ID 取单条 | `GET /api/v1/work-orders/{id}` 读取 `data` |
+| 源身份、显示号 | 数据库实例内的 `id`，`name` 用于展示 | 实例内的 `data.id`，`data.order_no` 用于展示 |
+| 状态与更新时间 | `state`、`write_date` | `data.status`、`data.updated_at` |
+| 首轮映射 | `draft` 与 `to_close` 保留源值，规范状态待核实 | `PENDING`、`CHANGE_HOLD` 与 `DONE` 保留源值，规范状态待核实 |
+| 待评审等价候选 | `progress` 表示生产已启动 | `IN_PROGRESS` 表示执行中，需补两端状态转换证据后才发布为同一规范状态 |
+
+首期样本只实测到 Odoo `draft` 和 OpenMES `PENDING`。两者的进入条件及后续动作尚未对照，应返回空的规范状态和 `unmapped` 诊断。缺失、未知、歧义可分别标注。响应结构无效或返回记录不匹配时拒绝整条观测并记录受限诊断。来源状态仅在调用身份已获授权且值可公开时返回。
+
+### 失败映射与验收断言
+
+| 情况 | 候选公开语义与验证 |
+|---|---|
+| AgentNexus 会话越权或跨绑定 | 在来源调用前拒绝，并断言没有上游请求。 |
+| 来源内不可见 | Odoo 成功空数组及 OpenMES 对象级 403／404 返回统一不可见结果。受信侧保留实际响应分类，普通调用方无法借此区分受限对象是否存在。 |
+| 来源身份或配置故障 | 来源 401 或可确认的连接级拒绝返回连接不可用。不得把来源 401 解释为调用方的会话身份失败。 |
+| 来源暂时故障 | 超时和上游暂时故障仅对读取有界重试。测试断言最终返回不可用，且零模拟调用。 |
+| 观测成功 | 在两种绑定上验证同一读取意图、稳定来源、同号不同对象、时间语义以及待映射状态。 |
+
+联审输出应冻结绑定字段、连接器部署和身份、对象引用签发方式、一致性字段、公开错误表示及兼容策略。冻结后登记 Fxx、执行阶段和验收用例；首先验证两种真实 HTTP 来源，再通过 AgentNexus Observe 运行同一套断言。生产站点、事件订阅、跨系统关联与写入各自保留独立签收条件。
