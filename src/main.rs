@@ -2,6 +2,7 @@ mod assembly;
 mod catalog;
 mod fabrication;
 mod mes;
+mod operations;
 mod probe;
 mod scenario;
 mod simulation;

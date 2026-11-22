@@ -9,6 +9,9 @@ use crate::scenario::Rejection;
 pub enum Action {
     GetWorkOrder,
     ListWorkOrders,
+    ListOperations,
+    GetOperation,
+    ListDispatchQueue,
     CreateWorkOrder,
     UpdateDraftOrder,
     GetReleaseReadiness,
@@ -120,6 +123,9 @@ impl Action {
         [
             Self::GetWorkOrder,
             Self::ListWorkOrders,
+            Self::ListOperations,
+            Self::GetOperation,
+            Self::ListDispatchQueue,
             Self::ReleaseWorkOrders,
             Self::CreateWorkOrder,
             Self::UpdateDraftOrder,
@@ -143,6 +149,9 @@ impl Action {
         match self {
             Self::GetWorkOrder => "get_work_order",
             Self::ListWorkOrders => "list_work_orders",
+            Self::ListOperations => "list_operations",
+            Self::GetOperation => "get_operation",
+            Self::ListDispatchQueue => "list_dispatch_queue",
             Self::ReleaseWorkOrders => "release_work_orders",
             Self::CreateWorkOrder => "create_work_order",
             Self::UpdateDraftOrder => "update_draft_order",
@@ -175,6 +184,9 @@ impl Action {
             | Self::CloseWorkOrder
             | Self::ReleaseWorkOrders
             | Self::ReleaseWorkOrder => &["工单", "work order", "order"],
+            Self::ListOperations | Self::GetOperation | Self::ListDispatchQueue => {
+                &["工序", "派工", "operation", "dispatch", "queue"]
+            }
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
             Self::HoldMaterial => &[
                 "质量冻结",
@@ -214,6 +226,56 @@ impl Action {
                 "none",
                 &["INVALID_ARGUMENT"][..],
             ),
+            Self::ListOperations | Self::GetOperation | Self::ListDispatchQueue => {
+                let row = object(
+                    &[
+                        "work_order",
+                        "operation",
+                        "sequence",
+                        "status",
+                        "work_center",
+                        "blocking",
+                        "priority",
+                    ],
+                    json!({"work_order":text(),"operation":text(),"sequence":{"type":"integer","minimum":1},
+                    "status":{"enum":["pending","ready","dispatched","running","blocked","held","completed","cancelled"]},
+                    "work_center":{"type":["null","string"]},"blocking":{"type":["null","string"]},
+                    "priority":{"type":"integer","minimum":0}}),
+                );
+                let (description, input, output) = match self {
+                    Self::ListOperations => (
+                        "查询工单工序、执行状态及阻塞",
+                        object(&["work_order"], json!({"work_order":text()})),
+                        json!({"operations":{"type":"array","items":row}}),
+                    ),
+                    Self::GetOperation => (
+                        "按工单和工序查询执行详情",
+                        object(
+                            &["work_order", "operation"],
+                            json!({"work_order":text(),"operation":text()}),
+                        ),
+                        json!({"operation":row}),
+                    ),
+                    _ => (
+                        "按优先级查询待派工工序",
+                        object(&[], json!({"work_center":text()})),
+                        json!({"operations":{"type":"array","items":row}}),
+                    ),
+                };
+                (
+                    description,
+                    "production",
+                    "read",
+                    input,
+                    output,
+                    "none",
+                    &[
+                        "INVALID_ARGUMENT",
+                        "WORK_ORDER_NOT_FOUND",
+                        "OPERATION_NOT_FOUND",
+                    ][..],
+                )
+            }
             Self::ReleaseWorkOrders => (
                 "批量下达工单并逐项返回提交结果",
                 "production",

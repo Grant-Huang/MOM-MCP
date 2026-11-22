@@ -433,3 +433,19 @@ spec = "acceptance/P8B.md"
 features = ["F08", "F09", "F10", "F14"]
 layers = ["rust-integration"]
 tests = { rust-integration = "p8b_08_cross_shop_snapshot" }
+
+[[case]]
+id = "P8C-01"
+phase = "P8C"
+spec = "acceptance/P8C.md"
+features = ["F02", "F08", "F09"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p8c_01_operation_queries_and_queue" }
+
+[[case]]
+id = "P8C-UI"
+phase = "P8C"
+spec = "acceptance/P8C.md"
+features = ["F02", "F09", "F15"]
+layers = ["playwright"]
+tests = { playwright = "P8C-UI Operation detail and dispatch queue" }

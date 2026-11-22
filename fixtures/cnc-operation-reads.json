@@ -1,0 +1,52 @@
+{
+  "scenario_id": "cnc",
+  "version": 10,
+  "title": "汽车零部件 CNC · 跨车间交接",
+  "model": "cnc_wear",
+  "work_orders": [
+    "WO-1",
+    "WO-2"
+  ],
+  "materials": {
+    "LOT-1": "WO-1"
+  },
+  "capabilities": [
+    "get_work_order",
+    "get_material",
+    "hold_material",
+    "mes_status",
+    "release_order",
+    "revise_route",
+    "dispatch_operation",
+    "issue_material",
+    "start_operation",
+    "report_operation",
+    "inspect_units",
+    "disposition",
+    "trace",
+    "reverse_report",
+    "set_equipment",
+    "list_work_orders",
+    "get_release_readiness",
+    "release_work_order",
+    "release_work_orders",
+    "hold_work_order",
+    "resume_work_order",
+    "cancel_work_order",
+    "complete_work_order",
+    "close_work_order",
+    "create_work_order",
+    "update_draft_order",
+    "list_operations",
+    "get_operation",
+    "list_dispatch_queue"
+  ],
+  "manufacturing": {
+    "initial_stock": 10,
+    "work_centers": [
+      "MACH-01",
+      "ASM-01",
+      "QA-01"
+    ]
+  }
+}
