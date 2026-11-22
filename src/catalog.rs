@@ -7,6 +7,8 @@ use crate::scenario::Rejection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    RecordMeasurement,
+    CompleteInspection,
     CreateInspection,
     ListInspections,
     GetInspection,
@@ -135,6 +137,8 @@ pub(crate) fn text() -> Value {
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
+            Self::RecordMeasurement,
+            Self::CompleteInspection,
             Self::CreateInspection,
             Self::ListInspections,
             Self::GetInspection,
@@ -167,6 +171,8 @@ impl Action {
 
     fn name(self) -> &'static str {
         match self {
+            Self::RecordMeasurement => "record_measurement",
+            Self::CompleteInspection => "complete_inspection",
             Self::CreateInspection => "create_inspection",
             Self::ListInspections => "list_inspections",
             Self::GetInspection => "get_inspection",
@@ -213,9 +219,11 @@ impl Action {
             Self::ListOperations | Self::GetOperation | Self::ListDispatchQueue => {
                 &["工序", "派工", "operation", "dispatch", "queue"]
             }
-            Self::CreateInspection | Self::ListInspections | Self::GetInspection => {
-                &["检验", "质量", "inspection", "quality"]
-            }
+            Self::CreateInspection
+            | Self::ListInspections
+            | Self::GetInspection
+            | Self::RecordMeasurement
+            | Self::CompleteInspection => &["检验", "质量", "inspection", "quality"],
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
             Self::HoldMaterial => &[
                 "质量冻结",
@@ -231,7 +239,11 @@ impl Action {
 
     pub fn spec(self) -> Spec {
         let (description, domain, effect, input, fields, side_effect, errors) = match self {
-            Self::CreateInspection | Self::ListInspections | Self::GetInspection => {
+            Self::CreateInspection
+            | Self::ListInspections
+            | Self::GetInspection
+            | Self::RecordMeasurement
+            | Self::CompleteInspection => {
                 let inspection_id = json!({"type":"string","minLength":1,"maxLength":64,
                     "pattern":"^[A-Za-z0-9_-]+$"});
                 let row = object(
@@ -242,10 +254,61 @@ impl Action {
                         "status",
                     ],
                     json!({"inspection_id":inspection_id,"work_order":text(),"specification_version":text(),
-                        "status":{"const":"pending"}}),
+                        "status":{"enum":["pending","passed","failed"]}}),
                 );
                 let cursor = json!({"type":"integer","minimum":0,"maximum":i64::MAX});
+                let measurement = crate::quality::measurement_schema();
                 match self {
+                    Self::RecordMeasurement => (
+                        "登记检验特性的实测值及规格限值",
+                        "quality",
+                        "write",
+                        object(
+                            &[
+                                "inspection_id",
+                                "characteristic",
+                                "value",
+                                "unit",
+                                "lower_limit",
+                                "upper_limit",
+                                "expected_cursor",
+                                "idempotency_key",
+                            ],
+                            json!({"inspection_id":inspection_id,"characteristic":text(),"unit":text(),
+                                "value":{"type":"number"},"lower_limit":{"type":"number"},
+                                "upper_limit":{"type":"number"},"expected_cursor":cursor,"idempotency_key":text()}),
+                        ),
+                        json!({"measurement":measurement,"cursor":cursor}),
+                        "record_measurement",
+                        &[
+                            "INVALID_ARGUMENT",
+                            "INSPECTION_NOT_FOUND",
+                            "INSPECTION_COMPLETED",
+                            "MEASUREMENT_ALREADY_EXISTS",
+                            "MEASUREMENT_LIMIT_REACHED",
+                            "VERSION_CONFLICT",
+                            "IDEMPOTENCY_CONFLICT",
+                        ][..],
+                    ),
+                    Self::CompleteInspection => (
+                        "按测量结果完成检验并确定结论",
+                        "quality",
+                        "write",
+                        object(
+                            &["inspection_id", "expected_cursor", "idempotency_key"],
+                            json!({"inspection_id":inspection_id,"expected_cursor":cursor,"idempotency_key":text()}),
+                        ),
+                        json!({"inspection":row,"cursor":cursor}),
+                        "complete_inspection",
+                        &[
+                            "INVALID_ARGUMENT",
+                            "INSPECTION_NOT_FOUND",
+                            "INSPECTION_COMPLETED",
+                            "MEASUREMENT_REQUIRED",
+                            "VERSION_CONFLICT",
+                            "IDEMPOTENCY_CONFLICT",
+                        ][..],
+                    ),
                     Self::CreateInspection => (
                         "按工单与规格版本建立检验单",
                         "quality",
@@ -534,6 +597,12 @@ impl Action {
             output_fields.insert("source_demand".into(), text());
             output_fields.insert("template_work_order".into(), text());
         }
+        if self == Self::GetInspection {
+            output_fields.insert(
+                "measurements".into(),
+                json!({"type":"array","items":crate::quality::measurement_schema()}),
+            );
+        }
         let required: Vec<_> = fields.keys().map(String::as_str).collect();
         Spec {
             name: self.name(),
@@ -737,6 +806,7 @@ pub fn validate(schema: &Value, args: &Map<String, Value>) -> Result<(), Rejecti
                 n >= rule["minimum"].as_u64().unwrap_or(0)
                     && n <= rule["maximum"].as_u64().unwrap_or(u64::MAX)
             }),
+            "number" => value.as_f64().is_some_and(f64::is_finite),
             "string" => valid_text(rule, value),
             "array" => value.as_array().is_some_and(|items| {
                 let len = items.len() as u64;

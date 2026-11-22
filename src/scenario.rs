@@ -395,6 +395,16 @@ impl Scenarios {
                  specification_version TEXT NOT NULL,
                  PRIMARY KEY (run, id)
              );
+             CREATE TABLE IF NOT EXISTS quality_measurements (
+                 run TEXT NOT NULL, inspection TEXT NOT NULL, characteristic TEXT NOT NULL,
+                 value REAL NOT NULL, unit TEXT NOT NULL, lower_limit REAL NOT NULL,
+                 upper_limit REAL NOT NULL, passed INTEGER NOT NULL,
+                 PRIMARY KEY (run, inspection, characteristic)
+             );
+             CREATE TABLE IF NOT EXISTS quality_inspection_results (
+                 run TEXT NOT NULL, inspection TEXT NOT NULL, status TEXT NOT NULL,
+                 PRIMARY KEY (run, inspection)
+             );
              CREATE TABLE IF NOT EXISTS scenario_requests (
                  run TEXT NOT NULL, key TEXT NOT NULL, request TEXT NOT NULL, response TEXT NOT NULL,
                  PRIMARY KEY (run, key)
@@ -418,6 +428,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-des-recovery.json"),
             include_str!("../fixtures/cnc-inspections.json"),
             include_str!("../fixtures/assembly-inspections.json"),
+            include_str!("../fixtures/cnc-inspection-results.json"),
+            include_str!("../fixtures/assembly-inspection-results.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -747,7 +759,11 @@ impl Scenarios {
         }
         if matches!(
             action,
-            Action::CreateInspection | Action::ListInspections | Action::GetInspection
+            Action::CreateInspection
+                | Action::ListInspections
+                | Action::GetInspection
+                | Action::RecordMeasurement
+                | Action::CompleteInspection
         ) {
             return crate::quality::invoke(
                 tx,

@@ -513,3 +513,11 @@ spec = "acceptance/P8D.md"
 features = ["F08", "F09", "F10"]
 layers = ["playwright"]
 tests = { playwright = "P8D-UI Public inspection registry" }
+
+[[case]]
+id = "P8D-02"
+phase = "P8D"
+spec = "acceptance/P8D.md"
+features = ["F08", "F09", "F10"]
+layers = ["rust-integration", "playwright"]
+tests = { rust-integration = "p8d_02_measurement_and_inspection_result", playwright = "P8D-02 Record measurements and complete inspection" }
