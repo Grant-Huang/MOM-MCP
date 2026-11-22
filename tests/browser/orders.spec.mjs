@@ -70,7 +70,7 @@ test("P8C-UI Operation detail and dispatch queue", async ({ page }) => {
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
   await button("加载场景").click();
-  await page.getByLabel("已发布场景").selectOption("cnc@12");
+  await page.getByLabel("已发布场景").selectOption("cnc@13");
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   await button("搜索工具").click();
@@ -99,8 +99,14 @@ test("P8C-UI Operation detail and dispatch queue", async ({ page }) => {
   await invoke("dispatch_operation", { ...order, operation: "machining", work_center: "ASM-01", expected_cursor: priority.cursor, idempotency_key: "dispatch" }, "WORK_CENTER_MISMATCH");
   const assigned = await invoke("dispatch_operation", { ...order, operation: "machining", work_center: "MACH-01", expected_cursor: priority.cursor, idempotency_key: "dispatch" }, '"phase": "dispatched"');
   await invoke("get_resource_capability", { work_center: "MACH-01" }, '"occupied_by": "WO-1"');
-  await invoke("reassign_operation", { ...order, operation: "machining", work_center: "MACH-02", expected_cursor: assigned.cursor, idempotency_key: "reassign" }, '"phase": "dispatched"');
+  const reassigned = await invoke("reassign_operation", { ...order, operation: "machining", work_center: "MACH-02", expected_cursor: assigned.cursor, idempotency_key: "reassign" }, '"phase": "dispatched"');
   await invoke("get_resource_capability", { work_center: "MACH-01" }, '"available": true');
   await invoke("get_resource_capability", { work_center: "MACH-02" }, '"occupied_by": "WO-1"');
+  const issued = await invoke("issue_material", { ...order, batch: "LOT-1", idempotency_key: "issue", expected_cursor: reassigned.cursor }, '"batch": "LOT-1"');
+  const op = { ...order, operation: "machining" };
+  const started = await invoke("start_operation", { ...op, idempotency_key: "start", expected_cursor: issued.cursor }, '"phase": "running"');
+  const paused = await invoke("pause_operation", { ...op, reason: "inspection", idempotency_key: "pause", expected_cursor: started.cursor }, '"phase": "paused"');
+  await invoke("report_operation", { ...op, quantity: 1, idempotency_key: "report" }, "INVALID_STATE");
+  await invoke("resume_operation", { ...op, idempotency_key: "resume-op", expected_cursor: paused.cursor }, '"phase": "running"');
   await invoke("list_dispatch_queue", { work_center: "MACH-01" }, '"operations": []');
 });

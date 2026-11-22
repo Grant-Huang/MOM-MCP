@@ -234,6 +234,8 @@ impl Setup {
 #[derive(Serialize, Deserialize, Default)]
 struct Order {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    build_pause_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     cancel_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     completion_confirmed: Option<bool>,
@@ -258,6 +260,8 @@ enum Phase {
     Planned,
     Released,
     Dispatched,
+    Building,
+    BuildPaused,
     Queued,
     Testing,
     Failed,
@@ -432,10 +436,11 @@ pub fn operations(
             } else {
                 let shortages = missing(&required(setup, order), &state.stock);
                 (
-                    if order.phase == Phase::Dispatched {
-                        "dispatched"
-                    } else {
-                        "ready"
+                    match order.phase {
+                        Phase::Dispatched => "dispatched",
+                        Phase::Building => "running",
+                        Phase::BuildPaused => "paused",
+                        _ => "ready",
                     },
                     (!shortages.is_empty()).then_some("MATERIAL_SHORTAGE"),
                 )
@@ -486,7 +491,10 @@ fn cell_occupant<'a>(state: &'a State, cell: &str, except: &str) -> Option<&'a s
         .iter()
         .find(|(id, order)| {
             id.as_str() != except
-                && order.phase == Phase::Dispatched
+                && matches!(
+                    order.phase,
+                    Phase::Dispatched | Phase::Building | Phase::BuildPaused
+                )
                 && order.cell.as_deref() == Some(cell)
         })
         .map(|(id, _)| id.as_str())
@@ -628,6 +636,9 @@ pub fn invoke(
             | Action::CloseWorkOrder
             | Action::DispatchOperation
             | Action::ReassignOperation
+            | Action::StartOperation
+            | Action::PauseOperation
+            | Action::ResumeOperation
             | Action::SetDispatchPriority
     ) && args["expected_cursor"].as_i64() != Some(cursor)
     {
@@ -841,7 +852,25 @@ fn apply(
             order.cell = Some(cell.into());
             order.phase = Phase::Dispatched;
         }
-        Action::AssemblyBuild if order.phase == Phase::Dispatched => {
+        Action::StartOperation | Action::ResumeOperation
+            if args["operation"] == "build"
+                && ((action == Action::StartOperation && order.phase == Phase::Dispatched)
+                    || (action == Action::ResumeOperation
+                        && order.phase == Phase::BuildPaused)) =>
+        {
+            let shortages = missing(&required(setup, order), &state.stock);
+            if !shortages.is_empty() {
+                return json!({"ok":false,"code":"MATERIAL_SHORTAGE","missing":shortages});
+            }
+            order.phase = Phase::Building;
+        }
+        Action::PauseOperation
+            if args["operation"] == "build" && order.phase == Phase::Building =>
+        {
+            order.phase = Phase::BuildPaused;
+            order.build_pause_reason = Some(args["reason"].as_str().unwrap().into());
+        }
+        Action::AssemblyBuild if matches!(order.phase, Phase::Dispatched | Phase::Building) => {
             let parts = required(setup, order);
             let shortages = missing(&parts, &state.stock);
             if !shortages.is_empty() {

@@ -382,6 +382,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-operation-reads.json"),
             include_str!("../fixtures/cnc-resource-dispatch.json"),
             include_str!("../fixtures/cnc-resource-occupancy.json"),
+            include_str!("../fixtures/cnc-operation-lifecycle.json"),
+            include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
             include_str!("../fixtures/assembly-resource-dispatch.json"),
             include_str!("../fixtures/assembly-operation-reads.json"),
@@ -713,6 +715,12 @@ impl Scenarios {
                 .map(|resource| json!({"ok":true,"run_id":run,"resource":resource}))
                 .ok_or_else(|| reject("RESOURCE_NOT_FOUND", "work_center")));
         }
+        if action == Action::StartOperation
+            && definition.capabilities.contains(&Action::PauseOperation)
+            && !parameters.contains_key("expected_cursor")
+        {
+            return Ok(Err(reject("INVALID_ARGUMENT", "expected_cursor")));
+        }
         if action == Action::DispatchOperation
             && definition
                 .capabilities
@@ -954,6 +962,9 @@ impl Scenarios {
                     action,
                     Action::DispatchOperation
                         | Action::ReassignOperation
+                        | Action::StartOperation
+                        | Action::PauseOperation
+                        | Action::ResumeOperation
                         | Action::SetDispatchPriority
                 ))
         {
