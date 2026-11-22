@@ -390,6 +390,13 @@ impl Scenarios {
                  demand TEXT NOT NULL, serial TEXT,
                  PRIMARY KEY (run, id)
              );
+             CREATE TABLE IF NOT EXISTS master_boms (
+                 run TEXT NOT NULL, item TEXT NOT NULL, revision INTEGER NOT NULL,
+                 components TEXT NOT NULL, status TEXT NOT NULL,
+                 PRIMARY KEY (run,item,revision)
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS master_active_bom
+                 ON master_boms (run,item) WHERE status='active';
              CREATE TABLE IF NOT EXISTS master_items (
                  run TEXT NOT NULL, item TEXT NOT NULL, unit TEXT NOT NULL,
                  PRIMARY KEY (run,item)
@@ -458,6 +465,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-inspection-plans.json"),
             include_str!("../fixtures/cnc-item-revisions.json"),
             include_str!("../fixtures/assembly-item-revisions.json"),
+            include_str!("../fixtures/cnc-bom-revisions.json"),
+            include_str!("../fixtures/assembly-bom-revisions.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -777,13 +786,26 @@ impl Scenarios {
         if !definition.capabilities.contains(&action) {
             return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
         }
-        let spec = action.spec();
+        let bom_enabled = definition.capabilities.contains(&Action::CreateBomRevision);
+        let spec = if action == Action::ActivateRevision && !bom_enabled {
+            crate::items::spec(action, false)
+        } else {
+            action.spec()
+        };
         if name == "describe_tool" {
             return Ok(Ok(json!({"ok":true,"tool":spec})));
         }
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if action.is_bom_action()
+            || (action == Action::ActivateRevision && parameters["revision_type"] == "bom")
+        {
+            if !definition.capabilities.contains(&Action::CreateBomRevision) {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            }
+            return crate::bom::invoke(tx, run, action, parameters, cursor);
         }
         if action.is_item_action() {
             return crate::items::invoke(tx, run, action, parameters, cursor);

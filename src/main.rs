@@ -1,4 +1,5 @@
 mod assembly;
+mod bom;
 mod catalog;
 mod fabrication;
 mod items;

@@ -29,3 +29,45 @@ test("P9A-03 Activate and read an item revision", async ({ page }) => {
   const result = await invoke("get_item", item, '"active_revision": 1');
   expect(result.item).toEqual({ item_id: "FRAME", base_unit: "each", active_revision: 1 });
 });
+
+test("P9A-05 Validate and activate a BOM", async ({ page }) => {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption("assembly@20");
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  await button("搜索工具").click();
+
+  async function invoke(name, args, expected) {
+    await page.getByLabel("匹配工具").selectOption(name);
+    await page.getByLabel("JSON 参数").fill(JSON.stringify(args));
+    await button("调用工具").click();
+    await expect(status).toContainText(expected);
+    return JSON.parse(await status.textContent());
+  }
+
+  let cursor = 0;
+  async function write(name, key, args, expected) {
+    const result = await invoke(name, { ...args, expected_cursor: cursor, idempotency_key: key }, expected);
+    if (result.ok) cursor = result.cursor;
+    return result;
+  }
+
+  for (const [item_id, base_unit] of [["FRAME", "each"], ["WIRE", "m"]]) {
+    await write("create_item", item_id, { item_id, base_unit }, '"base_unit"');
+    await write("create_item_revision", `draft-${item_id}`, { item_id, revision: 1, name: item_id }, '"status": "draft"');
+    await write("activate_revision", `publish-${item_id}`, { revision_type: "item", item_id, revision: 1 }, '"status": "active"');
+  }
+  const bom = { item_id: "FRAME", revision: 1 };
+  await write("create_bom_revision", "bom", bom, '"status": "draft"');
+  const wire = { revision: 1, quantity: 2, unit: "m" };
+  await write("set_bom_components", "wrong", { ...bom, components: { WIRE: { ...wire, unit: "kg" } } }, "COMPONENT_UNIT_MISMATCH");
+  await write("set_bom_components", "components", { ...bom, components: { WIRE: wire } }, '"quantity": 2');
+  await invoke("validate_revision", { ...bom, revision_type: "bom" }, '"valid": true');
+  await write("activate_revision", "publish-bom", { ...bom, revision_type: "bom" }, '"status": "active"');
+  const result = await invoke("get_bom_revision", bom, '"bom_revision"');
+  expect(result.bom_revision.components.WIRE).toMatchObject(wire);
+  expect(result.bom_revision.status).toBe("active");
+});

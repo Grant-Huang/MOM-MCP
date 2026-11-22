@@ -3768,3 +3768,70 @@ async fn p9a_02_item_revision_lifecycle() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p9a_04_bom_revision_graph() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("master.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        for (scenario,version) in [("cnc",21),("assembly",20)] {
+            let open=async || call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
+            let opened=open().await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            let write=async |name:&str,key:&str,mut args:Value| {
+                args["expected_cursor"]=call(&client,"get_run",json!({"run_id":run})).await["cursor"].clone();
+                args["idempotency_key"]=json!(key);
+                invoke(name,args).await
+            };
+            let reference=|item:&str,revision| json!({"item_id":item,"revision":revision});
+            let activate=|kind:&str,item:&str,revision| json!({"revision_type":kind,"item_id":item,"revision":revision});
+            let set=|item:&str,revision,components| json!({"item_id":item,"revision":revision,"components":components});
+            let component=|revision,unit:&str,expand_bom| json!({"revision":revision,"quantity":2,"unit":unit,"expand_bom":expand_bom});
+            let search=call(&client,"search_tools",json!({"run_id":run,"query":"bom"})).await;
+            assert!(search["tools"].as_array().unwrap().iter().any(|tool| tool["name"]=="create_bom_revision"));
+            for (id,unit) in [("ROOT","each"),("SUB","each"),("WIRE","m")] {
+                assert_eq!(write("create_item",&format!("item-{id}"),json!({"item_id":id,"base_unit":unit})).await["ok"],true);
+                assert_eq!(write("create_item_revision",&format!("revision-{id}"),json!({"item_id":id,"revision":1,"name":id})).await["ok"],true);
+            }
+            for id in ["ROOT","SUB"] {
+                assert_eq!(write("create_bom_revision",&format!("bom-{id}"),reference(id,1)).await["bom_revision"]["status"],"draft");
+            }
+            assert_eq!(write("set_bom_components","self-cycle",set("ROOT",1,json!({"ROOT":component(1,"each",false)}))).await["code"],"BOM_CYCLE");
+            assert_eq!(write("set_bom_components","wrong-unit",set("ROOT",1,json!({"WIRE":component(1,"kg",false)}))).await["code"],"COMPONENT_UNIT_MISMATCH");
+            assert_eq!(write("set_bom_components","missing",set("ROOT",1,json!({"WIRE":component(2,"m",false)}))).await["code"],"COMPONENT_REVISION_NOT_FOUND");
+            assert_eq!(write("set_bom_components","root-sub",set("ROOT",1,json!({"SUB":component(1,"each",true)}))).await["ok"],true);
+            assert_eq!(write("set_bom_components","cycle",set("SUB",1,json!({"ROOT":component(1,"each",true)}))).await["code"],"BOM_CYCLE");
+            assert_eq!(invoke("get_bom_revision",reference("SUB",1)).await["bom_revision"]["components"],json!({}));
+            assert_eq!(write("set_bom_components","sub-wire",set("SUB",1,json!({"WIRE":component(1,"m",false)}))).await["ok"],true);
+            assert_eq!(invoke("validate_revision",activate("bom","ROOT",1)).await["code"],"BOM_DEPENDENCY_NOT_PUBLISHED");
+            for id in ["ROOT","SUB","WIRE"] {
+                assert_eq!(write("activate_revision",&format!("publish-item-{id}"),activate("item",id,1)).await["ok"],true);
+            }
+            assert_eq!(write("activate_revision","early-root",activate("bom","ROOT",1)).await["code"],"BOM_DEPENDENCY_NOT_PUBLISHED");
+            assert_eq!(write("activate_revision","publish-sub",activate("bom","SUB",1)).await["bom_revision"]["status"],"active");
+            assert_eq!(invoke("validate_revision",activate("bom","ROOT",1)).await["valid"],true);
+            let mut publish=activate("bom","ROOT",1);
+            publish["expected_cursor"]=call(&client,"get_run",json!({"run_id":run})).await["cursor"].clone();
+            publish["idempotency_key"]=json!("publish-root");
+            let first=invoke("activate_revision",publish.clone()).await;
+            assert_eq!(first["bom_revision"]["status"],"active","{first}");
+            assert_eq!(write("set_bom_components","immutable",set("ROOT",1,json!({}))).await["code"],"BOM_REVISION_IMMUTABLE");
+            assert_eq!(write("create_item_revision","item-root2",json!({"item_id":"ROOT","revision":2,"name":"Root B"})).await["ok"],true);
+            assert_eq!(write("activate_revision","publish-item-root2",activate("item","ROOT",2)).await["ok"],true);
+            assert_eq!(write("create_bom_revision","bom-root2",reference("ROOT",2)).await["ok"],true);
+            assert_eq!(write("set_bom_components","root2-wire",set("ROOT",2,json!({"WIRE":component(1,"m",false)}))).await["ok"],true);
+            assert_eq!(write("activate_revision","publish-root2",activate("bom","ROOT",2)).await["bom_revision"]["status"],"active");
+            assert_eq!(invoke("activate_revision",publish).await,first);
+            let (peer,_child)=connect_mode(&db,"0",true).await;
+            let old=business(&peer,run,"get_bom_revision",reference("ROOT",1)).await;
+            assert_eq!(old["bom_revision"]["status"],"superseded");
+            assert_eq!(old["bom_revision"]["components"]["SUB"]["revision"],1);
+            assert_eq!(old["bom_revision"]["components"]["SUB"]["expand_bom"],true);
+            let isolated=open().await;
+            assert_eq!(business(&peer,&isolated["run_id"],"get_bom_revision",reference("ROOT",1)).await["code"],"BOM_REVISION_NOT_FOUND");
+        }
+    }).await.unwrap();
+}
