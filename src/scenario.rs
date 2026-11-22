@@ -232,6 +232,20 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             || definition.capabilities.contains(&Action::ReleaseWorkOrder),
         "batch release requires single work order release"
     );
+    anyhow::ensure!(
+        !definition
+            .capabilities
+            .iter()
+            .any(|action| matches!(action, Action::HoldWorkOrder | Action::ResumeWorkOrder))
+            || [
+                Action::HoldWorkOrder,
+                Action::ResumeWorkOrder,
+                Action::ReleaseWorkOrder
+            ]
+            .iter()
+            .all(|action| definition.capabilities.contains(action)),
+        "work order hold and resume require both commands and work order release"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -310,6 +324,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-order-release.json"),
             include_str!("../fixtures/cnc-order-drafts.json"),
             include_str!("../fixtures/cnc-batch-release.json"),
+            include_str!("../fixtures/cnc-order-hold.json"),
+            include_str!("../fixtures/assembly-order-hold.json"),
             include_str!("../fixtures/assembly-batch-release.json"),
             include_str!("../fixtures/assembly-shortage-batch-release.json"),
             include_str!("../fixtures/assembly-order-drafts.json"),
@@ -839,7 +855,10 @@ impl Scenarios {
             return Ok(Ok(response));
         }
         if crate::assembly::TOOLS.iter().any(|tool| tool.0 == action)
-            || (action == Action::ReleaseWorkOrder && definition.assembly.is_some())
+            || (matches!(
+                action,
+                Action::ReleaseWorkOrder | Action::HoldWorkOrder | Action::ResumeWorkOrder
+            ) && definition.assembly.is_some())
         {
             let Some(setup) = &definition.assembly else {
                 return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));

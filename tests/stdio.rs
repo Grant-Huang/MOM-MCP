@@ -2746,3 +2746,55 @@ async fn p8b_05_batch_release_partial_success() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8b_06_hold_and_resume_orders() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        for (scenario, version, order) in [("cnc", 7, "WO-1"), ("assembly", 8, "WO-E")] {
+            let opened = call(&client, "open_scenario", json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(opened["ok"], true, "{opened}");
+            let run = &opened["run_id"];
+            let invoke = |name: &str, arguments| call(&client, "call_tool",
+                json!({"run_id":run,"name":name,"arguments":arguments}));
+            let result = invoke("release_work_order",json!({"work_order":order,"expected_cursor":0,"idempotency_key":"release"})).await;
+            assert_eq!(result["status"],"released");
+            let (move_tool, move_args) = if scenario=="cnc" {
+                ("dispatch_operation",json!({"work_order":order,"operation":"machining","idempotency_key":"dispatch"}))
+            } else {
+                ("assembly_dispatch",json!({"work_order":order,"cell":"CELL-A","idempotency_key":"dispatch"}))
+            };
+            let moved = invoke(move_tool,move_args).await;
+            assert_eq!(moved["cursor"],2,"{moved}");
+            let hold_args=json!({"work_order":order,"reason":"work review","expected_cursor":2,"idempotency_key":"hold"});
+            let held=invoke("hold_work_order",hold_args.clone()).await;
+            assert_eq!(held["status"],"held");
+            assert_eq!(held["cursor"],3);
+            let list = invoke("list_work_orders",json!({"status":"held"})).await;
+            assert_eq!(list["orders"],json!([{"work_order":order,"status":"held"}]));
+            let detail=invoke("get_work_order",json!({"work_order":order})).await;
+            assert_eq!(detail["hold_reason"],"work review");
+            let (blocked_tool, blocked_args) = if scenario=="cnc" {
+                ("issue_material",json!({"work_order":order,"batch":"LOT-1","idempotency_key":"work"}))
+            } else {
+                ("assembly_build",json!({"work_order":order,"idempotency_key":"work"}))
+            };
+            assert_eq!(invoke(blocked_tool,blocked_args.clone()).await["code"],"WORK_ORDER_HELD");
+            assert_eq!(invoke("hold_work_order",hold_args).await,held);
+            let resume=|cursor|json!({"work_order":order,"expected_cursor":cursor,"idempotency_key":"resume"});
+            assert_eq!(invoke("resume_work_order",resume(2)).await["code"],"VERSION_CONFLICT");
+            let cursor=if scenario=="cnc" {
+                assert_eq!(invoke("set_equipment",json!({"equipment_state":"down","idempotency_key":"down"})).await["cursor"],4);
+                assert_eq!(invoke("resume_work_order",resume(4)).await["code"],"EQUIPMENT_UNAVAILABLE");
+                assert_eq!(invoke("set_equipment",json!({"equipment_state":"available","idempotency_key":"up"})).await["cursor"],5);
+                5
+            } else {3};
+            let resumed=invoke("resume_work_order",resume(cursor)).await;
+            assert_eq!(resumed["status"],"dispatched","{resumed}");
+            assert_eq!(resumed["cursor"],cursor+1);
+            assert_eq!(invoke("resume_work_order",resume(cursor)).await,resumed);
+            assert_eq!(invoke(blocked_tool,blocked_args).await["ok"],true);
+        }
+    }).await.unwrap();
+}
