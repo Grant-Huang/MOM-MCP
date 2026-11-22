@@ -179,3 +179,56 @@ async fn p6_agentnexus_three_industries() {
         std::fs::write(path, serde_json::to_vec_pretty(&session.trace).unwrap()).unwrap();
     }
 }
+
+#[tokio::test]
+async fn p8c_agentnexus_cnc_des_recovery() {
+    let db = format!("{}-recovery.sqlite3", std::env::var("MOM_PROBE_DATABASE").unwrap());
+    let bindings = |names: &[&str]| names.iter().map(|name| json!({
+        "name":name,"effect":"workspace_write","description":name,"capability_id":format!("mom.recovery.{name}")
+    })).collect::<Vec<_>>();
+    let connect_side = async |control: bool, names: &[&str]| {
+        let mut args = vec!["stdio","--scenario-tools","--db",&db];
+        if control { args.push("--control-tools"); }
+        let config: McpServerConfig = serde_json::from_value(json!({
+            "id":"mom","transport":"stdio","command":std::env::var("MOM_PROBE_BINARY").unwrap(),
+            "args":args,"timeout_ms":5000,"tools":bindings(names)
+        })).unwrap();
+        Session { tools: connect(&[config]).await.unwrap(), trace: vec![] }
+    };
+    let mut agent = connect_side(false, &["open_scenario","read_events","call_tool"]).await;
+    let mut clock = connect_side(true, &["advance_run","inspect_run"]).await;
+    let opened = agent.call("open_scenario",json!({"scenario_id":"cnc","version":15})).await;
+    assert_eq!(opened["ok"],true);
+    let run=&opened["run_id"];
+    for (tool,args) in [
+        ("release_work_order",json!({"work_order":"WO-1","expected_cursor":0,"idempotency_key":"release"})),
+        ("dispatch_operation",json!({"work_order":"WO-1","operation":"machining","work_center":"MACH-01","expected_cursor":1,"idempotency_key":"dispatch"})),
+        ("issue_material",json!({"work_order":"WO-1","batch":"LOT-1","idempotency_key":"issue"})),
+        ("start_operation",json!({"work_order":"WO-1","operation":"machining","expected_cursor":3,"idempotency_key":"start"})),
+    ] {
+        assert_eq!(agent.business(run,tool,args).await["ok"],true);
+    }
+    assert_eq!(clock.call("advance_run",json!({"run_id":run,"max_events":3})).await["ok"],true);
+    let events=agent.call("read_events",json!({"run_id":run})).await;
+    assert!(events["events"].as_array().unwrap().iter().any(|event|event["kind"]=="cnc_equipment_stopped"));
+    let affected=agent.business(run,"get_resource_capability",json!({"work_center":"MACH-01"})).await;
+    assert_eq!(affected["resource"]["occupied_by"],"WO-1");
+    assert_eq!(affected["resource"]["available"],false);
+    let stop=agent.business(run,"mes_status",json!({"work_order":"WO-1"})).await;
+    assert_eq!(stop["blocking"],"EQUIPMENT_UNAVAILABLE");
+    let paused=agent.business(run,"pause_operation",json!({"work_order":"WO-1","operation":"machining","reason":"equipment stopped","expected_cursor":stop["cursor"],"idempotency_key":"pause"})).await;
+    assert_eq!(paused["ok"],true);
+    let receipt=agent.business(run,"request_maintenance",json!({"asset":"CNC-1","expected_cursor":paused["cursor"],"idempotency_key":"repair"})).await;
+    assert_eq!(receipt["status"],"maintenance_requested");
+    assert_eq!(clock.call("advance_run",json!({"run_id":run,"max_events":2})).await["ok"],true);
+    let ready=agent.business(run,"mes_status",json!({"work_order":"WO-1"})).await;
+    assert_eq!(ready["equipment_down"],false);
+    let resumed=agent.business(run,"resume_operation",json!({"work_order":"WO-1","operation":"machining","expected_cursor":ready["cursor"],"idempotency_key":"resume"})).await;
+    assert_eq!(resumed["ok"],true);
+    let report=agent.business(run,"post_operation_report",json!({"work_order":"WO-1","operation":"machining","quantity":1,"expected_cursor":resumed["cursor"],"idempotency_key":"report"})).await;
+    assert_eq!(report["remaining"],9,"{report}");
+    assert_eq!(clock.call("inspect_run",json!({"run_id":run})).await["replay_verified"],true);
+    if let Ok(output) = std::env::var("MOM_RECOVERY_REPORT") {
+        std::fs::write(output, serde_json::to_vec_pretty(&json!({"agent_trace":agent.trace,"replay_verified":true})).unwrap()).unwrap();
+    }
+}

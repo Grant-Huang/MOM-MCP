@@ -311,6 +311,19 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             && !definition.capabilities.contains(&Action::ReverseReport)),
         "public operation actuals require manufacturing or assembly and exclude legacy write commands"
     );
+    anyhow::ensure!(
+        !definition
+            .capabilities
+            .contains(&Action::RequestMaintenance)
+            || (definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| setup.equipment_events)
+                && definition.model == "cnc_wear"
+                && definition.model_parameters.get("stop_on_alarm") == Some(&json!(true))
+                && !definition.capabilities.contains(&Action::SetEquipment)),
+        "maintenance requires event-driven CNC equipment"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -397,6 +410,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-resource-occupancy.json"),
             include_str!("../fixtures/cnc-operation-lifecycle.json"),
             include_str!("../fixtures/cnc-operation-reports.json"),
+            include_str!("../fixtures/cnc-des-recovery.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -690,6 +704,13 @@ impl Scenarios {
                     &definition.work_orders,
                     &state.timeline.events,
                 )?;
+                crate::mes::project_equipment(
+                    &tx,
+                    run,
+                    setup,
+                    &definition.work_orders,
+                    &state.timeline.events,
+                )?;
             }
             if let Some(setup) = &definition.assembly {
                 crate::assembly::project_receipt(&tx, run, setup, &state.timeline.events)?;
@@ -716,6 +737,77 @@ impl Scenarios {
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if action == Action::RequestMaintenance {
+            let Some(setup) = definition
+                .manufacturing
+                .as_ref()
+                .filter(|setup| setup.equipment_events)
+            else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            if parameters["asset"] != "CNC-1" {
+                return Ok(Err(reject("ASSET_NOT_FOUND", "asset")));
+            }
+            let key = parameters["idempotency_key"].as_str().unwrap();
+            let request = json!({"action":action,"arguments":parameters}).to_string();
+            let saved: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT request,response FROM scenario_requests WHERE run=?1 AND key=?2",
+                    params![run, key],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((original, response)) = saved {
+                return Ok(if original == request {
+                    Ok(serde_json::from_str(&response)?)
+                } else {
+                    Err(reject("IDEMPOTENCY_CONFLICT", "idempotency_key"))
+                });
+            }
+            if parameters["expected_cursor"].as_i64() != Some(cursor) {
+                return Ok(Err(reject("VERSION_CONFLICT", "expected_cursor")));
+            }
+            if let Err(code) =
+                crate::mes::request_maintenance(&tx, run, setup, &definition.work_orders)?
+            {
+                return Ok(Err(reject(code, "asset")));
+            }
+            let model = simulation::load_model(
+                &definition.model,
+                definition.model_version,
+                &definition.model_parameters,
+            )
+            .map_err(anyhow::Error::msg)?;
+            let mut state = stored.unwrap_or_else(|| {
+                Simulation::new(
+                    seed.parse().expect("stored seed"),
+                    &definition.event_rules,
+                    model.as_ref(),
+                )
+            });
+            if let Err(code) = state.execute(
+                Command::Intervene {
+                    action: "maintenance".into(),
+                },
+                &definition.event_rules,
+                model.as_ref(),
+            ) {
+                return Ok(Err(reject(code, "asset")));
+            }
+            tx.execute("INSERT INTO des_runs (run,state) VALUES (?1,?2) ON CONFLICT(run) DO UPDATE SET state=excluded.state",
+                params![run,serde_json::to_string(&state)?])?;
+            let response = json!({"ok":true,"run_id":run,"asset":"CNC-1","status":"maintenance_requested","cursor":cursor+1});
+            tx.execute(
+                "UPDATE scenario_runs SET cursor=cursor+1 WHERE id=?1",
+                [run],
+            )?;
+            tx.execute(
+                "INSERT INTO scenario_requests VALUES (?1,?2,?3,?4)",
+                params![run, key, request, response.to_string()],
+            )?;
+            tx.commit()?;
+            return Ok(Ok(response));
         }
         if action == Action::GetCommandResult {
             let key = parameters["idempotency_key"].as_str().unwrap();

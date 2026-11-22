@@ -10,6 +10,7 @@ pub const VERSION: u32 = 1;
 pub struct Cnc {
     alarm_mean_minutes: f64,
     alarm_enabled: bool,
+    stop_on_alarm: bool,
     repair_mean_minutes: f64,
     wear_per_minute: f64,
 }
@@ -19,6 +20,7 @@ impl Default for Cnc {
         Self {
             alarm_mean_minutes: 24.0,
             alarm_enabled: true,
+            stop_on_alarm: false,
             repair_mean_minutes: 5.0,
             wear_per_minute: 0.03,
         }
@@ -84,10 +86,20 @@ impl Model for Cnc {
                 let cpk = ((0.025 - 0.012 * excess) / (0.009 * (1.0 + 0.35 * excess))).max(0.0);
                 event.payload =
                     json!({"asset":"CNC-1","severity":"warning","vibration_mm_s":round(vibration)});
-                vec![Candidate::Immediate {
+                let mut events = vec![Candidate::Immediate {
                     kind: "cnc_quality_check".into(),
                     payload: json!({"asset":"CNC-1","inspection":"required","cpk":round(cpk)}),
-                }]
+                }];
+                if self.stop_on_alarm {
+                    events.insert(
+                        0,
+                        Candidate::Immediate {
+                            kind: "cnc_equipment_stopped".into(),
+                            payload: json!({"asset":"CNC-1","reason":"VIBRATION_LIMIT"}),
+                        },
+                    );
+                }
+                events
             }
             _ => vec![],
         }

@@ -489,3 +489,11 @@ spec = "acceptance/P8C.md"
 features = ["F08", "F09", "F10", "F11"]
 layers = ["rust-integration"]
 tests = { rust-integration = "p8c_06_assembly_actuals_and_test_dependency" }
+
+[[case]]
+id = "P8C-07"
+phase = "P8C"
+spec = "acceptance/P8C.md"
+features = ["F01", "F05", "F06", "F09", "F12"]
+layers = ["rust-integration", "agentnexus", "playwright"]
+tests = { rust-integration = "p8c_07_des_stop_repair_and_replay", agentnexus = "p8c_agentnexus_cnc_des_recovery", playwright = "P8C-07 DES equipment stop and maintenance recovery" }

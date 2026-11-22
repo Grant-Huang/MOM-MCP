@@ -24,6 +24,8 @@ export MOM_PROBE_DATABASE="$scratch/probe.sqlite3"
   cargo test --locked -p an-des -p an-des-mcp
   if [[ ${MOM_ACCEPTANCE_PHASE:-P0} > P5 ]]; then
     export MOM_INDUSTRY_REPORT="$project/test-results/agentnexus-industries.json"
+    export MOM_RECOVERY_REPORT="$project/test-results/agentnexus-recovery.json"
+    rm -f "$MOM_RECOVERY_REPORT"
     rm -f "$MOM_INDUSTRY_REPORT"
     cargo test --locked -p an-agents --test mom_industries
   fi
