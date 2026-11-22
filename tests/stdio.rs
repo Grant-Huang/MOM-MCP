@@ -2964,3 +2964,54 @@ async fn p8c_01_operation_queries_and_queue() {
         assert_eq!(contracts[0],contracts[1]);
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8c_02_resource_priority_and_dispatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let mut specs = Vec::new();
+        for (scenario, first, second, operation, center, wrong) in [
+            ("cnc","WO-1","WO-2","machining","MACH-01","ASM-01"),
+            ("assembly","WO-E","WO-L","build","CELL-B","CELL-A"),
+        ] {
+            let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":11})).await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            specs.push(call(&client,"describe_tool",json!({"run_id":run,"name":"dispatch_operation"})).await);
+            let capability=invoke("get_resource_capability",json!({"work_center":center})).await;
+            assert_eq!(capability["resource"]["operations"],json!([operation]));
+            assert_eq!(capability["resource"]["available"],true);
+            assert_eq!(invoke("get_resource_capability",json!({"work_center":"UNKNOWN"})).await["code"],"RESOURCE_NOT_FOUND");
+            let batch=invoke("release_work_orders",json!({"work_orders":[first,second],"expected_cursor":0,"idempotency_key":"release"})).await;
+            assert_eq!(batch["cursor"],2);
+            let priority=json!({"work_order":second,"priority":8,"expected_cursor":2,"idempotency_key":"priority"});
+            let prioritized=invoke("set_dispatch_priority",priority.clone()).await;
+            assert_eq!(prioritized["priority"],8,"{prioritized}");
+            assert_eq!(invoke("set_dispatch_priority",priority).await,prioritized);
+            let queue=invoke("list_dispatch_queue",json!({})).await;
+            assert_eq!(queue["operations"][0]["work_order"],second);
+            let dispatch=|resource, cursor|json!({"work_order":second,"operation":operation,"work_center":resource,"expected_cursor":cursor,"idempotency_key":"dispatch"});
+            let rejected=invoke("dispatch_operation",dispatch(wrong,3)).await;
+            assert_eq!(rejected["code"],if scenario=="cnc" {"WORK_CENTER_MISMATCH"} else {"CELL_NOT_CAPABLE"});
+            let stale=invoke("dispatch_operation",dispatch(center,2)).await;
+            assert_eq!(stale["code"],"VERSION_CONFLICT");
+            let mut cursor=3;
+            if scenario=="cnc" {
+                assert_eq!(invoke("set_equipment",json!({"equipment_state":"down","idempotency_key":"down"})).await["cursor"],4);
+                assert_eq!(invoke("get_resource_capability",json!({"work_center":center})).await["resource"]["available"],false);
+                assert_eq!(invoke("dispatch_operation",dispatch(center,4)).await["code"],"EQUIPMENT_UNAVAILABLE");
+                assert_eq!(invoke("set_equipment",json!({"equipment_state":"available","idempotency_key":"up"})).await["cursor"],5);
+                cursor=5;
+            }
+            let dispatched=invoke("dispatch_operation",dispatch(center,cursor)).await;
+            assert_eq!(dispatched["cursor"],cursor+1,"{dispatched}");
+            assert_eq!(invoke("dispatch_operation",dispatch(center,cursor)).await,dispatched);
+            let detail=invoke("get_operation",json!({"work_order":second,"operation":operation})).await;
+            assert_eq!(detail["operation"]["status"],"dispatched");
+            assert_eq!(detail["operation"]["work_center"],center);
+        }
+        assert_eq!(specs[0],specs[1]);
+    }).await.unwrap();
+}

@@ -478,6 +478,25 @@ pub fn operations(
     Ok(rows)
 }
 
+pub fn resource_capability(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    center: &str,
+) -> anyhow::Result<Option<Value>> {
+    if center == "TEST-1" {
+        let state = load(tx, run, setup)?;
+        return Ok(Some(
+            json!({"work_center":center,"operations":["final_test"],"configurations":[],
+            "available":state.bench.is_none(),"occupied_by":state.bench}),
+        ));
+    }
+    Ok(setup.cells.get(center).map(|configurations| {
+        json!({"work_center":center,
+        "operations":["build"],"configurations":configurations,"available":true,"occupied_by":null})
+    }))
+}
+
 pub fn release_readiness(
     tx: &Transaction<'_>,
     run: &str,
@@ -588,6 +607,8 @@ pub fn invoke(
             | Action::CancelWorkOrder
             | Action::CompleteWorkOrder
             | Action::CloseWorkOrder
+            | Action::DispatchOperation
+            | Action::SetDispatchPriority
     ) && args["expected_cursor"].as_i64() != Some(cursor)
     {
         return Ok((
@@ -595,7 +616,10 @@ pub fn invoke(
             false,
         ));
     }
-    if require_release && action == Action::AssemblyDispatch && order.phase == Phase::Planned {
+    if require_release
+        && matches!(action, Action::AssemblyDispatch | Action::DispatchOperation)
+        && order.phase == Phase::Planned
+    {
         return Ok((failure("INVALID_STATE"), false));
     }
     let mut response = apply(
@@ -744,8 +768,22 @@ fn apply(
             order.substitute = Some(part.into());
             return json!({"ok":true,"part":part,"qualification":qualification});
         }
-        Action::AssemblyDispatch => {
-            let cell = args["cell"].as_str().unwrap();
+        Action::AssemblyDispatch | Action::DispatchOperation => {
+            if action == Action::DispatchOperation && args["operation"] != "build" {
+                return failure(if args["operation"] == "final_test" {
+                    "OPERATION_NOT_DISPATCHABLE"
+                } else {
+                    "OPERATION_NOT_FOUND"
+                });
+            }
+            let Some(cell) = args[if action == Action::DispatchOperation {
+                "work_center"
+            } else {
+                "cell"
+            }]
+            .as_str() else {
+                return failure("INVALID_ARGUMENT");
+            };
             let capable = setup.cells.get(cell).is_some_and(|configurations| {
                 configurations.contains(&setup.orders[id].configuration)
             });
@@ -776,13 +814,16 @@ fn apply(
             order.installed = parts;
             order.phase = Phase::Queued;
         }
-        Action::AssemblyPriority
+        Action::AssemblyPriority | Action::SetDispatchPriority
             if matches!(
                 order.phase,
                 Phase::Planned | Phase::Released | Phase::Dispatched | Phase::Queued
             ) =>
         {
             order.priority = args["priority"].as_u64().unwrap();
+            if action == Action::SetDispatchPriority {
+                return json!({"ok":true,"work_order":id,"priority":order.priority});
+            }
         }
         Action::AssemblyStartTest if order.phase == Phase::Queued => {
             let command = Command::Intervene {

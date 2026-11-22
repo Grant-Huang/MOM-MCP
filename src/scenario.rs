@@ -269,6 +269,17 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             || definition.manufacturing.is_some(),
         "operation queries require assembly or manufacturing setup"
     );
+    anyhow::ensure!(
+        !definition
+            .capabilities
+            .contains(&Action::SetDispatchPriority)
+            || (definition.capabilities.contains(&Action::DispatchOperation)
+                && (definition.assembly.is_some()
+                    || definition.manufacturing.as_ref().is_some_and(|setup| setup
+                        .strict_dispatch
+                        && setup.work_centers.is_some()))),
+        "shared dispatch requires assembly or configured manufacturing work centers"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -351,6 +362,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-order-terminal.json"),
             include_str!("../fixtures/cnc-cross-shop.json"),
             include_str!("../fixtures/cnc-operation-reads.json"),
+            include_str!("../fixtures/cnc-resource-dispatch.json"),
+            include_str!("../fixtures/assembly-resource-dispatch.json"),
             include_str!("../fixtures/assembly-operation-reads.json"),
             include_str!("../fixtures/assembly-order-terminal.json"),
             include_str!("../fixtures/assembly-order-hold.json"),
@@ -667,6 +680,30 @@ impl Scenarios {
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
         }
+        if action == Action::GetResourceCapability {
+            let center = parameters["work_center"].as_str().unwrap();
+            let result = if let Some(setup) = &definition.assembly {
+                crate::assembly::resource_capability(&tx, run, setup, center)?
+            } else if let Some(setup) = &definition.manufacturing {
+                crate::mes::resource_capability(&tx, run, setup, &definition.work_orders, center)?
+            } else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            return Ok(result
+                .map(|resource| json!({"ok":true,"run_id":run,"resource":resource}))
+                .ok_or_else(|| reject("RESOURCE_NOT_FOUND", "work_center")));
+        }
+        if action == Action::DispatchOperation
+            && definition
+                .capabilities
+                .contains(&Action::SetDispatchPriority)
+        {
+            for field in ["work_center", "expected_cursor"] {
+                if !parameters.contains_key(field) {
+                    return Ok(Err(reject("INVALID_ARGUMENT", field)));
+                }
+            }
+        }
         if matches!(action, Action::CreateWorkOrder | Action::UpdateDraftOrder) {
             let id = parameters["work_order"].as_str().unwrap();
             let demand = parameters["source_demand"].as_str().unwrap();
@@ -892,6 +929,11 @@ impl Scenarios {
                     | Action::CompleteWorkOrder
                     | Action::CloseWorkOrder
             ) && definition.assembly.is_some())
+            || (definition.assembly.is_some()
+                && matches!(
+                    action,
+                    Action::DispatchOperation | Action::SetDispatchPriority
+                ))
         {
             let Some(setup) = &definition.assembly else {
                 return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));

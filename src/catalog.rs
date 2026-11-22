@@ -12,6 +12,8 @@ pub enum Action {
     ListOperations,
     GetOperation,
     ListDispatchQueue,
+    GetResourceCapability,
+    SetDispatchPriority,
     CreateWorkOrder,
     UpdateDraftOrder,
     GetReleaseReadiness,
@@ -126,6 +128,7 @@ impl Action {
             Self::ListOperations,
             Self::GetOperation,
             Self::ListDispatchQueue,
+            Self::GetResourceCapability,
             Self::ReleaseWorkOrders,
             Self::CreateWorkOrder,
             Self::UpdateDraftOrder,
@@ -152,6 +155,7 @@ impl Action {
             Self::ListOperations => "list_operations",
             Self::GetOperation => "get_operation",
             Self::ListDispatchQueue => "list_dispatch_queue",
+            Self::GetResourceCapability => "get_resource_capability",
             Self::ReleaseWorkOrders => "release_work_orders",
             Self::CreateWorkOrder => "create_work_order",
             Self::UpdateDraftOrder => "update_draft_order",
@@ -276,6 +280,18 @@ impl Action {
                     ][..],
                 )
             }
+            Self::GetResourceCapability => (
+                "查询工作中心支持的工序与当前可用性",
+                "production",
+                "read",
+                object(&["work_center"], json!({"work_center":text()})),
+                json!({"resource":object(&["work_center","operations","configurations","available","occupied_by"],
+                    json!({"work_center":text(),"operations":{"type":"array","items":text()},
+                        "configurations":{"type":"array","items":text()},"available":{"type":"boolean"},
+                        "occupied_by":{"type":["null","string"]}}))}),
+                "none",
+                &["INVALID_ARGUMENT", "RESOURCE_NOT_FOUND"][..],
+            ),
             Self::ReleaseWorkOrders => (
                 "批量下达工单并逐项返回提交结果",
                 "production",
