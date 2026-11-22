@@ -3835,3 +3835,70 @@ async fn p9a_04_bom_revision_graph() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p9a_06_route_revision_dependencies() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("master.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        for (scenario,version) in [("cnc",22),("assembly",21)] {
+            let open=async || call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
+            let opened=open().await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            let cursor=async || call(&client,"get_run",json!({"run_id":run})).await["cursor"].clone();
+            let write=async |name:&str,key:&str,mut args:Value| {
+                args["expected_cursor"]=cursor().await;
+                args["idempotency_key"]=json!(key);
+                invoke(name,args).await
+            };
+            let reference=|revision| json!({"item_id":"FRAME","revision":revision});
+            let activate=|kind:&str,revision| json!({"revision_type":kind,"item_id":"FRAME","revision":revision});
+            let definition=|revision,operations| json!({"item_id":"FRAME","revision":revision,"operations":operations});
+            let op=|center:&str,predecessors:&[&str]| json!({"work_center":center,"predecessors":predecessors});
+            let search=call(&client,"search_tools",json!({"run_id":run,"query":"route"})).await;
+            for name in ["create_route_revision","get_route_revision","set_route_operations"] {
+                assert!(search["tools"].as_array().unwrap().iter().any(|tool|tool["name"]==name),"{search}");
+            }
+            let spec=call(&client,"describe_tool",json!({"run_id":run,"name":"activate_revision"})).await;
+            assert_eq!(spec["tool"]["input"]["properties"]["revision_type"]["enum"],json!(["item","bom","route"]));
+            assert_eq!(write("create_route_revision","route1",reference(1)).await["code"],"ITEM_REVISION_NOT_FOUND");
+            assert_eq!(write("create_item","item",json!({"item_id":"FRAME","base_unit":"each"})).await["ok"],true);
+            assert_eq!(write("create_item_revision","item1",json!({"item_id":"FRAME","revision":1,"name":"Frame A"})).await["ok"],true);
+            assert_eq!(write("create_route_revision","route1",reference(1)).await["route_revision"]["status"],"draft");
+            assert_eq!(invoke("validate_revision",activate("route",1)).await["code"],"ROUTE_OPERATIONS_REQUIRED");
+            let before=cursor().await;
+            assert_eq!(write("set_route_operations","missing",definition(1,json!({"test":op("QA-01",&["missing"])}))).await["code"],"ROUTE_PREDECESSOR_NOT_FOUND");
+            assert_eq!(write("set_route_operations","cycle",definition(1,json!({"build":op("CELL-A",&["test"]),"test":op("QA-01",&["build"])}))).await["code"],"ROUTE_CYCLE");
+            assert_eq!(cursor().await,before);
+            assert_eq!(invoke("get_route_revision",reference(1)).await["route_revision"]["operations"],json!({}));
+            let configured=write("set_route_operations","configure1",definition(1,json!({
+                "test":op("QA-01",&["build","label"]),"label":op("CELL-B",&[]),"build":op("CELL-A",&[])
+            }))).await;
+            assert_eq!(configured["route_revision"]["execution_order"],json!(["build","label","test"]),"{configured}");
+            assert_eq!(invoke("validate_revision",activate("route",1)).await["code"],"ROUTE_ITEM_REVISION_NOT_PUBLISHED");
+            assert_eq!(write("activate_revision","publish-item1",activate("item",1)).await["ok"],true);
+            assert_eq!(invoke("validate_revision",activate("route",1)).await["valid"],true);
+            let mut publish=activate("route",1);
+            publish["expected_cursor"]=cursor().await;
+            publish["idempotency_key"]=json!("publish-route1");
+            let first=invoke("activate_revision",publish.clone()).await;
+            assert_eq!(first["route_revision"]["status"],"active","{first}");
+            assert_eq!(write("set_route_operations","immutable",definition(1,json!({}))).await["code"],"ROUTE_REVISION_IMMUTABLE");
+            assert_eq!(write("create_item_revision","item2",json!({"item_id":"FRAME","revision":2,"name":"Frame B"})).await["ok"],true);
+            assert_eq!(write("activate_revision","publish-item2",activate("item",2)).await["ok"],true);
+            assert_eq!(write("create_route_revision","route2",reference(2)).await["ok"],true);
+            assert_eq!(write("set_route_operations","configure2",definition(2,json!({"assemble":op("CELL-C",&[])}))).await["ok"],true);
+            assert_eq!(write("activate_revision","publish-route2",activate("route",2)).await["route_revision"]["status"],"active");
+            assert_eq!(invoke("activate_revision",publish).await,first);
+            let (peer,_child)=connect_mode(&db,"0",true).await;
+            let old=business(&peer,run,"get_route_revision",reference(1)).await;
+            assert_eq!(old["route_revision"]["status"],"superseded");
+            assert_eq!(old["route_revision"]["operations"],first["route_revision"]["operations"]);
+            let isolated=open().await;
+            assert_eq!(business(&peer,&isolated["run_id"],"get_route_revision",reference(1)).await["code"],"ROUTE_REVISION_NOT_FOUND");
+        }
+    }).await.unwrap();
+}

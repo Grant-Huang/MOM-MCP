@@ -53,6 +53,32 @@ pub(crate) fn revision_schema() -> Value {
     )
 }
 
+pub(crate) fn validation_spec(allow_route: bool) -> Spec {
+    let mut spec = spec(Action::ValidateRevision);
+    if allow_route {
+        spec.input["properties"]["revision_type"]["enum"] = json!(["bom", "route"]);
+        spec.description = "校验主数据版本的发布条件";
+        spec.errors = &[
+            "INVALID_ARGUMENT",
+            "BOM_REVISION_NOT_FOUND",
+            "BOM_REVISION_NOT_ACTIVATABLE",
+            "BOM_COMPONENTS_REQUIRED",
+            "COMPONENT_REVISION_NOT_FOUND",
+            "COMPONENT_UNIT_MISMATCH",
+            "COMPONENT_BOM_NOT_FOUND",
+            "BOM_DEPENDENCY_NOT_PUBLISHED",
+            "ROUTE_REVISION_NOT_FOUND",
+            "ROUTE_REVISION_NOT_ACTIVATABLE",
+            "ROUTE_OPERATIONS_REQUIRED",
+            "ROUTE_ITEM_REVISION_NOT_PUBLISHED",
+            "ROUTE_PREDECESSOR_NOT_FOUND",
+            "ROUTE_DUPLICATE_PREDECESSOR",
+            "ROUTE_CYCLE",
+        ];
+    }
+    spec
+}
+
 pub(crate) fn spec(action: Action) -> Spec {
     let mut required = vec!["item_id", "revision"];
     let mut fields = json!({"item_id":id_schema(),"revision":revision_number()});
@@ -143,7 +169,7 @@ fn read(tx: &Transaction<'_>, run: &str, item: &str, revision: i64) -> anyhow::R
     .transpose()
 }
 
-fn item_revision(
+pub(crate) fn item_revision(
     tx: &Transaction<'_>,
     run: &str,
     item: &str,
