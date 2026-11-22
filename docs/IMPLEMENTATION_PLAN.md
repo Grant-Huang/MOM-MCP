@@ -89,11 +89,11 @@ P8A 及 P8B 查询、预检、单笔与批量下达和草稿写入已有阶段�
 
 ## 外部适配器实施计划
 
-依据 [外部系统只读适配设计](EXTERNAL_ADAPTER_DESIGN.md)，与 AgentNexus [World Adapter M3/M4](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/43014db/docs/mom/WORLD_ADAPTER_PLAN.md) 对齐。AgentNexus `43014db` 已合并 M2-4 远程 DES 闭环；该结果属于仿真链路。当前 MOM-MCP 基线 `60a2c95` 已登记外部适配方向，尚无对应的可执行外部接入用例。P8/P9 仍按 [公共 MES 扩展计划](MES_EXPANSION_PLAN.md) 交付。
+依据 [外部系统只读适配设计](EXTERNAL_ADAPTER_DESIGN.md)，与 AgentNexus [World Adapter M3/M4](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/43014db/docs/mom/WORLD_ADAPTER_PLAN.md) 对齐。AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收，生产只读仍由 M3 承接。当前 MOM-MCP 基线 `60a2c95` 已登记外部适配方向，尚无对应的可执行外部接入用例。P8/P9 仍按 [公共 MES 扩展计划](MES_EXPANSION_PLAN.md) 交付。
 
 | 顺序 | 进度与依赖 | 退出条件 |
 |---|---|---|
-| 1. 确认样本、冻结边界 | **设计稿已补齐，待联审。** Carbon MCP、OpenMES HTTP 和 Odoo Community JSON-2 的候选入口已核实。首期从三者选择两种可运行接口。Odoo 本地容器和 OpenMES 应用内测试已验证两套只读响应与访问边界。仍需确认 OpenMES 站点访问、联调身份、连接器部署及 World Adapter Observe 集成点，并联审状态映射。 | 两边同意职责与版本边界；登记两套可用样本、权限、失败分类和覆盖限制；将首期 Fxx、用例和对应测试入口登记到阶段规范与 feature map。 |
+| 1. 确认样本、冻结边界 | **设计稿已补齐，待联审。** Carbon MCP、OpenMES HTTP 和 Odoo Community JSON-2 的候选入口已核实。首期从三者选择两种可运行接口。已选 Odoo 与 OpenMES 作为首期联审样本，两者均通过本地真实 HTTP 读取与访问边界验证。仍需确认 OpenMES 站点访问、联调身份、连接器部署及 World Adapter Observe 集成点，并联审状态映射。 | 两边同意职责与版本边界；登记两套可用样本、权限、失败分类和覆盖限制；将首期 Fxx、用例和对应测试入口登记到阶段规范与 feature map。 |
 | 2. 两种只读适配 | **待步骤 1。** 先用脱敏样本验证语义，再用候选环境执行真实读取。 | 同一工单读取意图在两种接口返回可追溯结果，覆盖未映射状态、源冲突、授权失败、连接故障及禁止误回退；保留样本回归与运行时证据。 |
 | 3. 跨系统对象关系和事件 | **待步骤 2。** 选定可取得的 ERP／CRM 样本，确认权威来源与关联依据。 | 类型化地关联客户订单、销售订单和生产工单；验证冲突与缺失关联。事件切片另登记水位、断点恢复和去重验收。 |
 | 4. 生产写入决策 | **待只读证据及站点授权。** 与 AgentNexus M4 共同评审写入入口。 | 首个写动作有授权、幂等、审计、部分成功、回执查证和恢复契约，获得独立交付批准后才排期。 |
