@@ -3538,3 +3538,113 @@ async fn p8d_02_measurement_and_inspection_result() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8d_03_nonconformance_hold_and_release() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("quality.sqlite3");
+    let (client, _child) = connect_options(&db, "0", true, true).await;
+    timeout(WAIT, async {
+        for (scenario, version, order, other) in [("cnc", 18, "WO-1", "WO-2"), ("assembly", 17, "WO-E", "WO-L")] {
+            let opened = call(&client, "open_scenario", json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run = &opened["run_id"];
+            let invoke = async |name: &str, args| business(&client, run, name, args).await;
+            let cursor = async || call(&client,"get_run",json!({"run_id":run})).await["cursor"].as_i64().unwrap();
+            let op = async |name: &str, key: &str, mut args: Value| {
+                args["expected_cursor"] = json!(cursor().await);
+                mes(&client,run,name,order,key,args).await
+            };
+            let check = async |id: &str, value: f64, upper: f64| {
+                let created = invoke("create_inspection",json!({"inspection_id":id,"work_order":order,
+                    "specification_version":"QA-DIM@2","expected_cursor":cursor().await,"idempotency_key":format!("create-{id}")})).await;
+                assert_eq!(created["ok"],true,"{created}");
+                let measured = invoke("record_measurement",json!({"inspection_id":id,"characteristic":"width","value":value,
+                    "unit":"mm","lower_limit":4.0,"upper_limit":upper,"expected_cursor":created["cursor"],"idempotency_key":format!("measure-{id}")})).await;
+                assert_eq!(measured["ok"],true,"{measured}");
+                invoke("complete_inspection",json!({"inspection_id":id,"expected_cursor":measured["cursor"],"idempotency_key":format!("finish-{id}")})).await
+            };
+            let transition = async |name: &str, id: &str, key: &str, extra: Value| {
+                let mut args = extra;
+                for (field,value) in [("inspection_id",json!(id)),("idempotency_key",json!(key)),
+                    ("expected_cursor",json!(cursor().await)),("responsible",json!("QA-01")),
+                    ("reason",json!("quality review")),("evidence",json!("QA-LOG-42"))] {
+                    args[field]=value;
+                }
+                invoke(name,args).await
+            };
+
+            assert_eq!(op("release_work_order","release",json!({})).await["ok"],true);
+            let operations = if scenario == "cnc" {
+                vec![("machining","MACH-01",10),("assembly","ASM-01",10)]
+            } else {
+                vec![("build","CELL-A",1)]
+            };
+            for (operation,center,quantity) in operations {
+                assert_eq!(op("dispatch_operation",&format!("dispatch-{operation}"),json!({"operation":operation,"work_center":center})).await["ok"],true);
+                if operation=="machining" {
+                    assert_eq!(mes(&client,run,"issue_material",order,"issue",json!({"batch":"LOT-1"})).await["ok"],true);
+                }
+                assert_eq!(op("start_operation",&format!("start-{operation}"),json!({"operation":operation})).await["ok"],true);
+                let reported = op("post_operation_report",&format!("report-{operation}"),json!({"operation":operation,"quantity":quantity})).await;
+                assert_eq!(reported["remaining"],0,"{reported}");
+                assert_eq!(op("complete_operation",&format!("complete-{operation}"),json!({"operation":operation})).await["status"],"completed");
+            }
+            if scenario == "cnc" {
+                let dispatched = op("dispatch_operation","dispatch-inspection",json!({"operation":"inspection","work_center":"QA-01"})).await;
+                assert_eq!(dispatched["ok"],true,"{dispatched}");
+            } else {
+                assert_eq!(mes(&client,run,"assembly_start_test",order,"start-test",json!({})).await["ok"],true);
+                advance(&client,run,10).await;
+                assert_eq!(mes(&client,run,"assembly_finish_test",order,"finish-test",json!({})).await["state"]["phase"],"passed");
+            }
+            assert_eq!(check("old-pass",4.2,4.5).await["inspection"]["status"],"passed");
+            assert_eq!(check("failure",4.7,4.5).await["inspection"]["status"],"failed");
+            let gated = if scenario=="cnc" { "inspect_units" } else { "assembly_deliver" };
+            let input = if scenario=="cnc" {json!({"result":"pass"})} else {json!({})};
+            let blocked_at=cursor().await;
+            assert_eq!(mes(&client,run,gated,order,"accept",input.clone()).await["code"],"QUALITY_HOLD");
+            assert_eq!(op("complete_work_order","complete",json!({})).await["code"],"QUALITY_HOLD");
+            assert_eq!(op("close_work_order","close",json!({})).await["code"],"QUALITY_HOLD");
+            assert_eq!(cursor().await,blocked_at);
+            let unaffected=invoke("close_work_order",json!({"work_order":other,"idempotency_key":"other-close","expected_cursor":cursor().await})).await;
+            assert_eq!(unaffected["code"],"INVALID_STATE","{unaffected}");
+            assert_eq!(transition("open_nonconformance","old-pass","reject-pass",json!({})).await["code"],"FAILED_INSPECTION_REQUIRED");
+            assert_eq!(transition("open_nonconformance","failure","open",json!({})).await["nonconformance"]["status"],"open");
+            assert_eq!(transition("place_quality_hold","failure","hold",json!({})).await["nonconformance"]["status"],"held");
+            assert_eq!(transition("release_quality_hold","failure","release-hold",json!({})).await["code"],"NONCONFORMANCE_STATE_INVALID");
+            let retest=|id:&str| json!({"decision":"reinspection","reinspection_id":id});
+            assert_eq!(transition("disposition_nonconformance","failure","disposition",retest("old-pass")).await["code"],"REINSPECTION_NOT_ACCEPTABLE");
+            assert_eq!(check("relaxed-pass",4.8,5.0).await["inspection"]["status"],"passed");
+            assert_eq!(transition("disposition_nonconformance","failure","disposition",retest("relaxed-pass")).await["code"],"REINSPECTION_NOT_ACCEPTABLE");
+            assert_eq!(check("new-pass",4.3,4.5).await["inspection"]["status"],"passed");
+            assert_eq!(transition("disposition_nonconformance","failure","disposition",retest("new-pass")).await["nonconformance"]["status"],"disposed");
+            assert_eq!(op("close_work_order","close",json!({})).await["code"],"QUALITY_HOLD");
+            let release_args=json!({"inspection_id":"failure","idempotency_key":"release-hold",
+                "expected_cursor":cursor().await,"responsible":"QA-01","reason":"quality review","evidence":"QA-LOG-42"});
+            let released=invoke("release_quality_hold",release_args.clone()).await;
+            assert_eq!(released["nonconformance"]["status"],"released","{released}");
+            let (peer,_child)=connect_mode(&db,"0",true).await;
+            assert_eq!(business(&peer,run,"release_quality_hold",release_args).await,released);
+            let detail=business(&peer,run,"get_inspection",json!({"inspection_id":"failure"})).await;
+            assert_eq!(detail["inspection"]["status"],"failed");
+            assert_eq!(detail["nonconformance"],released["nonconformance"]);
+            assert_eq!(detail["nonconformance"]["history"][2]["reinspection_id"],"new-pass");
+            assert_eq!(detail["nonconformance"]["history"][2]["responsible"],"QA-01");
+            assert_eq!(check("concession",4.8,4.5).await["inspection"]["status"],"failed");
+            for (action, key, state, extra) in [
+                ("open_nonconformance","open-c","open",json!({})),
+                ("place_quality_hold","hold-c","held",json!({})),
+                ("disposition_nonconformance","dispose-c","disposed",json!({"decision":"concession"})),
+            ] {
+                assert_eq!(transition(action,"concession",key,extra).await["nonconformance"]["status"],state);
+            }
+            assert_eq!(op("complete_work_order","complete",json!({})).await["code"],"QUALITY_HOLD");
+            assert_eq!(transition("release_quality_hold","concession","release-c",json!({})).await["nonconformance"]["status"],"released");
+            let accepted=mes(&client,run,gated,order,"accept",input).await;
+            assert_eq!(accepted["ok"],true,"{accepted}");
+            assert_eq!(op("complete_work_order","complete",json!({})).await["status"],"completed");
+            assert_eq!(op("close_work_order","close",json!({})).await["status"],"closed");
+        }
+    }).await.unwrap();
+}

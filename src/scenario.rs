@@ -405,6 +405,10 @@ impl Scenarios {
                  run TEXT NOT NULL, inspection TEXT NOT NULL, status TEXT NOT NULL,
                  PRIMARY KEY (run, inspection)
              );
+             CREATE TABLE IF NOT EXISTS quality_nonconformances (
+                 run TEXT NOT NULL, inspection TEXT NOT NULL, state TEXT NOT NULL,
+                 PRIMARY KEY (run, inspection)
+             );
              CREATE TABLE IF NOT EXISTS scenario_requests (
                  run TEXT NOT NULL, key TEXT NOT NULL, request TEXT NOT NULL, response TEXT NOT NULL,
                  PRIMARY KEY (run, key)
@@ -430,6 +434,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-inspections.json"),
             include_str!("../fixtures/cnc-inspection-results.json"),
             include_str!("../fixtures/assembly-inspection-results.json"),
+            include_str!("../fixtures/cnc-quality-gates.json"),
+            include_str!("../fixtures/assembly-quality-gates.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -764,6 +770,10 @@ impl Scenarios {
                 | Action::GetInspection
                 | Action::RecordMeasurement
                 | Action::CompleteInspection
+                | Action::OpenNonconformance
+                | Action::PlaceQualityHold
+                | Action::DispositionNonconformance
+                | Action::ReleaseQualityHold
         ) {
             return crate::quality::invoke(
                 tx,
@@ -773,6 +783,32 @@ impl Scenarios {
                 parameters,
                 cursor,
             );
+        }
+        if definition
+            .capabilities
+            .contains(&Action::OpenNonconformance)
+            && (matches!(
+                action,
+                Action::CompleteOperation
+                    | Action::CompleteWorkOrder
+                    | Action::CloseWorkOrder
+                    | Action::CloseOrder
+                    | Action::AssemblyDeliver
+            ) || (matches!(action, Action::InspectUnits | Action::Disposition)
+                && parameters["result"] == "pass"))
+            && let Some(order) = parameters["work_order"].as_str()
+            && let Some(code) = crate::quality::blocking(&tx, run, order)?
+        {
+            let key = parameters["idempotency_key"].as_str().unwrap();
+            let has_receipt: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM scenario_requests WHERE run=?1 AND key=?2)",
+                params![run, key],
+                |row| row.get(0),
+            )?;
+            // A retry or key conflict is resolved by the write handler without a new mutation.
+            if !has_receipt {
+                return Ok(Ok(json!({"ok":false,"code":code,"field":"work_order"})));
+            }
         }
         if action == Action::RequestMaintenance {
             let Some(setup) = definition
