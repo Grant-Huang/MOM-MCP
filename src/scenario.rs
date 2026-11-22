@@ -75,7 +75,7 @@ impl Rejection {
     }
 }
 
-fn identifier(value: &str) -> bool {
+pub(crate) fn identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && value
@@ -163,6 +163,13 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         "duplicate capabilities"
     );
     if let Some(setup) = &definition.manufacturing {
+        anyhow::ensure!(
+            setup
+                .work_centers
+                .as_ref()
+                .is_none_or(|centers| centers.iter().all(|id| identifier(id))),
+            "invalid manufacturing work center"
+        );
         anyhow::ensure!(
             setup.initial_stock <= 1_000_000,
             "manufacturing.initial_stock exceeds the supported range"
@@ -334,6 +341,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-batch-release.json"),
             include_str!("../fixtures/cnc-order-hold.json"),
             include_str!("../fixtures/cnc-order-terminal.json"),
+            include_str!("../fixtures/cnc-cross-shop.json"),
             include_str!("../fixtures/assembly-order-terminal.json"),
             include_str!("../fixtures/assembly-order-hold.json"),
             include_str!("../fixtures/assembly-batch-release.json"),

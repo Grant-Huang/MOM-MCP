@@ -2865,3 +2865,47 @@ async fn p8b_07_order_cancel_complete_close() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8b_08_cross_shop_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let opened=call(&client,"open_scenario",json!({"scenario_id":"cnc","version":9})).await;
+        assert_eq!(opened["ok"],true,"{opened}");
+        let run=&opened["run_id"];
+        let action=async |name:&str,key:&str, extra: Value| mes(&client,run,name,"WO-1",key,extra).await;
+        let released=action("release_work_order","release",json!({"expected_cursor":0})).await;
+        let snapshot=&released["snapshot"];
+        assert_eq!(snapshot["work_centers"],json!(["MACH-01","ASM-01","QA-01"]));
+        let revised=business(&client,run,"revise_route",json!({"route_version":"route-2","work_centers":["MACH-01","ASM-02","QA-01"],"idempotency_key":"revision","expected_cursor":1})).await;
+        assert_eq!(revised["cursor"],2,"{revised}");
+        let same_version=business(&client,run,"revise_route",json!({"route_version":"route-1","idempotency_key":"old-route","expected_cursor":2})).await;
+        assert_eq!(same_version["code"],"ROUTE_VERSION_EXISTS");
+        let second=mes(&client,run,"release_work_order","WO-2","release2",json!({"expected_cursor":2})).await;
+        assert_eq!(second["snapshot"]["route_version"],"route-2");
+        assert_eq!(second["snapshot"]["work_centers"][1],"ASM-02");
+        assert_eq!(action("dispatch_operation","skip",json!({"operation":"assembly","work_center":"ASM-01"})).await["code"],"OPERATION_OUT_OF_SEQUENCE");
+        for (operation,center) in [("machining","MACH-01"),("assembly","ASM-01")] {
+            if operation=="assembly" {
+                let rejected=action("dispatch_operation","wrong-center",json!({"operation":operation,"work_center":"ASM-02"})).await;
+                assert_eq!(rejected["code"],"WORK_CENTER_MISMATCH");
+                assert_eq!(rejected["required_work_center"],center);
+            }
+            let dispatched=action("dispatch_operation",&format!("dispatch-{operation}"),json!({"operation":operation,"work_center":center})).await;
+            assert_eq!(dispatched["ok"],true,"{dispatched}");
+            if operation=="machining" {
+                assert_eq!(action("issue_material","issue",json!({"batch":"LOT-1"})).await["ok"],true);
+            }
+            assert_eq!(action("start_operation",&format!("start-{operation}"),json!({"operation":operation})).await["ok"],true);
+            assert_eq!(action("report_operation",&format!("report-{operation}"),json!({"operation":operation})).await["remaining"],0);
+        }
+        let detail=business(&client,run,"get_work_order",json!({"work_order":"WO-1"})).await;
+        assert_eq!(detail["snapshot"],*snapshot);
+        let status=mes_status(&client,run).await;
+        let ledger:Vec<_>=status["ledger"].as_array().unwrap().iter().filter(|entry|entry["kind"]=="operation_dispatch").collect();
+        assert_eq!(ledger.len(),2);
+        assert_eq!(ledger[1]["work_center"],"ASM-01");
+        assert_eq!(ledger[1]["route_version"],"route-1");
+    }).await.unwrap();
+}

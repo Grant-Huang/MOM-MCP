@@ -179,6 +179,15 @@ pub fn spec(action: Action) -> Spec {
     if let Some(equipment) = fields.get_mut("equipment_state") {
         equipment["enum"] = json!(["available", "down"]);
     }
+    if action == Action::DispatchOperation {
+        fields.insert("work_center".into(), text());
+    }
+    if action == Action::ReviseRoute {
+        fields.insert(
+            "work_centers".into(),
+            json!({"type":"array","minItems":3,"maxItems":3,"items":text()}),
+        );
+    }
     if action == Action::ReportOperation {
         fields.insert(
             "quantity".into(),
@@ -315,6 +324,8 @@ pub fn spec(action: Action) -> Spec {
             "MATERIAL_SHORTAGE",
             "MATERIAL_HELD",
             "OPERATION_OUT_OF_SEQUENCE",
+            "WORK_CENTER_MISMATCH",
+            "ROUTE_VERSION_EXISTS",
             "INVALID_STATE",
             "QUALITY_HOLD",
             "IDEMPOTENCY_CONFLICT",
@@ -329,6 +340,8 @@ pub fn spec(action: Action) -> Spec {
 #[serde(deny_unknown_fields)]
 pub struct Setup {
     pub initial_stock: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_centers: Option<[String; 3]>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -340,6 +353,8 @@ struct Order {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hold_reason: Option<String>,
     route_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    work_centers: Option<[String; 3]>,
     step: usize,
     phase: Phase,
     batch: Option<String>,
@@ -376,6 +391,10 @@ struct Report {
 struct State {
     stock: usize,
     route_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    work_centers: Option<[String; 3]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    prior_route_versions: Vec<String>,
     orders: BTreeMap<String, Order>,
     reports: Vec<Report>,
     ledger: Vec<Value>,
@@ -389,6 +408,8 @@ impl State {
         Self {
             stock: setup.initial_stock,
             route_version: "route-1".into(),
+            work_centers: setup.work_centers.clone(),
+            prior_route_versions: Vec::new(),
             orders: orders
                 .iter()
                 .map(|id| (id.clone(), Order::default()))
@@ -470,6 +491,9 @@ pub fn order_status(
     let state = load(tx, run, setup, orders)?;
     Ok(state.orders.get(id).map(|order| {
         let mut result = json!({"ok":true,"run_id":run,"work_order":id,"status":order.phase});
+        if let Some(centers) = &order.work_centers {
+            result["snapshot"] = json!({"route_version":order.route_version,"operations":ROUTE,"work_centers":centers});
+        }
         if let Some(reason) = &order.hold_reason {
             result["status"] = json!("held");
             result["hold_reason"] = json!(reason);
@@ -623,7 +647,30 @@ pub fn invoke(
         ));
     }
     let mut response = if action == Action::ReviseRoute {
-        state.route_version = args["route_version"].as_str().unwrap().into();
+        let version = args["route_version"].as_str().unwrap();
+        if state.work_centers.is_some()
+            && (version == state.route_version
+                || state
+                    .prior_route_versions
+                    .iter()
+                    .any(|previous| previous == version))
+        {
+            return Ok((error("ROUTE_VERSION_EXISTS"), false));
+        }
+        if let Some(centers) = args.get("work_centers") {
+            if state.work_centers.is_none() {
+                return Ok((error("INVALID_ARGUMENT"), false));
+            }
+            let centers: [String; 3] = serde_json::from_value(centers.clone())?;
+            if !centers.iter().all(|id| crate::scenario::identifier(id)) {
+                return Ok((error("INVALID_ARGUMENT"), false));
+            }
+            state.work_centers = Some(centers);
+        }
+        if state.work_centers.is_some() {
+            state.prior_route_versions.push(state.route_version.clone());
+        }
+        state.route_version = version.into();
         json!({"ok":true,"route_version":state.route_version})
     } else if action == Action::SetEquipment {
         state.equipment_down = args["equipment_state"] == "down";
@@ -760,13 +807,30 @@ fn apply(
                 };
             }
             order.route_version = Some(state.route_version.clone());
+            order.work_centers = state.work_centers.clone();
             order.phase = Phase::Ready;
             if action == Action::ReleaseWorkOrder {
-                return json!({"ok":true,"work_order":id,"status":"released",
-                    "snapshot":{"route_version":order.route_version}});
+                let mut snapshot = json!({"route_version":order.route_version});
+                if let Some(centers) = &order.work_centers {
+                    snapshot["work_centers"] = json!(centers);
+                    snapshot["operations"] = json!(ROUTE);
+                }
+                return json!({"ok":true,"work_order":id,"status":"released","snapshot":snapshot});
             }
         }
-        Action::DispatchOperation if order.phase == Phase::Ready => order.phase = Phase::Dispatched,
+        Action::DispatchOperation if order.phase == Phase::Ready => {
+            if let Some(centers) = &order.work_centers {
+                let center = &centers[order.step];
+                if args.get("work_center").and_then(Value::as_str) != Some(center) {
+                    return json!({"ok":false,"code":"WORK_CENTER_MISMATCH","required_work_center":center});
+                }
+                state.ledger.push(json!({"kind":"operation_dispatch","work_order":id,
+                    "operation":ROUTE[order.step],"work_center":center,"route_version":order.route_version,"cursor":revision}));
+            } else if args.contains_key("work_center") {
+                return error("INVALID_ARGUMENT");
+            }
+            order.phase = Phase::Dispatched;
+        }
         Action::IssueMaterial if order.phase == Phase::Dispatched && order.step == 0 => {
             if args["batch"] != LOT {
                 return error("MATERIAL_NOT_FOUND");
