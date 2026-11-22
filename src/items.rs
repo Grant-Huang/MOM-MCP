@@ -34,7 +34,7 @@ struct Revision {
     status: String,
 }
 
-pub(crate) fn spec(action: Action) -> Spec {
+pub(crate) fn spec(action: Action, allow_bom: bool) -> Spec {
     let id = json!({"type":"string","minLength":1,"maxLength":64,"pattern":"^[A-Za-z0-9_-]+$"});
     let unit = json!({"type":"string","enum":UNITS});
     let revision = json!({"type":"integer","minimum":1,"maximum":u32::MAX});
@@ -130,18 +130,40 @@ pub(crate) fn spec(action: Action) -> Spec {
             required.push("revision_type");
             fields.insert(
                 "revision_type".into(),
-                json!({"type":"string","enum":["item"]}),
+                json!({"type":"string","enum":if allow_bom {&["item","bom"][..]} else {&["item"][..]}}),
             );
             (
-                "启用物料版本",
+                if allow_bom {
+                    "启用主数据版本"
+                } else {
+                    "启用物料版本"
+                },
                 json!({"item_revision":row}),
-                &[
-                    "INVALID_ARGUMENT",
-                    "ITEM_REVISION_NOT_FOUND",
-                    "ITEM_REVISION_NOT_ACTIVATABLE",
-                    "VERSION_CONFLICT",
-                    "IDEMPOTENCY_CONFLICT",
-                ][..],
+                if allow_bom {
+                    &[
+                        "INVALID_ARGUMENT",
+                        "ITEM_REVISION_NOT_FOUND",
+                        "ITEM_REVISION_NOT_ACTIVATABLE",
+                        "BOM_REVISION_NOT_FOUND",
+                        "BOM_REVISION_IMMUTABLE",
+                        "BOM_REVISION_NOT_ACTIVATABLE",
+                        "BOM_COMPONENTS_REQUIRED",
+                        "COMPONENT_REVISION_NOT_FOUND",
+                        "COMPONENT_UNIT_MISMATCH",
+                        "COMPONENT_BOM_NOT_FOUND",
+                        "BOM_DEPENDENCY_NOT_PUBLISHED",
+                        "VERSION_CONFLICT",
+                        "IDEMPOTENCY_CONFLICT",
+                    ][..]
+                } else {
+                    &[
+                        "INVALID_ARGUMENT",
+                        "ITEM_REVISION_NOT_FOUND",
+                        "ITEM_REVISION_NOT_ACTIVATABLE",
+                        "VERSION_CONFLICT",
+                        "IDEMPOTENCY_CONFLICT",
+                    ][..]
+                },
             )
         }
         _ => unreachable!("item action"),
@@ -153,14 +175,22 @@ pub(crate) fn spec(action: Action) -> Spec {
     }
     let output_fields = response.as_object().unwrap();
     let output_required: Vec<_> = output_fields.keys().map(String::as_str).collect();
+    let mut output = json!({"oneOf":[object(&output_required,response.clone()),
+        object(&["ok","code","field"],json!({"ok":{"const":false},"code":text(),"field":text()}))]});
+    if action == Action::ActivateRevision && allow_bom {
+        output["oneOf"].as_array_mut().unwrap().push(object(
+            &["ok", "run_id", "cursor", "bom_revision"],
+            json!({"ok":{"const":true},"run_id":text(),"cursor":{"type":"integer","minimum":0},
+                "bom_revision":crate::bom::revision_schema()}),
+        ));
+    }
     Spec {
         name: action.name(),
         description,
         domain: "inventory",
         effect: if read { "read" } else { "write" },
         input: object(&required, Value::Object(fields)),
-        output: json!({"oneOf":[object(&output_required,response.clone()),
-            object(&["ok","code","field"],json!({"ok":{"const":false},"code":text(),"field":text()}))]}),
+        output,
         preconditions: &["run_open", "tool_enabled_in_scenario"],
         side_effect: if read { "none" } else { action.name() },
         errors,
