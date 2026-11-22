@@ -3153,3 +3153,53 @@ async fn p8c_05_explicit_completion_and_report_reversal() {
         assert_eq!(op("reverse_operation_report","late",reverse(&replacement["report"]["id"],10)).await["code"],"REPORT_HAS_DEPENDENCIES");
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8c_06_assembly_actuals_and_test_dependency() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let opened=call(&client,"open_scenario",json!({"scenario_id":"assembly","version":14})).await;
+        assert_eq!(opened["ok"],true,"{opened}");
+        let run=&opened["run_id"];
+        let op=async |name:&str,key:&str,args| mes(&client,run,name,"WO-E",key,args).await;
+        let invoke=async |name:&str,args| business(&client,run,name,args).await;
+        let cnc=call(&client,"open_scenario",json!({"scenario_id":"cnc","version":14})).await;
+        for name in ["post_operation_report","list_operation_reports","reverse_operation_report","complete_operation","get_command_result"] {
+            let spec=call(&client,"describe_tool",json!({"run_id":run,"name":name})).await;
+            assert_eq!(spec["ok"],true);
+            assert_eq!(spec,call(&client,"describe_tool",json!({"run_id":cnc["run_id"],"name":name})).await);
+        }
+        assert_eq!(op("release_work_order","release",json!({"expected_cursor":0})).await["ok"],true);
+        assert_eq!(op("dispatch_operation","dispatch",json!({"operation":"build","work_center":"CELL-A","expected_cursor":1})).await["ok"],true);
+        assert_eq!(op("start_operation","start",json!({"operation":"build","expected_cursor":2})).await["ok"],true);
+        assert_eq!(op("assembly_build","legacy",json!({})).await["code"],"TOOL_UNAVAILABLE");
+        let post=|cursor,quantity|json!({"operation":"build","expected_cursor":cursor,"quantity":quantity});
+        let complete=|cursor|json!({"operation":"build","expected_cursor":cursor});
+        assert_eq!(op("complete_operation","complete",complete(3)).await["code"],"OPERATION_QUANTITY_INCOMPLETE");
+        assert_eq!(op("post_operation_report","post",post(3,2)).await["code"],"REPORT_EXCEEDS_REMAINING");
+        let initial = invoke("assembly_kit",json!({"work_order":"WO-E"})).await;
+        let actual=op("post_operation_report","post",post(3,1)).await;
+        assert_eq!(actual["remaining"],0,"{actual}");
+        assert_eq!(actual["report"]["components"]["DRIVE-STD"],1);
+        assert_eq!(op("post_operation_report","post",post(3,1)).await,actual);
+        assert_eq!(op("assembly_start_test","test",json!({})).await["ok"],false);
+        assert_eq!(invoke("get_resource_capability",json!({"work_center":"CELL-A"})).await["resource"]["occupied_by"],"WO-E");
+        assert_eq!(op("complete_operation","complete",complete(4)).await["status"],"completed");
+        assert_eq!(invoke("get_resource_capability",json!({"work_center":"CELL-A"})).await["resource"]["available"],true);
+        let reverse=|id: &Value,cursor|json!({"report_id":id,"reason":"actual correction","expected_cursor":cursor});
+        let reversed=op("reverse_operation_report","reverse",reverse(&actual["report"]["id"],5)).await;
+        assert_eq!(reversed["reversed"],true,"{reversed}");
+        assert_eq!(invoke("assembly_kit",json!({"work_order":"WO-E"})).await["stock"],initial["stock"]);
+        let reports=invoke("list_operation_reports",json!({"work_order":"WO-E","operation":"build"})).await;
+        assert_eq!(reports["reports"][0]["reversed"],true);
+        assert_eq!(reports["reports"][0]["components"],actual["report"]["components"]);
+        assert_eq!(invoke("get_resource_capability",json!({"work_center":"CELL-A"})).await["resource"]["occupied_by"],"WO-E");
+        let corrected=op("post_operation_report","corrected",post(6,1)).await;
+        assert_ne!(corrected["report"]["id"],actual["report"]["id"]);
+        assert_eq!(invoke("get_command_result",json!({"idempotency_key":"corrected"})).await["receipt"],corrected);
+        assert_eq!(op("complete_operation","complete-again",complete(7)).await["status"],"completed");
+        assert_eq!(op("assembly_start_test","test",json!({})).await["ok"],true);
+        assert_eq!(op("reverse_operation_report","late",reverse(&corrected["report"]["id"],9)).await["code"],"REPORT_HAS_DEPENDENCIES");
+    }).await.unwrap();
+}

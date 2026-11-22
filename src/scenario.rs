@@ -305,10 +305,11 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                 | Action::ListOperationReports
                 | Action::ReverseOperationReport
                 | Action::CompleteOperation
-        )) || (definition.manufacturing.is_some()
+        )) || ((definition.manufacturing.is_some() || definition.assembly.is_some())
+            && !definition.capabilities.contains(&Action::AssemblyBuild)
             && !definition.capabilities.contains(&Action::ReportOperation)
             && !definition.capabilities.contains(&Action::ReverseReport)),
-        "public operation actuals require manufacturing and exclude legacy write commands"
+        "public operation actuals require manufacturing or assembly and exclude legacy write commands"
     );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
@@ -396,6 +397,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-resource-occupancy.json"),
             include_str!("../fixtures/cnc-operation-lifecycle.json"),
             include_str!("../fixtures/cnc-operation-reports.json"),
+            include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
             include_str!("../fixtures/assembly-resource-dispatch.json"),
@@ -993,6 +995,10 @@ impl Scenarios {
                         | Action::StartOperation
                         | Action::PauseOperation
                         | Action::ResumeOperation
+                        | Action::PostOperationReport
+                        | Action::ListOperationReports
+                        | Action::ReverseOperationReport
+                        | Action::CompleteOperation
                         | Action::SetDispatchPriority
                 ))
         {

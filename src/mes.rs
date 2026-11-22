@@ -277,6 +277,12 @@ pub fn spec(action: Action) -> Spec {
     if let Some(equipment) = fields.get_mut("equipment_state") {
         equipment["enum"] = json!(["available", "down"]);
     }
+    if matches!(
+        action,
+        Action::PostOperationReport | Action::ListOperationReports | Action::CompleteOperation
+    ) {
+        fields.insert("operation".into(), text());
+    }
     if action == Action::SetDispatchPriority {
         fields.insert(
             "priority".into(),
@@ -436,7 +442,8 @@ pub fn spec(action: Action) -> Spec {
             json!({
                 "id":text(),"order":text(),"step":{"type":"integer","minimum":0},
                 "quantity":{"type":"integer","minimum":1},"batch":{"type":["string","null"]},
-                "reversed":{"type":"boolean"},"serial_numbers":{"type":"array","items":text()}
+                "reversed":{"type":"boolean"},"serial_numbers":{"type":"array","items":text()},
+            "components":{"type":"object","additionalProperties":{"type":"integer","minimum":1}}
             }),
         );
         let success = match action {
@@ -597,15 +604,17 @@ enum Phase {
 }
 
 #[derive(Deserialize, Serialize)]
-struct Report {
-    id: String,
-    order: String,
-    step: usize,
-    batch: Option<String>,
-    quantity: usize,
-    reversed: bool,
+pub(crate) struct Report {
+    pub(crate) id: String,
+    pub(crate) order: String,
+    pub(crate) step: usize,
+    pub(crate) batch: Option<String>,
+    pub(crate) quantity: usize,
+    pub(crate) reversed: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    serial_numbers: Vec<String>,
+    pub(crate) serial_numbers: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) components: BTreeMap<String, usize>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1388,6 +1397,7 @@ fn apply(
                 batch: order.batch.clone(),
                 reversed: false,
                 serial_numbers,
+                components: BTreeMap::new(),
             };
             if order.step == 0 {
                 state.stock -= quantity;
