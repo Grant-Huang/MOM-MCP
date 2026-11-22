@@ -3482,3 +3482,59 @@ async fn p8d_01_public_inspection_registry() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn p8d_02_measurement_and_inspection_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("quality.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        for (scenario, version, order) in [("cnc", 17, "WO-1"), ("assembly", 16, "WO-E")] {
+            let opened = call(&client, "open_scenario", json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(opened["ok"], true, "{opened}");
+            let run = &opened["run_id"];
+            let discovered = call(&client, "search_tools", json!({"run_id":run,"domain":"quality","effect":"write"})).await;
+            for name in ["record_measurement", "complete_inspection"] {
+                assert!(discovered["tools"].as_array().unwrap().iter().any(|tool| tool["name"] == name));
+            }
+            let invoke = async |name: &str, args| business(&client, run, name, args).await;
+            let create = |id: &str, cursor| json!({"inspection_id":id,"work_order":order,
+                "specification_version":"QA-DIM@2","idempotency_key":format!("create-{id}"),"expected_cursor":cursor});
+            let measure = |id: &str, characteristic: &str, key: &str, value: f64, lower: f64, upper: f64, cursor| {
+                json!({"inspection_id":id,"characteristic":characteristic,"unit":"mm","value":value,
+                    "lower_limit":lower,"upper_limit":upper,"idempotency_key":key,"expected_cursor":cursor})
+            };
+            let complete = |id: &str, key: &str, cursor| json!({"inspection_id":id,"idempotency_key":key,"expected_cursor":cursor});
+            assert_eq!(invoke("create_inspection", create("QC-1", 0)).await["cursor"], 1);
+            assert_eq!(invoke("complete_inspection", complete("QC-1", "complete", 1)).await["code"], "MEASUREMENT_REQUIRED");
+            assert_eq!(invoke("record_measurement", measure("QC-1", "width", "width", 4.5, 6.0, 4.0, 1)).await["field"], "upper_limit");
+            let boundary_args = measure("QC-1", "width", "width", 4.5, 4.0, 4.5, 1);
+            let boundary = invoke("record_measurement", boundary_args.clone()).await;
+            assert_eq!(boundary["measurement"]["passed"], true, "{boundary}");
+            assert_eq!(invoke("record_measurement", boundary_args.clone()).await, boundary);
+            assert_eq!(invoke("record_measurement", measure("QC-1", "width", "retest", 4.3, 4.0, 4.5, 2)).await["code"], "MEASUREMENT_ALREADY_EXISTS");
+            assert_eq!(invoke("record_measurement", measure("QC-1", "length", "length", 6.2, 5.0, 6.0, 1)).await["code"], "VERSION_CONFLICT");
+            let over = invoke("record_measurement", measure("QC-1", "length", "length", 6.2, 5.0, 6.0, 2)).await;
+            assert_eq!(over["measurement"]["passed"], false, "{over}");
+            let failed = invoke("complete_inspection", complete("QC-1", "complete", 3)).await;
+            assert_eq!(failed["inspection"]["status"], "failed", "{failed}");
+            assert_eq!(invoke("complete_inspection", complete("QC-1", "complete", 3)).await, failed);
+            assert_eq!(invoke("record_measurement", boundary_args).await, boundary);
+            assert_eq!(invoke("record_measurement", measure("QC-1", "height", "late", 4.2, 4.0, 4.5, 4)).await["code"], "INSPECTION_COMPLETED");
+            assert_eq!(invoke("complete_inspection", complete("QC-1", "new-complete", 4)).await["code"], "INSPECTION_COMPLETED");
+            assert_eq!(invoke("create_inspection", create("QC-2", 4)).await["cursor"], 5);
+            assert_eq!(invoke("record_measurement", measure("QC-2", "width", "pass-width", 4.0, 4.0, 4.5, 5)).await["measurement"]["passed"], true);
+            assert_eq!(invoke("complete_inspection", complete("QC-2", "pass-complete", 6)).await["inspection"]["status"], "passed");
+            let (reconnected, _child) = connect_mode(&db, "0", true).await;
+            let detail = business(&reconnected, run, "get_inspection", json!({"inspection_id":"QC-1"})).await;
+            assert_eq!(detail["inspection"],failed["inspection"]);
+            assert_eq!(detail["measurements"],json!([over["measurement"], boundary["measurement"]]));
+            let summary = business(&reconnected, run, "list_inspections", json!({"work_order":order})).await;
+            assert_eq!(summary["inspections"][0]["status"], "failed");
+            assert_eq!(summary["inspections"][1]["status"], "passed");
+            assert_eq!(call(&client, "get_run", json!({"run_id":run})).await["cursor"], 7);
+            let other = call(&client, "open_scenario", json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(business(&client, &other["run_id"], "complete_inspection", complete("QC-1","complete",0)).await["code"], "INSPECTION_NOT_FOUND");
+        }
+    }).await.unwrap();
+}
