@@ -42,6 +42,24 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "production",
     ),
     (
+        Action::CancelWorkOrder,
+        "cancel_work_order",
+        "取消尚无执行投入的工单",
+        "production",
+    ),
+    (
+        Action::CompleteWorkOrder,
+        "complete_work_order",
+        "确认工单实绩和质量处置已完成",
+        "production",
+    ),
+    (
+        Action::CloseWorkOrder,
+        "close_work_order",
+        "结清并关闭已确认完工的工单",
+        "production",
+    ),
+    (
         Action::ReleaseOrder,
         "release_order",
         "下达工单并冻结工艺版本",
@@ -117,6 +135,10 @@ pub fn spec(action: Action) -> Spec {
         Action::Trace => &["subject"],
         Action::ReviseRoute => &["route_version", "idempotency_key"],
         Action::SetEquipment => &["equipment_state", "idempotency_key"],
+        Action::CancelWorkOrder => &["work_order", "idempotency_key", "expected_cursor", "reason"],
+        Action::CompleteWorkOrder | Action::CloseWorkOrder => {
+            &["work_order", "idempotency_key", "expected_cursor"]
+        }
         Action::ReleaseWorkOrder | Action::ResumeWorkOrder => {
             &["work_order", "idempotency_key", "expected_cursor"]
         }
@@ -168,6 +190,37 @@ pub fn spec(action: Action) -> Spec {
             "expected_cursor".into(),
             json!({"type":"integer","minimum":0,"maximum":i64::MAX}),
         );
+    }
+    if matches!(
+        action,
+        Action::CancelWorkOrder | Action::CompleteWorkOrder | Action::CloseWorkOrder
+    ) {
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: "write",
+            input: object(required, Value::Object(fields)),
+            output: json!({"type":"object","required":["ok"],"properties":{
+                "ok":{"type":"boolean"},"work_order":text(),"status":text(),"cancel_reason":text(),
+                "cursor":{"type":"integer","minimum":0},"code":text()
+            }}),
+            preconditions: &["run_open", "work_order_lifecycle_conditions_met"],
+            side_effect: "update_work_order_lifecycle",
+            errors: &[
+                "INVALID_ARGUMENT",
+                "WORK_ORDER_NOT_FOUND",
+                "INVALID_STATE",
+                "WORK_ORDER_HELD",
+                "ORDER_HAS_EXECUTION",
+                "QUALITY_HOLD",
+                "COMPLETION_REQUIRED",
+                "DELIVERY_REQUIRED",
+                "VERSION_CONFLICT",
+                "IDEMPOTENCY_CONFLICT",
+            ],
+            visibility: "run",
+        };
     }
     if matches!(action, Action::HoldWorkOrder | Action::ResumeWorkOrder) {
         return Spec {
@@ -281,6 +334,10 @@ pub struct Setup {
 #[derive(Default, Deserialize, Serialize)]
 struct Order {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    cancel_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion_confirmed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     hold_reason: Option<String>,
     route_version: Option<String>,
     step: usize,
@@ -300,6 +357,7 @@ enum Phase {
     Running,
     Complete,
     Closed,
+    Cancelled,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -415,6 +473,12 @@ pub fn order_status(
         if let Some(reason) = &order.hold_reason {
             result["status"] = json!("held");
             result["hold_reason"] = json!(reason);
+        }
+        if let Some(reason) = &order.cancel_reason {
+            result["cancel_reason"] = json!(reason);
+        }
+        if order.completion_confirmed == Some(true) {
+            result["completion_confirmed"] = json!(true);
         }
         result
     }))
@@ -615,7 +679,9 @@ fn apply(
     let Some(order) = state.orders.get_mut(id) else {
         return error("WORK_ORDER_NOT_FOUND");
     };
-    if order.hold_reason.is_some() && action != Action::ResumeWorkOrder {
+    if order.hold_reason.is_some()
+        && !matches!(action, Action::ResumeWorkOrder | Action::CancelWorkOrder)
+    {
         return error("WORK_ORDER_HELD");
     }
     if matches!(
@@ -649,6 +715,41 @@ fn apply(
             }
             order.hold_reason = None;
             return json!({"ok":true,"work_order":id,"status":order.phase});
+        }
+        Action::CancelWorkOrder if !matches!(order.phase, Phase::Closed | Phase::Cancelled) => {
+            if !matches!(
+                order.phase,
+                Phase::Planned | Phase::Ready | Phase::Dispatched
+            ) || order.batch.is_some()
+                || order.step > 0
+                || state.reports.iter().any(|report| report.order == id)
+            {
+                return error("ORDER_HAS_EXECUTION");
+            }
+            let reason = args["reason"].as_str().unwrap();
+            order.phase = Phase::Cancelled;
+            order.hold_reason = None;
+            order.cancel_reason = Some(reason.into());
+            return json!({"ok":true,"work_order":id,"status":"cancelled","cancel_reason":reason});
+        }
+        Action::CompleteWorkOrder | Action::CloseWorkOrder if order.phase == Phase::Complete => {
+            if order.inspection.as_deref() == Some("fail")
+                || (held && order.inspection.as_deref() != Some("scrap"))
+            {
+                return error("QUALITY_HOLD");
+            }
+            if action == Action::CompleteWorkOrder && order.completion_confirmed.is_none() {
+                order.completion_confirmed = Some(true);
+                return json!({"ok":true,"work_order":id,"status":"completed"});
+            }
+            if action == Action::CloseWorkOrder {
+                if order.completion_confirmed.is_none() {
+                    return error("COMPLETION_REQUIRED");
+                }
+                order.phase = Phase::Closed;
+                return json!({"ok":true,"work_order":id,"status":"closed"});
+            }
+            return error("INVALID_STATE");
         }
         Action::ReleaseOrder | Action::ReleaseWorkOrder => {
             if let Some(code) = release_blocker(&order.phase, state.stock, held) {

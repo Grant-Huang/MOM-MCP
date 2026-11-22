@@ -232,6 +232,10 @@ impl Setup {
 #[derive(Serialize, Deserialize, Default)]
 struct Order {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    cancel_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion_confirmed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     hold_reason: Option<String>,
     phase: Phase,
     substitute: Option<String>,
@@ -257,6 +261,8 @@ enum Phase {
     Failed,
     Passed,
     Delivered,
+    Closed,
+    Cancelled,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -388,6 +394,12 @@ pub fn status(
             result["status"] = json!("held");
             result["hold_reason"] = json!(reason);
         }
+        if let Some(reason) = &order.cancel_reason {
+            result["cancel_reason"] = json!(reason);
+        }
+        if order.completion_confirmed == Some(true) {
+            result["completion_confirmed"] = json!(true);
+        }
         result
     }))
 }
@@ -496,7 +508,12 @@ pub fn invoke(
     }
     if matches!(
         action,
-        Action::ReleaseWorkOrder | Action::HoldWorkOrder | Action::ResumeWorkOrder
+        Action::ReleaseWorkOrder
+            | Action::HoldWorkOrder
+            | Action::ResumeWorkOrder
+            | Action::CancelWorkOrder
+            | Action::CompleteWorkOrder
+            | Action::CloseWorkOrder
     ) && args["expected_cursor"].as_i64() != Some(cursor)
     {
         return Ok((
@@ -549,7 +566,9 @@ fn apply(
     rules: &[mom_des::Rule],
     model: &dyn mom_des::Model,
 ) -> Value {
-    if state.orders[id].hold_reason.is_some() && action != Action::ResumeWorkOrder {
+    if state.orders[id].hold_reason.is_some()
+        && !matches!(action, Action::ResumeWorkOrder | Action::CancelWorkOrder)
+    {
         return failure("WORK_ORDER_HELD");
     }
     if action == Action::AssemblyStartTest {
@@ -584,6 +603,39 @@ fn apply(
             }
             order.hold_reason = None;
             return json!({"ok":true,"work_order":id,"status":order.phase});
+        }
+        Action::CancelWorkOrder if !matches!(order.phase, Phase::Closed | Phase::Cancelled) => {
+            if !matches!(
+                order.phase,
+                Phase::Planned | Phase::Released | Phase::Dispatched
+            ) {
+                return failure("ORDER_HAS_EXECUTION");
+            }
+            let reason = args["reason"].as_str().unwrap();
+            order.phase = Phase::Cancelled;
+            order.hold_reason = None;
+            order.cancel_reason = Some(reason.into());
+            return json!({"ok":true,"work_order":id,"status":"cancelled","cancel_reason":reason});
+        }
+        Action::CompleteWorkOrder | Action::CloseWorkOrder if order.phase == Phase::Failed => {
+            return failure("QUALITY_HOLD");
+        }
+        Action::CompleteWorkOrder
+            if matches!(order.phase, Phase::Passed | Phase::Delivered)
+                && order.completion_confirmed.is_none() =>
+        {
+            order.completion_confirmed = Some(true);
+            return json!({"ok":true,"work_order":id,"status":"completed"});
+        }
+        Action::CloseWorkOrder if matches!(order.phase, Phase::Passed | Phase::Delivered) => {
+            if order.completion_confirmed.is_none() {
+                return failure("COMPLETION_REQUIRED");
+            }
+            if order.phase != Phase::Delivered {
+                return failure("DELIVERY_REQUIRED");
+            }
+            order.phase = Phase::Closed;
+            return json!({"ok":true,"work_order":id,"status":"closed"});
         }
         Action::ReleaseWorkOrder => {
             let configuration = &setup.orders[id].configuration;
