@@ -78,6 +78,12 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "production",
     ),
     (
+        Action::SetDispatchPriority,
+        "set_dispatch_priority",
+        "更新工单派工优先级",
+        "production",
+    ),
+    (
         Action::DispatchOperation,
         "dispatch_operation",
         "派工",
@@ -135,6 +141,12 @@ pub fn spec(action: Action) -> Spec {
         Action::Trace => &["subject"],
         Action::ReviseRoute => &["route_version", "idempotency_key"],
         Action::SetEquipment => &["equipment_state", "idempotency_key"],
+        Action::SetDispatchPriority => &[
+            "work_order",
+            "priority",
+            "expected_cursor",
+            "idempotency_key",
+        ],
         Action::CancelWorkOrder => &["work_order", "idempotency_key", "expected_cursor", "reason"],
         Action::CompleteWorkOrder | Action::CloseWorkOrder => {
             &["work_order", "idempotency_key", "expected_cursor"]
@@ -179,7 +191,14 @@ pub fn spec(action: Action) -> Spec {
     if let Some(equipment) = fields.get_mut("equipment_state") {
         equipment["enum"] = json!(["available", "down"]);
     }
+    if action == Action::SetDispatchPriority {
+        fields.insert(
+            "priority".into(),
+            json!({"type":"integer","minimum":0,"maximum":9}),
+        );
+    }
     if action == Action::DispatchOperation {
+        fields.insert("operation".into(), text());
         fields.insert("work_center".into(), text());
     }
     if action == Action::ReviseRoute {
@@ -325,6 +344,11 @@ pub fn spec(action: Action) -> Spec {
             "MATERIAL_HELD",
             "OPERATION_OUT_OF_SEQUENCE",
             "WORK_CENTER_MISMATCH",
+            "CELL_NOT_CAPABLE",
+            "OPERATION_NOT_DISPATCHABLE",
+            "OPERATION_NOT_FOUND",
+            "EQUIPMENT_UNAVAILABLE",
+            "VERSION_CONFLICT",
             "ROUTE_VERSION_EXISTS",
             "INVALID_STATE",
             "QUALITY_HOLD",
@@ -340,12 +364,16 @@ pub fn spec(action: Action) -> Spec {
 #[serde(deny_unknown_fields)]
 pub struct Setup {
     pub initial_stock: usize,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub strict_dispatch: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_centers: Option<[String; 3]>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
 struct Order {
+    #[serde(default, skip_serializing_if = "priority_is_default")]
+    priority: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cancel_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -360,6 +388,10 @@ struct Order {
     batch: Option<String>,
     units: Vec<String>,
     inspection: Option<String>,
+}
+
+fn priority_is_default(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Default, PartialEq, Deserialize, Serialize)]
@@ -572,12 +604,49 @@ pub fn operations(
                     .work_centers
                     .as_ref()
                     .map(|centers| centers[index].clone()),
-                priority: 0,
+                priority: order.priority,
                 due: 0,
             });
         }
     }
     Ok(rows)
+}
+
+pub fn resource_capability(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    orders: &[String],
+    center: &str,
+) -> anyhow::Result<Option<Value>> {
+    let state = load(tx, run, setup, orders)?;
+    let mut operations = Vec::new();
+    for (index, operation) in ROUTE.iter().enumerate() {
+        if state
+            .work_centers
+            .as_ref()
+            .is_some_and(|centers| centers[index] == center)
+            || state.orders.values().any(|order| {
+                order
+                    .work_centers
+                    .as_ref()
+                    .is_some_and(|centers| centers[index] == center)
+            })
+        {
+            operations.push(*operation);
+        }
+    }
+    if operations.is_empty() {
+        return Ok(None);
+    }
+    let available = !state.equipment_down
+        || operations
+            .iter()
+            .all(|operation| *operation == "inspection");
+    Ok(Some(
+        json!({"work_center":center,"operations":operations,"configurations":[],
+        "available":available,"occupied_by":null}),
+    ))
 }
 
 pub fn invoke(
@@ -751,7 +820,14 @@ pub fn invoke(
             .push(json!({"kind":"equipment_state","equipment_state":args["equipment_state"]}));
         json!({"ok":true,"equipment_down":state.equipment_down})
     } else {
-        apply(&mut state, held, action, args, cursor + 1)
+        apply(
+            &mut state,
+            held,
+            setup.strict_dispatch,
+            action,
+            args,
+            cursor + 1,
+        )
     };
     if response["ok"] != true {
         return Ok((response, false));
@@ -790,6 +866,7 @@ fn release_blocker(phase: &Phase, stock: usize, held: bool) -> Option<&'static s
 fn apply(
     state: &mut State,
     held: bool,
+    strict_dispatch: bool,
     action: Action,
     args: &Map<String, Value>,
     revision: i64,
@@ -890,11 +967,33 @@ fn apply(
                 return json!({"ok":true,"work_order":id,"status":"released","snapshot":snapshot});
             }
         }
+        Action::SetDispatchPriority
+            if matches!(
+                order.phase,
+                Phase::Planned | Phase::Ready | Phase::Dispatched
+            ) =>
+        {
+            order.priority = args["priority"].as_u64().unwrap();
+            return json!({"ok":true,"work_order":id,"priority":order.priority});
+        }
         Action::DispatchOperation if order.phase == Phase::Ready => {
             if let Some(centers) = &order.work_centers {
                 let center = &centers[order.step];
                 if args.get("work_center").and_then(Value::as_str) != Some(center) {
                     return json!({"ok":false,"code":"WORK_CENTER_MISMATCH","required_work_center":center});
+                }
+                if strict_dispatch {
+                    if held {
+                        return error("QUALITY_HOLD");
+                    }
+                    if state.equipment_down && order.step < 2 {
+                        return error("EQUIPMENT_UNAVAILABLE");
+                    }
+                    if order.step == 0
+                        && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
+                    {
+                        return error("MATERIAL_SHORTAGE");
+                    }
                 }
                 state.ledger.push(json!({"kind":"operation_dispatch","work_order":id,
                     "operation":ROUTE[order.step],"work_center":center,"route_version":order.route_version,"cursor":revision}));

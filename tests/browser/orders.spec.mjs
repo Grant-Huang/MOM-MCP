@@ -70,7 +70,7 @@ test("P8C-UI Operation detail and dispatch queue", async ({ page }) => {
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
   await button("加载场景").click();
-  await page.getByLabel("已发布场景").selectOption("cnc@10");
+  await page.getByLabel("已发布场景").selectOption("cnc@11");
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   await button("搜索工具").click();
@@ -93,4 +93,10 @@ test("P8C-UI Operation detail and dispatch queue", async ({ page }) => {
   await invoke("list_dispatch_queue", { work_center: "MACH-01" }, '"operations": []');
   await invoke("resume_work_order", { ...order, expected_cursor: held.cursor, idempotency_key: "resume" }, '"status": "ready"');
   await invoke("list_dispatch_queue", { work_center: "MACH-01" }, '"work_order": "WO-1"');
+  const capability = await invoke("get_resource_capability", { work_center: "MACH-01" }, '"available": true');
+  expect(capability.resource.operations).toEqual(["machining"]);
+  const priority = await invoke("set_dispatch_priority", { ...order, priority: 6, expected_cursor: held.cursor + 1, idempotency_key: "priority" }, '"priority": 6');
+  await invoke("dispatch_operation", { ...order, operation: "machining", work_center: "ASM-01", expected_cursor: priority.cursor, idempotency_key: "dispatch" }, "WORK_CENTER_MISMATCH");
+  await invoke("dispatch_operation", { ...order, operation: "machining", work_center: "MACH-01", expected_cursor: priority.cursor, idempotency_key: "dispatch" }, '"phase": "dispatched"');
+  await invoke("list_dispatch_queue", { work_center: "MACH-01" }, '"operations": []');
 });

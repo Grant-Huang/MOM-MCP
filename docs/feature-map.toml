@@ -449,3 +449,11 @@ spec = "acceptance/P8C.md"
 features = ["F02", "F09", "F15"]
 layers = ["playwright"]
 tests = { playwright = "P8C-UI Operation detail and dispatch queue" }
+
+[[case]]
+id = "P8C-02"
+phase = "P8C"
+spec = "acceptance/P8C.md"
+features = ["F02", "F09", "F10"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p8c_02_resource_priority_and_dispatch" }
