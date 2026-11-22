@@ -45,3 +45,16 @@ Odoo 作为第三个候选，首期仍选择两种可运行接口。Odoo 制造�
 使用 Odoo Community 19.0 镜像 `odoo@sha256:03a47921f9eef2c225ded1167fe7828465d2b3177883f30d173bb1c3c792949b` 和 PostgreSQL 16，初始化数据库并安装 `mrp`，关闭演示数据。为两个公司各配置制造仓库和一张合成工单。使用只属于首个公司的制造用户及临时 API 密钥，按工单 ID 过滤 `search_read`，读取 `id`、`name`、`state`、`company_id`、`write_date`。
 
 首个公司的工单返回一条 `draft` 记录，`company_id` 为 ID 和显示名组成的数组。相同身份按第二个公司的已知工单 ID 查询返回空数组。因此这个调用的空结果只说明在当前授权范围内无可见记录，适配层不应从中推断对象是否存在于其他公司。该证据覆盖本地接口读取和公司隔离，Observe 联调及状态生命周期映射待验证。
+
+### OpenMES 本地接口验证
+
+在 OpenMES `faccc52a543382922aa8b7d9d79b89e6a30b28d3` 上，使用 PHP 8.5.13 与 PHPUnit 11.5.56，经 Laravel HTTP 测试内核和内存 SQLite 执行真实路由、Sanctum 认证、工单查看策略与序列化。测试为单产线 Operator 创建 Bearer token，并为两条产线分别创建一个合成工单。将 [样本测试](references/mcp/openmes-adapter-sample.php) 复制到 OpenMES 的 `backend/tests/Feature/Api/AdapterSampleSmokeTest.php`，在 `backend` 下运行 `vendor/bin/phpunit tests/Feature/Api/AdapterSampleSmokeTest.php`，1 个用例、11 条断言通过。 [查看策略源码](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Policies/WorkOrderPolicy.php#L32)
+
+| 请求 | 结果 |
+|---|---|
+| 无 token 读取本产线工单 | 401 |
+| Operator 读取本产线工单 | 200，`data` 含 `id`、`order_no`、`status: PENDING` 和 UTC `updated_at` |
+| 同一 token 读取其他产线工单 | 403 |
+| 同一 token 读取不存在的 ID | 404 |
+
+Odoo 已观测到的空数组和 OpenMES 的 403／404 须分别解释。适配层应保留可公开的拒绝或不可见语义，并避免以跨范围查询推断存在性。Odoo `draft` 与 OpenMES `PENDING` 各自保留源值，需按生命周期证据评审是否可映射为同一规范状态。本次 OpenMES 证据来自应用内 HTTP 测试，站点网络、部署凭据和 AgentNexus Observe 联调仍待验证。
