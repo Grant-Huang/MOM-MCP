@@ -12,9 +12,15 @@ use crate::external_order::{BoundOrder, OrderObservation, ProjectionError, Sourc
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 
 pub enum HttpSourceKind<'a> {
-    Odoo { database: &'a str },
+    Odoo {
+        database: &'a str,
+    },
     OpenMes,
     Carbon,
+    CarbonRest {
+        company: &'a str,
+        project_key: &'a str,
+    },
 }
 
 pub struct HttpSource<'a> {
@@ -70,6 +76,16 @@ impl<'a> HttpOrderReader<'a> {
         {
             return Err(InvalidBinding);
         }
+        if let HttpSourceKind::CarbonRest {
+            company,
+            project_key,
+        } = source.kind
+            && (!valid_carbon_id(company)
+                || project_key.trim().is_empty()
+                || HeaderValue::from_str(project_key).is_err())
+        {
+            return Err(InvalidBinding);
+        }
         let client = Client::builder()
             .redirect(Policy::none())
             .timeout(Duration::from_secs(8))
@@ -94,6 +110,14 @@ impl<'a> HttpOrderReader<'a> {
                 }
                 (Source::Carbon, self.read_carbon(source_id).await?)
             }
+            HttpSourceKind::CarbonRest {
+                company,
+                project_key,
+            } => (
+                Source::Carbon,
+                self.read_carbon_rest(source_id, company, project_key)
+                    .await?,
+            ),
             HttpSourceKind::Odoo { .. } | HttpSourceKind::OpenMes => {
                 self.read_http(source_id).await?
             }
@@ -114,6 +138,47 @@ impl<'a> HttpOrderReader<'a> {
             ProjectionError::UnexpectedRecord => UnexpectedRecord,
             ProjectionError::NotVisible => NotVisible,
         })
+    }
+
+    async fn read_carbon_rest(
+        &self,
+        source_id: &str,
+        company: &str,
+        project_key: &str,
+    ) -> Result<Value, ReadError> {
+        use ReadError::*;
+        if !valid_carbon_id(source_id) {
+            return Err(InvalidBinding);
+        }
+        let response = self
+            .client
+            .get(
+                self.origin
+                    .join("/rest/v1/jobs")
+                    .map_err(|_| InvalidBinding)?,
+            )
+            .query(&[
+                ("select", "id,jobId,status,companyId"),
+                ("id", &format!("eq.{source_id}")),
+                ("companyId", &format!("eq.{company}")),
+                ("limit", "2"),
+            ])
+            .bearer_auth(self.source.token)
+            .header("apikey", project_key)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(|_| SourceUnavailable)?;
+        if response.status() != StatusCode::OK {
+            return Err(SourceUnavailable);
+        }
+        let payload = read_json(response).await?;
+        match payload.as_array().map(Vec::as_slice) {
+            Some([]) => Err(NotVisible),
+            Some([row]) if row["companyId"].as_str() == Some(company) => Ok(row.clone()),
+            Some([row]) if row["companyId"].is_string() => Err(UnexpectedRecord),
+            _ => Err(InvalidResponse),
+        }
     }
 
     async fn read_http(&self, source_id: &str) -> Result<(Source, Value), ReadError> {
@@ -147,7 +212,9 @@ impl<'a> HttpOrderReader<'a> {
                         .map_err(|_| InvalidBinding)?,
                 ),
             ),
-            HttpSourceKind::Carbon => return Err(InvalidBinding),
+            HttpSourceKind::Carbon | HttpSourceKind::CarbonRest { .. } => {
+                return Err(InvalidBinding);
+            }
         };
         let response = request
             .bearer_auth(self.source.token)
@@ -164,6 +231,13 @@ impl<'a> HttpOrderReader<'a> {
         }
         Ok((source, read_json(response).await?))
     }
+}
+
+fn valid_carbon_id(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 async fn read_json(mut response: Response) -> Result<Value, ReadError> {

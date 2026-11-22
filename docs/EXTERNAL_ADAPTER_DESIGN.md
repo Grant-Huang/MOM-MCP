@@ -185,3 +185,13 @@ MOM-MCP 侧已用 `cargo test --locked --test external_observe one_observe_entry
 ### 跨仓 crate 边界
 
 `mom-external-adapter` 提供工单投影、Odoo／OpenMES／Carbon 传输和 `ExternalObserve`，宿主可单独依赖此 crate。MOM-MCP 保留同名模块导出供已有调用方使用。模拟器 SQLite 依赖留在 `mom-mcp`，因此宿主可继续使用自己的 SQLite 版本。
+
+### Carbon 社区版 REST 读取
+
+选定第二条 Carbon 传输 `carbon-rest`。社区版应用的 `getJob` 使用调用者的 Supabase 客户端按 ID 读取 `jobs`。固定版本 `05bd067c0a72ca9f0983f6278d2a7c9bb48b716c` 的 `jobs` 以 `SECURITY_INVOKER` 执行，`job` 的 SELECT 策略按员工可访问的公司过滤。API 连接使用自托管 Supabase 网关根地址、普通用户的短期访问令牌和 Supabase 公开项目键。为联调配置单公司读身份。 [应用查询源码](https://github.com/crbnos/carbon/blob/05bd067/apps/erp/app/modules/production/production.service.ts#L1436) · [视图定义](https://github.com/crbnos/carbon/blob/05bd067/packages/database/supabase/migrations/20261006220401_fleet-bridge.sql#L207) · [工单读取策略](https://github.com/crbnos/carbon/blob/05bd067/packages/database/supabase/migrations/20260228000000_rls-refactor-3.sql#L859)
+
+`GET /rest/v1/jobs` 只选择 `id,jobId,status,companyId`，按绑定公司和工单 ID 精确过滤，读取上限为两条。适配器逐条核对公司及记录 ID。空数组返回不可见，多条或错配中止读取，HTTP 失败按来源故障处理。观察结果沿用 Carbon 工单本体的原始状态。原生 MCP 可选用 `carbon` 传输，社区版路径使用自己的 Observe 绑定。
+
+通过环境提供 `MOM_SAMPLE_TOKEN`、`MOM_CARBON_COMPANY` 和 `MOM_CARBON_PROJECT_KEY`，执行 `cargo run --locked --example external_order_smoke -- carbon-rest SUPABASE_ORIGIN VISIBLE_ID OTHER_COMPANY_ID EXPECTED_SOURCE_STATUS`。由测试管理员预先确认两条工单均存在。公司隔离取证时，以同一用户会话在源端按另一公司工单 ID 读取一次，查询省略公司过滤，确认源端返回空数组。
+
+本地验证使用 PostgreSQL 16、PostgREST 12.2.12、上游 `jobs` 视图、`job` SELECT 策略及员工公司解析函数。隔离夹具只建立所需表列，以合成用户 JWT 执行查询，并以回环 HTTP 转发提供 Supabase 路径和项目键检查。已复核源端 RLS、Rust 读取，以及 AgentNexus Observe 的范围内 200 和跨公司 404。完整 Carbon 自托管部署、真实 Supabase 登录与生产站点签收仍待取证。
