@@ -1,0 +1,131 @@
+schema_version = 1
+repository = "Grant-Huang/MOM-MCP"
+audit_candidate_sha = "6a5dadd69593503846c28854e8c1b061cb084376"
+audit_default_branch = "master"
+audit_default_sha = "94ca6c8ff0f01ae91b1a7fef971a9e3f406e5b54"
+
+[[guardrail]]
+id = "MOM-L1-001"
+layer = "L1"
+objective = "需求授权和验收追踪"
+risk_trigger = ["新增或变更业务行为"]
+enforcement = "拟试点，按计划核验后再登记强制证据"
+schedule = ["pr", "milestone"]
+owner_role = "开发与产品负责人"
+owner_assignment = "pending"
+status = "proposed"
+evidence_level = "IMPLEMENTED"
+evidence_refs = ["FEATURES.md"]
+last_verified = "not_recorded"
+positive_test = "关联特性与行为断言"
+negative_test = "新增行为缺有效授权来源"
+exception_policy = "记录关联事项、原因、责任人、批准人、缓解措施和到期日；关键失败即时升级"
+review_due = "G1 结束时复核；完成责任分配后填日期"
+
+[[guardrail]]
+id = "MOM-L2-001"
+layer = "L2"
+objective = "共享 MCP 契约与兼容"
+risk_trigger = ["公共 schema、状态或事务变化"]
+enforcement = "拟试点，按计划核验后再登记强制证据"
+schedule = ["pr", "milestone"]
+owner_role = "架构与模块负责人"
+owner_assignment = "pending"
+status = "proposed"
+evidence_level = "IMPLEMENTED"
+evidence_refs = ["acceptance/P8B.md"]
+last_verified = "not_recorded"
+positive_test = "同一预检契约跨工艺复用"
+negative_test = "预检写入或允许绕过下达前置条件"
+exception_policy = "记录关联事项、原因、责任人、批准人、缓解措施和到期日；关键失败即时升级"
+review_due = "G1 结束时复核；完成责任分配后填日期"
+
+[[guardrail]]
+id = "MOM-L3-001"
+layer = "L3"
+objective = "执行身份及控制面隔离"
+risk_trigger = ["工具权限、凭据或边界变化"]
+enforcement = "拟试点，按计划核验后再登记强制证据"
+schedule = ["pr", "milestone"]
+owner_role = "平台与安全负责人"
+owner_assignment = "pending"
+status = "proposed"
+evidence_level = "NOT_VERIFIED"
+evidence_refs = ["acceptance/P8.md"]
+last_verified = "not_recorded"
+positive_test = "公开会话可调用授权业务工具"
+negative_test = "公开会话直呼受信控制工具被拒绝"
+exception_policy = "记录关联事项、原因、责任人、批准人、缓解措施和到期日；关键失败即时升级"
+review_due = "G1 结束时复核；完成责任分配后填日期"
+
+[[guardrail]]
+id = "MOM-L4-001"
+layer = "L4"
+objective = "可复验的 feature map 门槛"
+risk_trigger = ["代码、映射或验证器变更"]
+enforcement = "拟试点，按计划核验后再登记强制证据"
+schedule = ["pr", "milestone"]
+owner_role = "QA 与 CI 维护人"
+owner_assignment = "pending"
+status = "proposed"
+evidence_level = "IMPLEMENTED"
+evidence_refs = ["feature-map.toml"]
+last_verified = "not_recorded"
+positive_test = "有效映射与真实通过结果"
+negative_test = "坏引用、未运行或跳过的必检用例"
+exception_policy = "记录关联事项、原因、责任人、批准人、缓解措施和到期日；关键失败即时升级"
+review_due = "G1 结束时复核；完成责任分配后填日期"
+
+[[guardrail]]
+id = "MOM-L5-001"
+layer = "L5"
+objective = "独立语义审查与复核"
+risk_trigger = ["R2/R3 公共契约或高后果变更"]
+enforcement = "拟试点，按计划核验后再登记强制证据"
+schedule = ["pr", "milestone"]
+owner_role = "独立 Reviewer 与 QA"
+owner_assignment = "pending"
+status = "proposed"
+evidence_level = "NOT_VERIFIED"
+evidence_refs = ["governance/GUARDRAIL_ADOPTION_PLAN.md"]
+last_verified = "not_recorded"
+positive_test = "可复现的正确状态转换获确认"
+negative_test = "发现伪通过并用独立上下文复核"
+exception_policy = "记录关联事项、原因、责任人、批准人、缓解措施和到期日；关键失败即时升级"
+review_due = "G1 结束时复核；完成责任分配后填日期"
+
+[[guardrail]]
+id = "MOM-L6-001"
+layer = "L6"
+objective = "合并与发布审批"
+risk_trigger = ["保护规则、权限、共享契约或高风险发布"]
+enforcement = "拟试点，按计划核验后再登记强制证据"
+schedule = ["pr", "milestone"]
+owner_role = "仓库管理员与模块 Owner"
+owner_assignment = "pending"
+status = "proposed"
+evidence_level = "NOT_VERIFIED"
+evidence_refs = ["governance/GUARDRAIL_ADOPTION_PLAN.md"]
+last_verified = "not_recorded"
+positive_test = "授权审批与可信检查满足后可合并"
+negative_test = "必检失败或无审批时平台拒绝合并"
+exception_policy = "记录关联事项、原因、责任人、批准人、缓解措施和到期日；关键失败即时升级"
+review_due = "G1 结束时复核；完成责任分配后填日期"
+
+[[guardrail]]
+id = "MOM-L7-001"
+layer = "L7"
+objective = "发布版本与恢复证据"
+risk_trigger = ["里程碑、迁移或版本发布"]
+enforcement = "拟试点，按计划核验后再登记强制证据"
+schedule = ["milestone", "weekly"]
+owner_role = "发布负责人"
+owner_assignment = "pending"
+status = "proposed"
+evidence_level = "IMPLEMENTED"
+evidence_refs = ["RELEASE.md"]
+last_verified = "not_recorded"
+positive_test = "候选版本及数据库备份可恢复"
+negative_test = "缺少恢复证据时按准出规则标记阻塞"
+exception_policy = "记录关联事项、原因、责任人、批准人、缓解措施和到期日；关键失败即时升级"
+review_due = "G1 结束时复核；完成责任分配后填日期"
