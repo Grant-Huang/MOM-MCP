@@ -556,6 +556,8 @@ pub fn spec(action: Action) -> Spec {
 pub struct Setup {
     pub initial_stock: usize,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub equipment_events: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub strict_dispatch: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub alternate_centers: BTreeMap<String, Vec<String>>,
@@ -631,6 +633,10 @@ struct State {
     receipt_cursor: Option<usize>,
     #[serde(default)]
     equipment_down: bool,
+    #[serde(default)]
+    equipment_event_cursor: usize,
+    #[serde(default)]
+    maintenance_pending: bool,
 }
 
 impl State {
@@ -648,6 +654,8 @@ impl State {
             ledger: vec![],
             receipt_cursor: None,
             equipment_down: false,
+            equipment_event_cursor: 0,
+            maintenance_pending: false,
         }
     }
 }
@@ -705,6 +713,63 @@ pub fn project_receipts(
         )?;
     }
     Ok(())
+}
+
+pub fn project_equipment(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    orders: &[String],
+    events: &[mom_des::Event],
+) -> anyhow::Result<()> {
+    if !setup.equipment_events {
+        return Ok(());
+    }
+    let mut state = load(tx, run, setup, orders)?;
+    let after = state.equipment_event_cursor;
+    let mut updates = 0;
+    for event in events
+        .iter()
+        .filter(|event| event.cursor > after && event.payload["asset"] == "CNC-1")
+    {
+        match event.kind.as_str() {
+            "cnc_equipment_stopped" => state.equipment_down = true,
+            "cnc_repair_completed" => {
+                state.equipment_down = false;
+                state.maintenance_pending = false;
+            }
+            _ => continue,
+        }
+        state.equipment_event_cursor = event.cursor;
+        state.ledger.push(json!({"kind":event.kind,"asset":"CNC-1","event_cursor":event.cursor,"minute":event.minute}));
+        updates += 1;
+    }
+    if updates > 0 {
+        store(tx, run, &state)?;
+        tx.execute(
+            "UPDATE scenario_runs SET cursor=cursor+?2 WHERE id=?1",
+            params![run, updates],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn request_maintenance(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    orders: &[String],
+) -> anyhow::Result<Result<(), &'static str>> {
+    let mut state = load(tx, run, setup, orders)?;
+    if !state.equipment_down {
+        return Ok(Err("INVALID_STATE"));
+    }
+    if state.maintenance_pending {
+        return Ok(Err("MAINTENANCE_PENDING"));
+    }
+    state.maintenance_pending = true;
+    store(tx, run, &state)?;
+    Ok(Ok(()))
 }
 
 fn error(code: &str) -> Value {
@@ -960,7 +1025,11 @@ pub fn invoke(
             Some("QUALITY_HOLD")
         } else if order.phase == Phase::Planned && state.stock < QUANTITY {
             Some("MATERIAL_SHORTAGE")
-        } else if state.equipment_down && order.phase == Phase::Dispatched {
+        } else if state.equipment_down
+            && (order.phase == Phase::Dispatched
+                || (setup.equipment_events
+                    && matches!(order.phase, Phase::Running | Phase::Paused)))
+        {
             Some("EQUIPMENT_UNAVAILABLE")
         } else {
             None
@@ -988,6 +1057,10 @@ pub fn invoke(
                     }
                     actions
                 }
+                Phase::Running if setup.equipment_events && state.equipment_down => {
+                    vec!["pause_operation"]
+                }
+                Phase::Paused if setup.equipment_events && state.equipment_down => vec![],
                 Phase::Paused => vec!["resume_operation"],
                 Phase::Running
                     if !held && reported_quantity(&state.reports, id, order.step) == QUANTITY =>
@@ -1361,6 +1434,9 @@ fn apply(
             order.phase = Phase::Running;
         }
         Action::ReportOperation | Action::PostOperationReport if order.phase == Phase::Running => {
+            if setup.equipment_events && state.equipment_down {
+                return error("EQUIPMENT_UNAVAILABLE");
+            }
             if held {
                 return error("MATERIAL_HELD");
             }
@@ -1415,6 +1491,9 @@ fn apply(
             return response;
         }
         Action::CompleteOperation if order.phase == Phase::Running => {
+            if setup.equipment_events && state.equipment_down {
+                return error("EQUIPMENT_UNAVAILABLE");
+            }
             if held {
                 return error("MATERIAL_HELD");
             }

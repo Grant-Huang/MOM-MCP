@@ -3203,3 +3203,140 @@ async fn p8c_06_assembly_actuals_and_test_dependency() {
         assert_eq!(op("reverse_operation_report","late",reverse(&corrected["report"]["id"],9)).await["code"],"REPORT_HAS_DEPENDENCIES");
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8c_07_des_stop_repair_and_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (public, _public_child) = connect_mode(&db, "0", true).await;
+    let (control, _control_child) = connect_options(&db, "0", true, true).await;
+    timeout(WAIT, async {
+        let opened = call(
+            &public,
+            "open_scenario",
+            json!({"scenario_id":"cnc","version":15}),
+        )
+        .await;
+        assert_eq!(opened["ok"], true, "{opened}");
+        let run = &opened["run_id"];
+        let op =
+            async |name: &str, key: &str, args| mes(&public, run, name, "WO-1", key, args).await;
+        assert_eq!(
+            op(
+                "release_work_order",
+                "release",
+                json!({"expected_cursor":0})
+            )
+            .await["ok"],
+            true
+        );
+        assert_eq!(
+            op(
+                "dispatch_operation",
+                "dispatch",
+                json!({"operation":"machining","work_center":"MACH-01","expected_cursor":1})
+            )
+            .await["ok"],
+            true
+        );
+        assert_eq!(
+            op("issue_material", "issue", json!({"batch":"LOT-1"})).await["ok"],
+            true
+        );
+        assert_eq!(
+            op(
+                "start_operation",
+                "start",
+                json!({"operation":"machining","expected_cursor":3})
+            )
+            .await["ok"],
+            true
+        );
+        advance(&control, run, 3).await;
+        let events = call(&public, "read_events", json!({"run_id":run})).await;
+        assert!(
+            events["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|event| event["kind"] == "cnc_equipment_stopped")
+        );
+        let before = mes_status(&public, run).await;
+        assert_eq!(before["blocking"], "EQUIPMENT_UNAVAILABLE");
+        assert_eq!(before["cursor"], 5);
+        assert_eq!(
+            op(
+                "post_operation_report",
+                "report",
+                json!({"operation":"machining","quantity":1,"expected_cursor":5})
+            )
+            .await["code"],
+            "EQUIPMENT_UNAVAILABLE"
+        );
+        assert_eq!(
+            op(
+                "pause_operation",
+                "pause",
+                json!({"operation":"machining","reason":"equipment stopped","expected_cursor":5})
+            )
+            .await["ok"],
+            true
+        );
+        let maintenance =
+            |cursor, key| json!({"asset":"CNC-1","expected_cursor":cursor,"idempotency_key":key});
+        let receipt = business(
+            &public,
+            run,
+            "request_maintenance",
+            maintenance(6, "repair"),
+        )
+        .await;
+        assert_eq!(receipt["status"], "maintenance_requested", "{receipt}");
+        assert_eq!(
+            business(
+                &public,
+                run,
+                "request_maintenance",
+                maintenance(6, "repair")
+            )
+            .await,
+            receipt
+        );
+        assert_eq!(
+            business(
+                &public,
+                run,
+                "request_maintenance",
+                maintenance(7, "duplicate")
+            )
+            .await["code"],
+            "MAINTENANCE_PENDING"
+        );
+        let resume = |cursor| json!({"operation":"machining","expected_cursor":cursor});
+        assert_eq!(
+            op("resume_operation", "resume", resume(7)).await["code"],
+            "EQUIPMENT_UNAVAILABLE"
+        );
+        advance(&control, run, 2).await;
+        let recovered = mes_status(&public, run).await;
+        assert_eq!(recovered["equipment_down"], false);
+        assert_eq!(recovered["cursor"], 8);
+        assert_eq!(
+            op("resume_operation", "resume", resume(8)).await["ok"],
+            true
+        );
+        assert_eq!(
+            op(
+                "post_operation_report",
+                "report",
+                json!({"operation":"machining","quantity":1,"expected_cursor":9})
+            )
+            .await["remaining"],
+            9
+        );
+        let replay = call(&control, "inspect_run", json!({"run_id":run})).await;
+        assert_eq!(replay["replay_verified"], true, "{replay}");
+    })
+    .await
+    .unwrap();
+}
