@@ -881,20 +881,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "mom-external-observe"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mom-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "chrono",
  "clap",
  "mom-des",
+ "mom-external-observe",
  "mom-model-assembly",
  "mom-model-cnc",
  "mom-model-fabrication",
  "mom-model-fixture",
  "mom-model-smt",
- "reqwest",
  "rmcp",
  "rusqlite",
  "serde",
