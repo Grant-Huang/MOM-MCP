@@ -2,3 +2,5 @@
 pub mod external_order;
 
 pub mod external_http;
+
+pub mod external_observe;
