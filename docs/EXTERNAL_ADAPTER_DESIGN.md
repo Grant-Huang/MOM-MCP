@@ -128,3 +128,11 @@ Carbon 上游 MCP 路由要求 Business 权益，默认 ERP 镜像下载也返�
 | OpenMES | 在固定版本运行 [样本测试](references/mcp/openmes-adapter-sample.php)，用 Laravel HTTP 内核读取 `PENDING`，执行接受后再读取 `ACCEPTED`。与访问范围用例合计 2 项测试和 16 条断言通过。 | 接受接口校验授权与前置状态，并持久化状态转换。尚无与 Odoo 库存或工序副作用等价的证据。 [接受实现](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Http/Controllers/Api/V1/WorkOrderController.php#L136) |
 
 两套试验用本地合成数据准备读取样本。公开适配器的首期能力仍为只读。候选契约保留上述四个源值，规范状态在取得等价证据前保持为空。`progress` 与 `IN_PROGRESS` 仍待运行证据和联审确认。
+
+### Rust HTTP 读取试实现
+
+Odoo JSON-2 和 OpenMES HTTP 已接入 Rust 工单投影。调用方从可信配置创建一个绑定到租户、站点及源实例的读取器，向其提交已经授权的源工单 ID。读取器发出固定查询，校验返回对象与 ID 匹配，再返回内部观测。读取器无模拟回退分支。宿主仍负责生产绑定解析、调用方授权、来源实例选择和公开错误转换。
+
+端点配置为 HTTPS 来源根地址，回环 HTTP 仅用于本地联调。读取器不跟随重定向，单次请求设有时限及响应大小上限。Odoo 成功空数组与 OpenMES 403／404 返回不可见；OpenMES 401、上游故障和异常传输返回来源不可用。源响应正文和凭据不进入错误结果。
+
+运行 `cargo test --locked --test external_http` 复跑。测试使用本地回环 HTTP 服务验证请求方式、标头、查询条件、成功投影和失败分类。此前 Odoo 与 OpenMES 的真实应用样本用于确定接口形状。本切片的 Rust 客户端仍待两套实际应用联调，Carbon MCP 传输及 AgentNexus Observe 另行验收。
