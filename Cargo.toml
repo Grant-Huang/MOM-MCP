@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/des", "crates/model-cnc", "crates/model-fixture", "crates/model-smt", "crates/model-assembly", "crates/model-fabrication"]
+members = [".", "crates/des", "crates/model-cnc", "crates/model-fixture", "crates/model-smt", "crates/model-assembly", "crates/model-fabrication", "crates/external-observe"]
 resolver = "3"
 
 [package]
@@ -15,12 +15,11 @@ mom-model-fixture = { path = "crates/model-fixture" }
 mom-model-smt = { path = "crates/model-smt" }
 mom-model-assembly = { path = "crates/model-assembly" }
 mom-model-fabrication = { path = "crates/model-fabrication" }
+mom-external-observe = { path = "crates/external-observe" }
 anyhow = "1"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
-chrono = { version = "0.4", default-features = false, features = ["std"] }
 rmcp = { version = "=3.10.0", default-features = false, features = ["server", "client", "transport-io", "transport-child-process"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

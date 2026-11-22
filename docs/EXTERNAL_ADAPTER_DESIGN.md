@@ -179,3 +179,11 @@ Observe 候选结果保留不透明引用、来源别名、观测时点、显示
 首个跨仓验收应使用真实宿主身份入口检查合法读取、未认证、跨世界、撤权及已绑定来源失败。通过计数和脱敏报告证明拒绝请求对来源零访问，断言失效来源零回退。对 Odoo、OpenMES、Carbon 重复相同读取意图。跨仓改动进入 AgentNexus 的公开接口及权限评审流程后再实施。
 
 MOM-MCP 侧已用 `cargo test --locked --test external_observe one_observe_entry_reads_three_authorized_worlds` 验证同一宿主 API 经受权解析回调调通三种回环协议。三个世界使用相同不透明引用和显示号，各自读回正确来源与原始状态。测试身份和数据均为夹具。这组证据覆盖宿主 API 串联，实际 AgentNexus 入口、授权实例和站点验收单独取证。
+
+### 跨仓依赖与受信身份切片
+
+项目方已确认 M3 首期通过受信服务身份接入。AgentNexus 集成应固定到 MOM-MCP 提交中的 `mom-external-observe` crate。该 crate 提供三类读取器、统一工单投影及逐次授权接线。根包保留原导出供现有 MOM-MCP 调用者使用。
+
+AgentNexus `8debd3e` 使用 rusqlite 0.43，MOM-MCP 服务使用 0.38。直接依赖 MOM-MCP 根包会在 Cargo 解析时冲突，因为两个版本链接同一个 SQLite 原生库。独立 crate 只依赖 HTTP、序列化和时间库，宿主可保留原数据库依赖。本次通过复现根包冲突与独立宿主消费验证该边界。
+
+后续 AgentNexus 切片仍需接入可信身份校验、服务端绑定和公开 Observe DTO，验收匿名、过期、撤权及跨世界请求零访问。公开路由和部署配置由 AgentNexus 交付，以实际源与宿主验收为准。
