@@ -1,0 +1,28 @@
+name: PR risk advisory
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  risk-advisory:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Record candidate risk
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node --test scripts/pr-risk.test.mjs
+          node scripts/pr-risk.mjs "$BASE_SHA" "$HEAD_SHA" > pr-risk.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-risk
+          path: pr-risk.json
