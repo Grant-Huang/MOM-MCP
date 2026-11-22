@@ -497,3 +497,19 @@ spec = "acceptance/P8C.md"
 features = ["F01", "F05", "F06", "F09", "F12"]
 layers = ["rust-integration", "agentnexus", "playwright"]
 tests = { rust-integration = "p8c_07_des_stop_repair_and_replay", agentnexus = "p8c_agentnexus_cnc_des_recovery", playwright = "P8C-07 DES equipment stop and maintenance recovery" }
+
+[[case]]
+id = "P8D-01"
+phase = "P8D"
+spec = "acceptance/P8D.md"
+features = ["F08", "F09", "F10"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p8d_01_public_inspection_registry" }
+
+[[case]]
+id = "P8D-UI"
+phase = "P8D"
+spec = "acceptance/P8D.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P8D-UI Public inspection registry" }

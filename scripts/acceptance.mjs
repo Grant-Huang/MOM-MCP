@@ -6,11 +6,11 @@ import { parse } from "smol-toml";
 import { validateTrace, requireBrowserEvidence } from "./acceptance-trace.mjs";
 
 const args = process.argv.slice(2);
-const stages = [...Array.from({ length: 9 }, (_, number) => `P${number}`), "P8B", "P8C"];
+const stages = [...Array.from({ length: 9 }, (_, number) => `P${number}`), "P8B", "P8C", "P8D"];
 const phase = args.find((arg) => stages.includes(arg)) ?? "P0";
 const gate = args.includes("--gate");
 if (args.some((arg) => arg !== phase && arg !== "--gate")) {
-  throw new Error("Usage: npm run acceptance -- [P0..P8|P8B|P8C] [--gate]");
+  throw new Error("Usage: npm run acceptance -- [P0..P8|P8B|P8C|P8D] [--gate]");
 }
 const read = (path) => readFileSync(path, "utf8");
 const map = parse(read("docs/feature-map.toml")).case;

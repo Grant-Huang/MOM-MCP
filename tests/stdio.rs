@@ -3340,3 +3340,145 @@ async fn p8c_07_des_stop_repair_and_replay() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn p8d_01_public_inspection_registry() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("quality.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        for (scenario, version, order) in [("cnc", 16, "WO-1"), ("assembly", 15, "WO-E")] {
+            let open_run = async |version| {
+                let response = call(
+                    &client,
+                    "open_scenario",
+                    json!({"scenario_id":scenario,"version":version}),
+                )
+                .await;
+                assert_eq!(response["ok"], true, "{response}");
+                response["run_id"].clone()
+            };
+            let run = open_run(version).await;
+            let discovered = call(
+                &client,
+                "search_tools",
+                json!({"run_id":run,"query":"inspection"}),
+            )
+            .await;
+            for name in ["create_inspection", "list_inspections", "get_inspection"] {
+                assert!(
+                    discovered["tools"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|tool| tool["name"] == name),
+                    "{discovered}"
+                );
+                let described =
+                    call(&client, "describe_tool", json!({"run_id":run,"name":name})).await;
+                assert_eq!(described["tool"]["domain"], "quality", "{described}");
+            }
+            let create = async |id: &str, key: &str, expected, work_order: &str| {
+                business(
+                    &client,
+                    &run,
+                    "create_inspection",
+                    json!({"inspection_id":id,
+                    "work_order":work_order,"specification_version":"QA-DIM@2",
+                    "idempotency_key":key,"expected_cursor":expected}),
+                )
+                .await
+            };
+            assert_eq!(
+                create("QC-1", "create", 0, "missing").await["code"],
+                "WORK_ORDER_NOT_FOUND"
+            );
+            let (peer, _peer_child) = connect_mode(&db, "0", true).await;
+            let (first, concurrent) = tokio::join!(
+                create("QC-1", "create", 0, order),
+                business(
+                    &peer,
+                    &run,
+                    "create_inspection",
+                    json!({"inspection_id":"QC-1",
+                    "work_order":order,"specification_version":"QA-DIM@2",
+                    "idempotency_key":"create","expected_cursor":0})
+                ),
+            );
+            assert_eq!(first["cursor"], 1, "{first}");
+            assert_eq!(first, concurrent);
+            assert_eq!(
+                first["inspection"],
+                json!({"inspection_id":"QC-1","work_order":order,
+                "specification_version":"QA-DIM@2","status":"pending"})
+            );
+            assert_eq!(create("QC-1", "create", 0, order).await, first);
+            assert_eq!(
+                create("QC-2", "create", 1, order).await["code"],
+                "IDEMPOTENCY_CONFLICT"
+            );
+            assert_eq!(
+                create("QC-2", "create-2", 0, order).await["code"],
+                "VERSION_CONFLICT"
+            );
+            assert_eq!(
+                create("QC-1", "duplicate", 1, order).await["code"],
+                "INSPECTION_ALREADY_EXISTS"
+            );
+            assert_eq!(create("QC-2", "create-2", 1, order).await["cursor"], 2);
+            let page = business(
+                &client,
+                &run,
+                "list_inspections",
+                json!({"work_order":order,"limit":1}),
+            )
+            .await;
+            assert_eq!(page["inspections"], json!([first["inspection"]]));
+            assert_eq!(page["next_after_inspection_id"], "QC-1");
+            let next = business(
+                &client,
+                &run,
+                "list_inspections",
+                json!({"limit":1,"after_inspection_id":page["next_after_inspection_id"]}),
+            )
+            .await;
+            assert_eq!(next["inspections"][0]["inspection_id"], "QC-2");
+            assert!(next["next_after_inspection_id"].is_null());
+
+            let (reconnected, _child) = connect_mode(&db, "0", true).await;
+            let get = json!({"inspection_id":"QC-1"});
+            let saved = business(&reconnected, &run, "get_inspection", get.clone()).await;
+            assert_eq!(saved["inspection"], first["inspection"]);
+            assert_eq!(
+                business(
+                    &reconnected,
+                    &run,
+                    "get_command_result",
+                    json!({"idempotency_key":"create"})
+                )
+                .await["receipt"],
+                first
+            );
+            assert_eq!(
+                call(&client, "get_run", json!({"run_id":run})).await["cursor"],
+                2
+            );
+            let isolated = open_run(version).await;
+            assert_eq!(
+                business(&client, &isolated, "get_inspection", get.clone()).await["code"],
+                "INSPECTION_NOT_FOUND"
+            );
+            assert_eq!(
+                business(&client, &isolated, "list_inspections", json!({})).await["inspections"],
+                json!([])
+            );
+            let previous = open_run(version - 1).await;
+            assert_eq!(
+                business(&client, &previous, "get_inspection", get).await["code"],
+                "TOOL_UNAVAILABLE"
+            );
+        }
+    })
+    .await
+    .unwrap();
+}

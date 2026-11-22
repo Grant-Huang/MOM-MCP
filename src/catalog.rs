@@ -7,6 +7,9 @@ use crate::scenario::Rejection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    CreateInspection,
+    ListInspections,
+    GetInspection,
     GetWorkOrder,
     ListWorkOrders,
     ListOperations,
@@ -132,6 +135,9 @@ pub(crate) fn text() -> Value {
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
+            Self::CreateInspection,
+            Self::ListInspections,
+            Self::GetInspection,
             Self::GetWorkOrder,
             Self::ListWorkOrders,
             Self::GetCommandResult,
@@ -161,6 +167,9 @@ impl Action {
 
     fn name(self) -> &'static str {
         match self {
+            Self::CreateInspection => "create_inspection",
+            Self::ListInspections => "list_inspections",
+            Self::GetInspection => "get_inspection",
             Self::GetWorkOrder => "get_work_order",
             Self::ListWorkOrders => "list_work_orders",
             Self::GetCommandResult => "get_command_result",
@@ -204,6 +213,9 @@ impl Action {
             Self::ListOperations | Self::GetOperation | Self::ListDispatchQueue => {
                 &["工序", "派工", "operation", "dispatch", "queue"]
             }
+            Self::CreateInspection | Self::ListInspections | Self::GetInspection => {
+                &["检验", "质量", "inspection", "quality"]
+            }
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
             Self::HoldMaterial => &[
                 "质量冻结",
@@ -219,6 +231,71 @@ impl Action {
 
     pub fn spec(self) -> Spec {
         let (description, domain, effect, input, fields, side_effect, errors) = match self {
+            Self::CreateInspection | Self::ListInspections | Self::GetInspection => {
+                let inspection_id = json!({"type":"string","minLength":1,"maxLength":64,
+                    "pattern":"^[A-Za-z0-9_-]+$"});
+                let row = object(
+                    &[
+                        "inspection_id",
+                        "work_order",
+                        "specification_version",
+                        "status",
+                    ],
+                    json!({"inspection_id":inspection_id,"work_order":text(),"specification_version":text(),
+                        "status":{"const":"pending"}}),
+                );
+                let cursor = json!({"type":"integer","minimum":0,"maximum":i64::MAX});
+                match self {
+                    Self::CreateInspection => (
+                        "按工单与规格版本建立检验单",
+                        "quality",
+                        "write",
+                        object(
+                            &[
+                                "inspection_id",
+                                "work_order",
+                                "specification_version",
+                                "expected_cursor",
+                                "idempotency_key",
+                            ],
+                            json!({"inspection_id":inspection_id,"work_order":text(),"specification_version":text(),
+                                "expected_cursor":cursor,"idempotency_key":text()}),
+                        ),
+                        json!({"inspection":row,"cursor":cursor}),
+                        "create_inspection",
+                        &[
+                            "INVALID_ARGUMENT",
+                            "WORK_ORDER_NOT_FOUND",
+                            "INSPECTION_ALREADY_EXISTS",
+                            "VERSION_CONFLICT",
+                            "IDEMPOTENCY_CONFLICT",
+                        ][..],
+                    ),
+                    Self::ListInspections => (
+                        "按检验单编号分页查询，可按工单筛选",
+                        "quality",
+                        "read",
+                        object(
+                            &[],
+                            json!({"work_order":text(),"after_inspection_id":inspection_id,
+                            "limit":{"type":"integer","minimum":1,"maximum":100}}),
+                        ),
+                        json!({"inspections":{"type":"array","items":row},
+                            "next_after_inspection_id":{"type":["null","string"]}}),
+                        "none",
+                        &["INVALID_ARGUMENT", "WORK_ORDER_NOT_FOUND"][..],
+                    ),
+                    _ => (
+                        "按编号查询检验单",
+                        "quality",
+                        "read",
+                        object(&["inspection_id"], json!({"inspection_id":inspection_id})),
+                        json!({"inspection":row}),
+                        "none",
+                        &["INVALID_ARGUMENT", "INSPECTION_NOT_FOUND"][..],
+                    ),
+                }
+            }
             Self::GetWorkOrder => (
                 "查询工单",
                 "production",
