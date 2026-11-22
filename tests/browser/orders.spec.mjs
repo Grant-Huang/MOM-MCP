@@ -29,14 +29,17 @@ test("P8B-UI Public order discovery and readiness", async ({ page }) => {
 
   await button("关闭运行").click();
   await expect(status).toContainText('"closed": true');
-  await page.getByLabel("已发布场景").selectOption("assembly-shortage@3");
+  await page.getByLabel("已发布场景").selectOption("assembly-shortage@4");
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   await button("搜索工具").click();
   await invoke("get_release_readiness", { work_order: "WO-E" }, "MATERIAL_SHORTAGE");
   await invoke("assembly_substitute", { work_order: "WO-E", part: "DRIVE-ALT", idempotency_key: "substitute" }, "QA-DRIVE-017");
   const assembly = await invoke("get_release_readiness", { work_order: "WO-E" }, '"ready": true');
-  await invoke("release_work_order", { work_order: "WO-E", idempotency_key: "release", expected_cursor: assembly.cursor }, '"status": "released"');
+  const batch = { work_orders: ["WO-E", "WO-L", "WO-E"], idempotency_key: "batch", expected_cursor: assembly.cursor };
+  const receipt = await invoke("release_work_orders", batch, "DUPLICATE_WORK_ORDER");
+  expect(receipt.results.map((item) => item.status ?? item.code)).toEqual(["released", "MATERIAL_SHORTAGE", "DUPLICATE_WORK_ORDER"]);
+  expect(await invoke("release_work_orders", batch, "DUPLICATE_WORK_ORDER")).toEqual(receipt);
   await invoke("assembly_dispatch", { work_order: "WO-E", cell: "CELL-A", idempotency_key: "dispatch" }, '"ok": true');
   await invoke("get_release_readiness", { work_order: "WO-E" }, "INVALID_STATE");
 });
