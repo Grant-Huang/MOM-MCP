@@ -18,6 +18,12 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "production",
     ),
     (
+        Action::GetReleaseReadiness,
+        "get_release_readiness",
+        "预检工单下达条件与阻塞原因",
+        "production",
+    ),
+    (
         Action::ReleaseOrder,
         "release_order",
         "下达工单并冻结工艺版本",
@@ -89,7 +95,7 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
 pub fn spec(action: Action) -> Spec {
     let &(_, name, description, domain) = TOOLS.iter().find(|entry| entry.0 == action).unwrap();
     let required: &[&str] = match action {
-        Action::MesStatus => &["work_order"],
+        Action::MesStatus | Action::GetReleaseReadiness => &["work_order"],
         Action::Trace => &["subject"],
         Action::ReviseRoute => &["route_version", "idempotency_key"],
         Action::SetEquipment => &["equipment_state", "idempotency_key"],
@@ -122,15 +128,47 @@ pub fn spec(action: Action) -> Spec {
             rule["enum"] = json!(values);
         }
     }
-    let read = matches!(action, Action::MesStatus | Action::Trace);
+    let read = matches!(
+        action,
+        Action::MesStatus | Action::Trace | Action::GetReleaseReadiness
+    );
     if let Some(equipment) = fields.get_mut("equipment_state") {
         equipment["enum"] = json!(["available", "down"]);
+    }
+    if action == Action::ReportOperation {
+        fields.insert(
+            "quantity".into(),
+            json!({"type":"integer","minimum":1,"maximum":QUANTITY}),
+        );
     }
     if !read {
         fields.insert(
             "expected_cursor".into(),
             json!({"type":"integer","minimum":0,"maximum":i64::MAX}),
         );
+    }
+    if action == Action::GetReleaseReadiness {
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: "read",
+            input: object(required, Value::Object(fields)),
+            output: json!({"oneOf":[
+                object(&["ok","work_order","ready","blocking","cursor"], json!({
+                    "ok":{"const":true},"work_order":text(),"ready":{"type":"boolean"},
+                    "blocking":{"enum":[null,"INVALID_STATE","MATERIAL_SHORTAGE","MATERIAL_HELD","CELL_NOT_CAPABLE"]},
+                    "cursor":{"type":"integer","minimum":0},"route_version":text(),
+                    "eligible_cells":{"type":"array","items":text()},
+                    "missing":{"type":"object","additionalProperties":{"type":"integer","minimum":1}}
+                })),
+                object(&["ok","code"],json!({"ok":{"const":false},"code":text(),"field":text()}))
+            ]}),
+            preconditions: &["run_open", "tool_enabled_in_scenario"],
+            side_effect: "none",
+            errors: &["INVALID_ARGUMENT", "WORK_ORDER_NOT_FOUND"],
+            visibility: "run",
+        };
     }
     Spec {
         name,
@@ -152,6 +190,8 @@ pub fn spec(action: Action) -> Spec {
             "INVALID_STATE",
             "QUALITY_HOLD",
             "IDEMPOTENCY_CONFLICT",
+            "REPORT_EXCEEDS_REMAINING",
+            "REPORT_HAS_DEPENDENCIES",
         ],
         visibility: "run",
     }
@@ -193,6 +233,8 @@ struct Report {
     batch: Option<String>,
     quantity: usize,
     reversed: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    serial_numbers: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -326,6 +368,18 @@ pub fn invoke(
         params![run, LOT],
         |row| row.get(0),
     )?;
+    if action == Action::GetReleaseReadiness {
+        let id = args["work_order"].as_str().unwrap();
+        let Some(order) = state.orders.get(id) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        let blocking = release_blocker(&order.phase, state.stock, held);
+        return Ok((
+            json!({"ok":true,"work_order":id,"ready":blocking.is_none(),
+            "blocking":blocking,"route_version":state.route_version,"cursor":cursor}),
+            false,
+        ));
+    }
     if action == Action::MesStatus {
         let id = args["work_order"].as_str().unwrap();
         let Some(order) = state.orders.get(id) else {
@@ -360,7 +414,7 @@ pub fn invoke(
                 }
                 actions
             }
-            Phase::Running if !held && (order.step != 0 || state.stock >= QUANTITY) => {
+            Phase::Running if !held && (order.step != 0 || state.stock > 0) => {
                 vec!["report_operation"]
             }
             Phase::Complete if order.inspection.as_deref() == Some("fail") => vec!["disposition"],
@@ -445,6 +499,18 @@ pub fn invoke(
     Ok((response, true))
 }
 
+fn release_blocker(phase: &Phase, stock: usize, held: bool) -> Option<&'static str> {
+    if *phase != Phase::Planned {
+        Some("INVALID_STATE")
+    } else if stock < QUANTITY {
+        Some("MATERIAL_SHORTAGE")
+    } else if held {
+        Some("MATERIAL_HELD")
+    } else {
+        None
+    }
+}
+
 fn apply(
     state: &mut State,
     held: bool,
@@ -464,12 +530,13 @@ fn apply(
         return error("OPERATION_OUT_OF_SEQUENCE");
     }
     match action {
-        Action::ReleaseOrder if order.phase == Phase::Planned => {
-            if state.stock < QUANTITY {
-                return shortage(state.stock);
-            }
-            if held {
-                return error("MATERIAL_HELD");
+        Action::ReleaseOrder => {
+            if let Some(code) = release_blocker(&order.phase, state.stock, held) {
+                return if code == "MATERIAL_SHORTAGE" {
+                    shortage(state.stock)
+                } else {
+                    error(code)
+                };
             }
             order.route_version = Some(state.route_version.clone());
             order.phase = Phase::Ready;
@@ -506,25 +573,52 @@ fn apply(
             if held {
                 return error("MATERIAL_HELD");
             }
-            if order.step == 0 && state.stock < QUANTITY {
-                return shortage(state.stock);
+            let completed = reported_quantity(&state.reports, id, order.step);
+            let remaining = QUANTITY - completed;
+            let quantity = args
+                .get("quantity")
+                .and_then(Value::as_u64)
+                .map_or(remaining, |value| value as usize);
+            if quantity > remaining {
+                return json!({"ok":false,"code":"REPORT_EXCEEDS_REMAINING","remaining":remaining});
             }
+            if order.step == 0 && state.stock < quantity {
+                return shortage_for(quantity, state.stock);
+            }
+            let serial_numbers = if order.step == 0 {
+                let used: usize = state
+                    .reports
+                    .iter()
+                    .filter(|report| report.order == id && report.step == 0)
+                    .map(|report| report.quantity)
+                    .sum();
+                (used + 1..=used + quantity)
+                    .map(|n| format!("{id}-{n:02}"))
+                    .collect()
+            } else {
+                vec![]
+            };
             let report = Report {
                 id: format!("report-{revision}"),
                 order: id.into(),
                 step: order.step,
-                quantity: QUANTITY,
+                quantity,
                 batch: order.batch.clone(),
                 reversed: false,
+                serial_numbers,
             };
             if order.step == 0 {
-                state.stock -= QUANTITY;
-                order.units = (1..=QUANTITY).map(|n| format!("{id}-{n:02}")).collect();
-                state.ledger.push(json!({"kind":"consumption","report_id":report.id,"batch":LOT,"delta":-(QUANTITY as i64)}));
+                state.stock -= quantity;
+                order.units.extend(report.serial_numbers.iter().cloned());
+                state.ledger.push(json!({"kind":"consumption","report_id":report.id,"batch":LOT,"delta":-(quantity as i64)}));
             }
-            order.step += 1;
-            order.phase = Phase::Ready;
-            let response = json!({"ok":true,"report":report,"serial_numbers":order.units});
+            let outstanding = remaining - quantity;
+            if outstanding == 0 {
+                order.step += 1;
+                order.phase = Phase::Ready;
+            }
+            let response = json!({"ok":true,"report":report,"serial_numbers":order.units,
+                "reported_quantity":completed+quantity,"remaining":outstanding});
             state.reports.push(report);
             return response;
         }
@@ -553,26 +647,37 @@ fn apply(
             }
             order.phase = Phase::Closed;
         }
-        Action::ReverseReport if order.phase == Phase::Ready => {
-            let Some(report) = state
+        Action::ReverseReport if matches!(order.phase, Phase::Ready | Phase::Running) => {
+            let Some(index) = state
                 .reports
-                .iter_mut()
-                .find(|r| r.id == args["report_id"] && r.order == id)
+                .iter()
+                .position(|report| report.id == args["report_id"] && report.order == id)
             else {
                 return error("REPORT_NOT_FOUND");
             };
-            if report.reversed || order.step != report.step + 1 {
+            let report = &state.reports[index];
+            let same_step = order.phase == Phase::Running && order.step == report.step;
+            let previous_step = order.phase == Phase::Ready && order.step == report.step + 1;
+            let later_report = state.reports[index + 1..]
+                .iter()
+                .any(|later| later.order == id && later.step == report.step && !later.reversed);
+            if report.reversed || !(same_step || previous_step) || later_report {
                 return error("REPORT_HAS_DEPENDENCIES");
             }
-            if report.step == 0 {
+            let report = &mut state.reports[index];
+            let delta = if report.step == 0 {
                 state.stock += report.quantity;
-                order.units.clear();
-                state.ledger.push(json!({"kind":"reversal","report_id":report.id,"reason":args["reason"],"batch":LOT,"delta":report.quantity}));
+                order.units.truncate(order.units.len() - report.quantity);
+                report.quantity
             } else {
-                state.ledger.push(json!({"kind":"reversal","report_id":report.id,"reason":args["reason"],"delta":0}));
-            }
+                0
+            };
+            state
+                .ledger
+                .push(json!({"kind":"reversal","report_id":report.id,
+                "reason":args["reason"],"batch":report.batch,"delta":delta}));
             report.reversed = true;
-            order.step -= 1;
+            order.step = report.step;
             order.phase = Phase::Running;
         }
         _ => return error("INVALID_STATE"),
@@ -580,6 +685,18 @@ fn apply(
     json!({"ok":true,"work_order":id,"state":order})
 }
 
+fn reported_quantity(reports: &[Report], order: &str, step: usize) -> usize {
+    reports
+        .iter()
+        .filter(|report| report.order == order && report.step == step && !report.reversed)
+        .map(|report| report.quantity)
+        .sum()
+}
+
 fn shortage(on_hand: usize) -> Value {
-    json!({"ok":false,"code":"MATERIAL_SHORTAGE","batch":LOT,"missing":QUANTITY-on_hand,"location":"RAW-01"})
+    shortage_for(QUANTITY, on_hand)
+}
+
+fn shortage_for(required: usize, on_hand: usize) -> Value {
+    json!({"ok":false,"code":"MATERIAL_SHORTAGE","batch":LOT,"missing":required-on_hand,"location":"RAW-01"})
 }

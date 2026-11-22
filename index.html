@@ -95,7 +95,7 @@
       <p>按 <a href="docs/RELEASE.md">基线部署说明</a> 启动服务，或下载 <a href="config/agentnexus.p1.toml">AgentNexus stdio 配置</a>。</p>
       <ol>
         <li>通过 stdio 将 MOM-MCP 注册为 AgentNexus 的 MCP 服务。</li>
-        <li>调用 <code>list_scenarios</code> 查看场景，再通过 <code>open_scenario</code> 传入场景标识、版本与可选种子，记录返回的 <code>run_id</code>。</li>
+        <li>调用 <code>list_scenarios</code> 查看场景，再通过 <code>open_scenario</code> 传入场景标识和版本，记录返回的 <code>run_id</code>。</li>
         <li>按 <code>run_id</code> 调用 <code>search_tools</code> 搜索业务动作，并用 <code>describe_tool</code> 获取输入、前置条件和错误码。</li>
         <li>用 <code>call_tool</code> 查询或执行。写操作按契约提供幂等键，随后重新查询验证结果。</li>
         <li>打开另一场景即可获取第二个 <code>run_id</code>。后续请求传入目标 ID 即可切换。</li>

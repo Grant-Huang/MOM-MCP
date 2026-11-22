@@ -8,6 +8,8 @@ use crate::scenario::Rejection;
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     GetWorkOrder,
+    ListWorkOrders,
+    GetReleaseReadiness,
     GetMaterial,
     HoldMaterial,
     MesStatus,
@@ -69,6 +71,19 @@ pub struct Gateway {
     pub control: bool,
 }
 
+impl Gateway {
+    pub fn input_schema(&self, control: bool) -> Value {
+        let mut schema = self.input.clone();
+        if !control && self.name == "open_scenario" {
+            schema["properties"]
+                .as_object_mut()
+                .expect("gateway input properties")
+                .remove("seed");
+        }
+        schema
+    }
+}
+
 #[derive(Serialize)]
 pub struct Spec {
     pub(crate) name: &'static str,
@@ -93,23 +108,29 @@ pub(crate) fn text() -> Value {
 
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
-        [Self::GetWorkOrder, Self::GetMaterial, Self::HoldMaterial]
-            .into_iter()
-            .find(|action| action.name() == name)
-            .or_else(|| {
-                crate::mes::TOOLS
-                    .iter()
-                    .chain(crate::smt::TOOLS)
-                    .chain(crate::assembly::TOOLS)
-                    .chain(crate::fabrication::tools())
-                    .find(|tool| tool.1 == name)
-                    .map(|tool| tool.0)
-            })
+        [
+            Self::GetWorkOrder,
+            Self::ListWorkOrders,
+            Self::GetMaterial,
+            Self::HoldMaterial,
+        ]
+        .into_iter()
+        .find(|action| action.name() == name)
+        .or_else(|| {
+            crate::mes::TOOLS
+                .iter()
+                .chain(crate::smt::TOOLS)
+                .chain(crate::assembly::TOOLS)
+                .chain(crate::fabrication::tools())
+                .find(|tool| tool.1 == name)
+                .map(|tool| tool.0)
+        })
     }
 
     fn name(self) -> &'static str {
         match self {
             Self::GetWorkOrder => "get_work_order",
+            Self::ListWorkOrders => "list_work_orders",
             Self::GetMaterial => "get_material",
             Self::HoldMaterial => "hold_material",
             _ => {
@@ -127,7 +148,9 @@ impl Action {
 
     fn keywords(self) -> &'static [&'static str] {
         match self {
-            Self::GetWorkOrder => &["工单", "work order", "order"],
+            Self::GetWorkOrder | Self::ListWorkOrders | Self::GetReleaseReadiness => {
+                &["工单", "work order", "order"]
+            }
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
             Self::HoldMaterial => &[
                 "质量冻结",
@@ -151,6 +174,21 @@ impl Action {
                 json!({"work_order":text(),"status":{"type":"string"}}),
                 "none",
                 &["INVALID_ARGUMENT", "WORK_ORDER_NOT_FOUND"][..],
+            ),
+            Self::ListWorkOrders => (
+                "按工单编号分页查询工单，可按生产状态筛选",
+                "production",
+                "read",
+                object(
+                    &[],
+                    json!({"status":text(),"after_work_order":text(),
+                    "limit":{"type":"integer","minimum":1,"maximum":100}}),
+                ),
+                json!({"orders":{"type":"array","items":object(&["work_order","status"],
+                    json!({"work_order":text(),"status":text()}))},
+                    "next_after_work_order":{"type":["null","string"]}}),
+                "none",
+                &["INVALID_ARGUMENT"][..],
             ),
             Self::GetMaterial => (
                 "查询物料批次及冻结状态",
@@ -251,7 +289,7 @@ pub fn gateway(name: &str) -> Option<Gateway> {
     let (name, description, read_only, input) = match name {
         "list_scenarios" => (
             "list_scenarios",
-            "List published mock scenarios",
+            "List available manufacturing scenarios",
             true,
             object(&[], json!({})),
         ),
@@ -364,7 +402,7 @@ pub fn tools(control: bool) -> Vec<Tool> {
             let mut tool = Tool::new(
                 spec.name,
                 spec.description,
-                spec.input.as_object().unwrap().clone(),
+                spec.input_schema(control).as_object().unwrap().clone(),
             );
             tool.annotations = Some(
                 ToolAnnotations::new()

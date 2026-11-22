@@ -11,7 +11,7 @@ cargo build --release --locked
 
 终端打印监听地址，默认绑定 `127.0.0.1:4173`。用页面查看场景和模拟状态。需要推进仿真或回放诊断时，在隔离的测试数据库上追加 `--control-tools`。常规验收台仅保留查询和行业操作。
 
-AgentNexus 使用 [stdio 配置示例](../config/agentnexus.p1.toml)。将命令改成发布二进制的绝对路径并指定数据库路径。若希望与本地验收台观察同一个 run，两端须使用同一份数据库和 `run_id`。Agent 配置保留 `--scenario-tools`，评测进程单独启用控制工具。
+AgentNexus 使用 [stdio 配置示例](../config/agentnexus.p1.toml)。将命令改成发布二进制的绝对路径并指定数据库路径。若希望与本地验收台观察同一个 run，两端须使用同一份数据库和 `run_id`。Agent 配置保留 `--scenario-tools`，仅使用业务参数。需要指定随机种子、查看模型及回放诊断的评测进程单独启用控制工具。
 
 ## 五行业入口
 

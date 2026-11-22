@@ -106,7 +106,7 @@ impl Simulation {
         Ok(serde_json::to_value(replay.timeline)? == serde_json::to_value(&self.timeline)?)
     }
 
-    pub fn page(&self, after: usize, limit: usize) -> Value {
+    pub fn page(&self, after: usize, limit: usize, control: bool) -> Value {
         let events: Vec<_> = self
             .timeline
             .events
@@ -115,6 +115,16 @@ impl Simulation {
             .take(limit)
             .collect();
         let cursor = events.last().map_or(after, |event| event.cursor);
+        let events: Vec<_> = events.into_iter().map(|event| {
+            let kind = if control { event.kind.as_str() } else {
+                match event.kind.as_str() {
+                    "fixture_ready" => "station_ready",
+                    "fixture_observation" => "station_observation",
+                    kind => kind,
+                }
+            };
+            json!({"cursor":event.cursor,"minute":event.minute,"kind":kind,"payload":event.payload})
+        }).collect();
         json!({"ok":true,"clock":self.timeline.clock,"events":events,"event_cursor":cursor,
             "has_more":cursor < self.timeline.events.len()})
     }

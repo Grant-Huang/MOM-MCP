@@ -66,7 +66,7 @@ async fn p6_agentnexus_three_industries() {
         let opened = session
             .call(
                 "open_scenario",
-                json!({"scenario_id":scenario,"version":2,"seed":42}),
+                json!({"scenario_id":scenario,"version":2}),
             )
             .await;
         assert_eq!(opened["ok"], true);

@@ -178,7 +178,7 @@ async fn open(client: &RunningService<RoleClient, ()>, scenario: &str) -> Value 
     let result = call(
         client,
         "open_scenario",
-        json!({"scenario_id":scenario,"version":1,"seed":42}),
+        json!({"scenario_id":scenario,"version":1}),
     )
     .await;
     assert_eq!(result["ok"], true, "{result}");
@@ -619,7 +619,7 @@ async fn p2_05_model_registry_validation() {
             json!({"scenario_id":"legacy","version":1}),
         )
         .await;
-        assert_eq!(rejected["code"], "MODEL_CONFIGURATION_INVALID");
+        assert_eq!(rejected["code"], "SCENARIO_CONFIGURATION_INVALID");
         for (id, kind) in [("smt", "fixture_ready"), ("cnc", "cnc_vibration")] {
             let run = open(&controller, id).await;
             advance(&controller, &run, 1).await;
@@ -676,7 +676,7 @@ async fn cnc(client: &RunningService<RoleClient, ()>) -> Value {
     let state = call(
         client,
         "open_scenario",
-        json!({"scenario_id":"cnc","version":2,"seed":42}),
+        json!({"scenario_id":"cnc","version":2}),
     )
     .await;
     assert_eq!(state["ok"], true);
@@ -1052,7 +1052,7 @@ async fn smt(client: &RunningService<RoleClient, ()>) -> Value {
     let opened = call(
         client,
         "open_scenario",
-        json!({"scenario_id":"smt","version":2,"seed":42}),
+        json!({"scenario_id":"smt","version":2}),
     )
     .await;
     assert_eq!(opened["ok"], true, "{opened}");
@@ -1381,7 +1381,7 @@ async fn open_assembly(client: &RunningService<RoleClient, ()>, normal: bool) ->
     let value = call(
         client,
         "open_scenario",
-        json!({"scenario_id":id,"version":version,"seed":42}),
+        json!({"scenario_id":id,"version":version}),
     )
     .await;
     assert_eq!(value["ok"], true, "{value}");
@@ -2296,6 +2296,283 @@ async fn p7_04_five_industry_catalog_and_replay() {
             "five-industry-catalog.json",
             json!({"scenarios":counts,"unique_business_tools":business_tools.len(),"agent_mcp_methods":methods}),
         );
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p8_01_partial_reporting_reversal_and_dependencies() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT,async {
+        let run=cnc(&client).await;
+        ready_for_report(&client,&run,"WO-1").await;
+        let request=json!({"operation":"machining","quantity":4});
+        let first=mes(&client,&run,"report_operation","WO-1","first",request.clone()).await;
+        assert_eq!(first["remaining"],6);
+        assert_eq!(first["report"]["serial_numbers"],json!(["WO-1-01","WO-1-02","WO-1-03","WO-1-04"]));
+        assert_eq!(mes_status(&client,&run).await["state"]["phase"],"running");
+        assert_eq!(mes(&client,&run,"report_operation","WO-1","first",request).await,first);
+        let before=mes_status(&client,&run).await;
+        assert_eq!(before["on_hand"],6);
+        let out_of_sequence=mes(&client,&run,"dispatch_operation","WO-1","skip",json!({"operation":"assembly"})).await;
+        assert_eq!(out_of_sequence["code"],"OPERATION_OUT_OF_SEQUENCE");
+        let too_many=mes(&client,&run,"report_operation","WO-1","too-many",json!({"operation":"machining","quantity":7})).await;
+        assert_eq!(too_many,json!({"ok":false,"code":"REPORT_EXCEEDS_REMAINING","remaining":6}));
+        assert_eq!(mes_status(&client,&run).await,before);
+
+        let second=mes(&client,&run,"report_operation","WO-1","second",json!({"operation":"machining","quantity":2})).await;
+        assert_eq!(second["reported_quantity"],6);
+        let blocked=mes(&client,&run,"reverse_report","WO-1","old",json!({"report_id":first["report"]["id"],"reason":"correction"})).await;
+        assert_eq!(blocked["code"],"REPORT_HAS_DEPENDENCIES");
+        let reverse_args=json!({"report_id":second["report"]["id"],"reason":"entry error"});
+        let reversed=mes(&client,&run,"reverse_report","WO-1","reverse-second",reverse_args.clone()).await;
+        assert_eq!(reversed["state"]["units"].as_array().unwrap().len(),4);
+        assert_eq!(mes(&client,&run,"reverse_report","WO-1","reverse-second",reverse_args).await,reversed);
+        assert_eq!(mes_status(&client,&run).await["on_hand"],6);
+        assert_eq!(business(&client,&run,"trace",json!({"subject":"WO-1-05"})).await["links"],json!([]));
+
+        let completed=mes(&client,&run,"report_operation","WO-1","remaining",json!({"operation":"machining"})).await;
+        assert_eq!(completed["remaining"],0);
+        assert_eq!(completed["report"]["serial_numbers"][0],"WO-1-07");
+        let state=mes_status(&client,&run).await;
+        assert_eq!(state["state"]["phase"],"ready");
+        assert_eq!(state["on_hand"],0);
+        assert_eq!(state["ledger"].as_array().unwrap().iter().map(|entry|entry["delta"].as_i64().unwrap()).sum::<i64>(),-10);
+        assert_eq!(state["reports"][1]["reversed"],true);
+        assert_eq!(business(&client,&run,"trace",json!({"subject":"LOT-1"})).await["links"][0]["serial_numbers"].as_array().unwrap().len(),10);
+        assert_eq!(mes(&client,&run,"dispatch_operation","WO-1","assembly-dispatch",json!({"operation":"assembly"})).await["ok"],true);
+        assert_eq!(call(&client,"close_run",json!({"run_id":run})).await["closed"],true);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn p8_02_public_mcp_contract_excludes_evaluation_internals() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (agent, _a) = connect_mode(&db, "0", true).await;
+    let (evaluation, _b) = connect_options(&db, "0", true, true).await;
+    timeout(WAIT, async {
+        let tools = agent.peer().list_tools(None).await.unwrap();
+        assert_eq!(tools.tools.len(), 8);
+        let opening = tools
+            .tools
+            .iter()
+            .find(|tool| tool.name == "open_scenario")
+            .unwrap();
+        assert!(
+            !opening.input_schema["properties"]
+                .as_object()
+                .unwrap()
+                .contains_key("seed")
+        );
+        let scenarios = call(&agent, "list_scenarios", json!({})).await;
+        let opened = call(
+            &agent,
+            "open_scenario",
+            json!({"scenario_id":"cnc","version":2}),
+        )
+        .await;
+        assert_eq!(opened["ok"], true);
+        let run = &opened["run_id"];
+        let view = call(&agent, "get_run", json!({"run_id":run})).await;
+        for public in [
+            serde_json::to_value(tools).unwrap(),
+            scenarios,
+            opened.clone(),
+            view,
+        ] {
+            let serialized = public.to_string();
+            for forbidden in [
+                "mock",
+                "fixture",
+                "model_version",
+                "run_parameters",
+                "diagnosis",
+                "inspect_run",
+                "get_probe",
+                "set_probe",
+                "seed",
+            ] {
+                assert!(
+                    !serialized.contains(forbidden),
+                    "{forbidden} in {serialized}"
+                );
+            }
+        }
+        assert_eq!(
+            call(&agent, "inspect_run", json!({"run_id":run})).await["code"],
+            "UNKNOWN_TOOL"
+        );
+        assert_eq!(
+            call(&agent, "get_probe", json!({})).await["code"],
+            "UNKNOWN_TOOL"
+        );
+        assert_eq!(
+            call(
+                &agent,
+                "open_scenario",
+                json!({"scenario_id":"cnc","version":2,"seed":42})
+            )
+            .await["code"],
+            "INVALID_ARGUMENT"
+        );
+        let legacy = open(&agent, "smt").await;
+        assert_eq!(advance(&evaluation, &legacy, 1).await["event_cursor"], 1);
+        assert_eq!(
+            delivered(&evaluation, &legacy).await["events"][0]["kind"],
+            "fixture_ready"
+        );
+        let public_events = delivered(&agent, &legacy).await;
+        assert_eq!(public_events["events"][0]["kind"], "station_ready");
+        assert_eq!(public_events["event_cursor"], 1);
+        let controlled = call(
+            &evaluation,
+            "open_scenario",
+            json!({"scenario_id":"cnc","version":2,"seed":42}),
+        )
+        .await;
+        let evidence = call(
+            &evaluation,
+            "inspect_run",
+            json!({"run_id":controlled["run_id"]}),
+        )
+        .await;
+        assert_eq!(evidence["seed"], "42");
+        assert_eq!(evidence["diagnosis"]["root_cause"], "spindle_wear");
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn p8b_01_public_order_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let mut contracts = Vec::new();
+        for (scenario, first, second) in [("cnc", "WO-1", "WO-2"), ("assembly", "WO-E", "WO-L")] {
+            let opened = call(&client, "open_scenario", json!({"scenario_id":scenario,"version":3})).await;
+            assert_eq!(opened["ok"], true, "{opened}");
+            let run = &opened["run_id"];
+            let invoke = |name: &str, arguments| call(&client, "call_tool",
+                json!({"run_id":run,"name":name,"arguments":arguments}));
+            let search = call(&client, "search_tools", json!({"run_id":run})).await;
+            assert!(search["tools"].as_array().unwrap().iter().any(|entry| entry["name"] == "list_work_orders"));
+            contracts.push(call(&client, "describe_tool", json!({"run_id":run,"name":"list_work_orders"})).await);
+            let page = invoke("list_work_orders", json!({"limit":1})).await;
+            assert_eq!(page["orders"][0]["work_order"], first);
+            assert_eq!(page["next_after_work_order"], first);
+            let next = invoke("list_work_orders", json!({"after_work_order":first})).await;
+            assert_eq!(next["orders"][0]["work_order"], second);
+            assert!(next["next_after_work_order"].is_null());
+            let detail = invoke("get_work_order", json!({"work_order":first})).await;
+            assert_eq!(detail["status"], page["orders"][0]["status"]);
+            assert_eq!(invoke("list_work_orders", json!({"status":"not-a-status"})).await["orders"], json!([]));
+            if scenario == "cnc" {
+                let before = invoke("get_release_readiness", json!({"work_order":first})).await;
+                assert_eq!(before["ready"], true);
+                let repeated = invoke("get_release_readiness", json!({"work_order":first})).await;
+                assert_eq!(before, repeated);
+                let release = invoke("release_order", json!({"work_order":first,"idempotency_key":"release","expected_cursor":before["cursor"]})).await;
+                assert_eq!(release["ok"], true, "{release}");
+                let blocked = invoke("get_release_readiness", json!({"work_order":first})).await;
+                assert_eq!(blocked["blocking"], "INVALID_STATE");
+                assert_eq!(blocked["cursor"], release["cursor"]);
+                let held = invoke("hold_material", json!({"batch":"LOT-1","reason":"incoming inspection","idempotency_key":"hold"})).await;
+                assert_eq!(held["ok"], true, "{held}");
+                let blocked = invoke("get_release_readiness", json!({"work_order":second})).await;
+                assert_eq!(blocked["blocking"], "MATERIAL_HELD");
+                assert_eq!(blocked["cursor"], held["cursor"]);
+                let rejected = invoke("release_order", json!({"work_order":second,"idempotency_key":"blocked-release"})).await;
+                assert_eq!(rejected["code"], blocked["blocking"]);
+                assert_eq!(invoke("get_release_readiness", json!({"work_order":second})).await, blocked);
+            }
+        }
+        assert_eq!(contracts[0]["ok"], true);
+        assert_eq!(contracts[0], contracts[1]);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn p8b_02_assembly_release_readiness() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let mut contracts = Vec::new();
+        for (scenario, version) in [("cnc", 3), ("assembly", 4), ("assembly-shortage", 2)] {
+            let opened = call(
+                &client,
+                "open_scenario",
+                json!({"scenario_id":scenario,"version":version}),
+            )
+            .await;
+            assert_eq!(opened["ok"], true, "{opened}");
+            let run = &opened["run_id"];
+            contracts.push(
+                call(
+                    &client,
+                    "describe_tool",
+                    json!({"run_id":run,"name":"get_release_readiness"}),
+                )
+                .await,
+            );
+            if scenario == "cnc" {
+                continue;
+            }
+            let invoke = |name: &str, arguments| {
+                call(
+                    &client,
+                    "call_tool",
+                    json!({"run_id":run,"name":name,"arguments":arguments}),
+                )
+            };
+            let readiness = || invoke("get_release_readiness", json!({"work_order":"WO-E"}));
+            let before = readiness().await;
+            assert_eq!(before["eligible_cells"], json!(["CELL-A"]));
+            assert_eq!(readiness().await, before);
+            if scenario == "assembly-shortage" {
+                let rejected = invoke(
+                    "assembly_dispatch",
+                    json!({"work_order":"WO-E","cell":"CELL-A","idempotency_key":"shortage"}),
+                )
+                .await;
+                assert_eq!(before["ready"], false);
+                assert_eq!(before["blocking"], "MATERIAL_SHORTAGE");
+                assert_eq!(before["blocking"], rejected["code"]);
+                assert_eq!(before["missing"], rejected["missing"]);
+                assert_eq!(readiness().await, before);
+                let replaced = invoke(
+                    "assembly_substitute",
+                    json!({"work_order":"WO-E","part":"DRIVE-ALT","idempotency_key":"substitute"}),
+                )
+                .await;
+                assert_eq!(replaced["ok"], true, "{replaced}");
+            }
+            let ready = readiness().await;
+            assert_eq!(ready["ready"], true);
+            let rejected = invoke(
+                "assembly_dispatch",
+                json!({"work_order":"WO-E","cell":"CELL-B","idempotency_key":"wrong-cell"}),
+            )
+            .await;
+            assert_eq!(rejected["code"], "CELL_NOT_CAPABLE");
+            assert_eq!(readiness().await, ready);
+            let dispatched = invoke(
+                "assembly_dispatch",
+                json!({"work_order":"WO-E","cell":"CELL-A","idempotency_key":"dispatch"}),
+            )
+            .await;
+            assert_eq!(dispatched["ok"], true, "{dispatched}");
+            let after = readiness().await;
+            assert_eq!(after["blocking"], "INVALID_STATE");
+            assert_eq!(after["cursor"], dispatched["cursor"]);
+            assert_eq!(after["cursor"], ready["cursor"].as_i64().unwrap() + 1);
+        }
+        assert_eq!(contracts[0]["ok"], true);
+        assert_eq!(contracts[0], contracts[1]);
+        assert_eq!(contracts[0], contracts[2]);
     })
     .await
     .unwrap();

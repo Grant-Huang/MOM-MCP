@@ -5,24 +5,24 @@ import { join, resolve } from "node:path";
 import { parse } from "smol-toml";
 
 const args = process.argv.slice(2);
-const phase = args.find((arg) => /^P[0-7]$/.test(arg)) ?? "P0";
+const stages = [...Array.from({ length: 9 }, (_, number) => `P${number}`), "P8B"];
+const phase = args.find((arg) => stages.includes(arg)) ?? "P0";
 const gate = args.includes("--gate");
 if (args.some((arg) => arg !== phase && arg !== "--gate")) {
-  throw new Error("Usage: npm run acceptance -- [P0..P7] [--gate]");
+  throw new Error("Usage: npm run acceptance -- [P0..P8|P8B] [--gate]");
 }
 const read = (path) => readFileSync(path, "utf8");
 const map = parse(read("docs/feature-map.toml")).case;
 const features = [...read("docs/FEATURES.md").matchAll(/^\| (F\d+) \|/gm)].map((match) => match[1]);
-const expected = Array.from({ length: 8 }, (_, number) => {
-  const stage = `P${number}`;
-  const cases = [...read(`docs/acceptance/${stage}.md`).matchAll(/^\| (P\d-\d+) \|/gm)];
+const expected = stages.map((stage) => {
+  const cases = [...read(`docs/acceptance/${stage}.md`).matchAll(/^\| (P\d[A-Z]?-\d+) \|/gm)];
   return [`${stage}-UI`, ...cases.map((match) => match[1])];
 }).flat();
 if (
   map.length !== expected.length ||
   new Set(map.map(({ id }) => id)).size !== expected.length ||
   map.some(({ id, phase, features: covered, spec }) =>
-    !expected.includes(id) || !id.startsWith(`${phase}-`) ||
+    !expected.includes(id) || !stages.includes(phase) || !id.startsWith(`${phase}-`) ||
     !covered.length || covered.some((name) => !features.includes(name)) ||
     !read(`docs/${spec}`).includes(id)
   ) ||
@@ -31,7 +31,7 @@ if (
   throw new Error("Feature map and acceptance specifications disagree");
 }
 
-const selected = map.filter((entry) => entry.phase <= phase);
+const selected = map.filter((entry) => stages.indexOf(entry.phase) <= stages.indexOf(phase));
 const external = [];
 const missing = [];
 const cargo = [];

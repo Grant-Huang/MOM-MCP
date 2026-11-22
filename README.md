@@ -117,3 +117,5 @@ MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P4 --gate
 ```sh
 MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P5 --gate
 ```
+
+下一轮见 [五行业 MES 工具链扩展计划](docs/MES_EXPANSION_PLAN.md) 和 [P8 验收](docs/acceptance/P8.md)。
