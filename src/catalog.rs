@@ -330,6 +330,7 @@ impl Action {
         fields.insert("run_id".into(), text());
         let mut output_fields = fields.clone();
         if self == Self::GetWorkOrder {
+            output_fields.insert("snapshot".into(), json!({"type":"object"}));
             output_fields.insert("hold_reason".into(), text());
             output_fields.insert("cancel_reason".into(), text());
             output_fields.insert("completion_confirmed".into(), json!({"type":"boolean"}));
