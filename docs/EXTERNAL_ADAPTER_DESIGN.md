@@ -33,7 +33,7 @@ AgentNexus 的 MOM／World Adapter 负责服务端绑定、租户与站点范围
 | 候选样本 | 已核实 | 待补证据 |
 |---|---|---|
 | Carbon MCP 生产工单读取 | 固定源码中的 `production_getJob` 接受字符串 ID，声明生产查看权限。 | 固定部署与授权、脱敏响应、实际状态生命周期。 [源码](https://github.com/crbnos/carbon/blob/2f5b652498539be79372635666f1ccc45f5cb601/apps/erp/app/modules/production/production.server.ts#L6957) |
-| OpenMES HTTP 工单读取 | 固定源码注册 `work-orders` API resource，具备详情路由候选。 | 确认部署路由前缀、权限、详情 schema、业务状态和错误响应。 [源码](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/routes/api.php#L653) |
+| OpenMES HTTP 工单读取 | 固定源码注册 `work-orders` API resource。详情控制器先执行 `view` 授权，再以 `data` 包装工单和关联。 | 确认部署路由前缀、实际凭据、详情 schema、业务状态和错误响应。 [详情控制器](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Http/Controllers/Api/V1/WorkOrderController.php#L59) · [源码](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/routes/api.php#L653) |
 | Odoo Community 19.0 自托管 JSON-2 | 固定源码定义 `mrp.production` 和使用 Bearer 身份的 JSON-2 路由。候选读取为 `POST /json/2/mrp.production/search_read`，服务账号按授权公司和记录 ID 读取。 | 验证自托管实例的端点、记录规则、脱敏响应与失败行为。按数据库绑定区分源记录，核对跨公司隔离。保留源状态 `to_close` 与 `done` 的区别，待核实后决定规范状态。 [制造订单源码](https://github.com/odoo/odoo/blob/d36b9405fe5d2ede753c6d7eceb778ecef20f67b/addons/mrp/models/mrp_production.py#L177) · [JSON-2 路由源码](https://github.com/odoo/odoo/blob/d36b9405fe5d2ede753c6d7eceb778ecef20f67b/addons/rpc/controllers/json2.py#L49) |
 
 Odoo 作为第三个候选，首期仍选择两种可运行接口。Odoo 制造订单与其工序工单是不同对象，首期对齐制造订单。后续可用同一 Odoo 实例验证销售与制造关联，跨厂商关联另用独立来源验证。
