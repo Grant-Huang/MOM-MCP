@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/des", "crates/model-cnc", "crates/model-fixture", "crates/model-smt", "crates/model-assembly", "crates/model-fabrication"]
+members = [".", "crates/des", "crates/model-cnc", "crates/model-fixture", "crates/model-smt", "crates/model-assembly", "crates/model-fabrication", "crates/external-adapter"]
 resolver = "3"
 
 [package]
@@ -9,6 +9,7 @@ edition = "2024"
 rust-version = "1.100"
 
 [dependencies]
+mom-external-adapter = { path = "crates/external-adapter" }
 mom-des = { path = "crates/des" }
 mom-model-cnc = { path = "crates/model-cnc" }
 mom-model-fixture = { path = "crates/model-fixture" }
@@ -18,9 +19,7 @@ mom-model-fabrication = { path = "crates/model-fabrication" }
 anyhow = "1"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
-chrono = { version = "0.4", default-features = false, features = ["std"] }
 rmcp = { version = "=3.10.0", default-features = false, features = ["server", "client", "transport-io", "transport-child-process"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
