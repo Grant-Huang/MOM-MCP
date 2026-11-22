@@ -2798,3 +2798,70 @@ async fn p8b_06_hold_and_resume_orders() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8b_07_order_cancel_complete_close() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
+    timeout(WAIT, async {
+        for (scenario, version, order, unused) in [("cnc",8,"WO-1","WO-2"), ("assembly",9,"WO-E","WO-L")] {
+            let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str, args| business(&client,run,name,args).await;
+            let status=|| call(&client,"get_run",json!({"run_id":run}));
+            let cancelled=invoke("cancel_work_order",json!({"work_order":unused,"expected_cursor":0,"idempotency_key":"cancel","reason":"demand withdrawn"})).await;
+            assert_eq!(cancelled["status"],"cancelled","{cancelled}");
+            let detail=invoke("get_work_order",json!({"work_order":unused})).await;
+            assert_eq!(detail["cancel_reason"],"demand withdrawn");
+            let released=invoke("release_work_order",json!({"work_order":order,"expected_cursor":1,"idempotency_key":"release"})).await;
+            assert_eq!(released["status"],"released");
+            let action=async |name:&str,key:&str, extra: Value| mes(&client,run,name,order,key,extra).await;
+            if scenario=="cnc" {
+                assert_eq!(action("dispatch_operation","dispatch1",json!({"operation":"machining"})).await["ok"],true);
+                assert_eq!(action("issue_material","issue",json!({"batch":"LOT-1"})).await["ok"],true);
+            } else {
+                assert_eq!(action("assembly_dispatch","dispatch",json!({"cell":"CELL-A"})).await["ok"],true);
+                assert_eq!(action("assembly_build","build",json!({})).await["ok"],true);
+            }
+            let cursor=status().await["cursor"].clone();
+            let rejected=action("cancel_work_order","committed-cancel",json!({"expected_cursor":cursor,"reason":"late cancellation"})).await;
+            assert_eq!(rejected["code"],"ORDER_HAS_EXECUTION");
+            assert_eq!(status().await["cursor"],cursor);
+            if scenario=="cnc" {
+                for (operation,n) in [("machining",1),("assembly",2)] {
+                    if n==2 {
+                        assert_eq!(action("dispatch_operation","dispatch2",json!({"operation":operation})).await["ok"],true);
+                    }
+                    assert_eq!(action("start_operation",&format!("start{n}"),json!({"operation":operation})).await["ok"],true);
+                    assert_eq!(action("report_operation",&format!("report{n}"),json!({"operation":operation})).await["ok"],true);
+                }
+                assert_eq!(action("dispatch_operation","dispatch3",json!({"operation":"inspection"})).await["ok"],true);
+                assert_eq!(action("inspect_units","inspect",json!({"result":"fail"})).await["ok"],true);
+                let cursor=status().await["cursor"].clone();
+                assert_eq!(action("complete_work_order","complete",json!({"expected_cursor":cursor})).await["code"],"QUALITY_HOLD");
+                assert_eq!(action("disposition","review",json!({"result":"pass","reason":"accepted after reinspection"})).await["ok"],true);
+            } else {
+                assert_eq!(action("assembly_start_test","start-test",json!({})).await["ok"],true);
+                advance(&client,run,10).await;
+                assert_eq!(action("assembly_finish_test","finish-test",json!({})).await["state"]["phase"],"passed");
+            }
+            let cursor=status().await["cursor"].as_i64().unwrap();
+            assert_eq!(action("close_work_order","early-close",json!({"expected_cursor":cursor})).await["code"],"COMPLETION_REQUIRED");
+            let completed=action("complete_work_order","complete",json!({"expected_cursor":cursor})).await;
+            assert_eq!(completed["status"],"completed","{completed}");
+            let mut cursor=cursor+1;
+            if scenario=="assembly" {
+                assert_eq!(action("close_work_order","early-close",json!({"expected_cursor":cursor})).await["code"],"DELIVERY_REQUIRED");
+                assert_eq!(action("assembly_deliver","deliver",json!({})).await["ok"],true);
+                cursor+=1;
+            }
+            let closed=action("close_work_order","close",json!({"expected_cursor":cursor})).await;
+            assert_eq!(closed["status"],"closed","{closed}");
+            assert_eq!(action("close_work_order","close",json!({"expected_cursor":cursor})).await,closed);
+            let detail=invoke("get_work_order",json!({"work_order":order})).await;
+            assert_eq!(detail["status"],"closed");
+            assert_eq!(detail["completion_confirmed"],true);
+        }
+    }).await.unwrap();
+}

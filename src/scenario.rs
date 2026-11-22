@@ -246,6 +246,14 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             .all(|action| definition.capabilities.contains(action)),
         "work order hold and resume require both commands and work order release"
     );
+    anyhow::ensure!(
+        !definition.capabilities.iter().any(|action| matches!(
+            action,
+            Action::CancelWorkOrder | Action::CompleteWorkOrder | Action::CloseWorkOrder
+        )) || (definition.capabilities.contains(&Action::ReleaseWorkOrder)
+            && !definition.capabilities.contains(&Action::CloseOrder)),
+        "terminal actions require work order release and exclude legacy close"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -325,6 +333,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-order-drafts.json"),
             include_str!("../fixtures/cnc-batch-release.json"),
             include_str!("../fixtures/cnc-order-hold.json"),
+            include_str!("../fixtures/cnc-order-terminal.json"),
+            include_str!("../fixtures/assembly-order-terminal.json"),
             include_str!("../fixtures/assembly-order-hold.json"),
             include_str!("../fixtures/assembly-batch-release.json"),
             include_str!("../fixtures/assembly-shortage-batch-release.json"),
@@ -857,7 +867,12 @@ impl Scenarios {
         if crate::assembly::TOOLS.iter().any(|tool| tool.0 == action)
             || (matches!(
                 action,
-                Action::ReleaseWorkOrder | Action::HoldWorkOrder | Action::ResumeWorkOrder
+                Action::ReleaseWorkOrder
+                    | Action::HoldWorkOrder
+                    | Action::ResumeWorkOrder
+                    | Action::CancelWorkOrder
+                    | Action::CompleteWorkOrder
+                    | Action::CloseWorkOrder
             ) && definition.assembly.is_some())
         {
             let Some(setup) = &definition.assembly else {
@@ -911,7 +926,7 @@ impl Scenarios {
             let Some(setup) = &definition.manufacturing else {
                 return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
             };
-            let (response, changed) = crate::mes::invoke(
+            let (mut response, changed) = crate::mes::invoke(
                 &tx,
                 run,
                 setup,
@@ -920,6 +935,17 @@ impl Scenarios {
                 parameters,
                 cursor,
             )?;
+            if action == Action::MesStatus
+                && definition.capabilities.contains(&Action::CloseWorkOrder)
+                && response["available_actions"] == json!(["close_order"])
+            {
+                response["available_actions"] = if response["state"]["completion_confirmed"] == true
+                {
+                    json!(["close_work_order"])
+                } else {
+                    json!(["complete_work_order"])
+                };
+            }
             if changed {
                 tx.commit()?;
             }

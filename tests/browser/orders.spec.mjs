@@ -5,7 +5,7 @@ test("P8B-UI Public order discovery and readiness", async ({ page }) => {
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
   await button("加载场景").click();
-  await page.getByLabel("已发布场景").selectOption("cnc@7");
+  await page.getByLabel("已发布场景").selectOption("cnc@8");
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   await button("搜索工具").click();
@@ -31,6 +31,20 @@ test("P8B-UI Public order discovery and readiness", async ({ page }) => {
   await invoke("resume_work_order", { work_order: "WO-NEW", idempotency_key: "resume", expected_cursor: held.cursor }, '"status": "ready"');
   await invoke("dispatch_operation", { work_order: "WO-NEW", operation: "machining", idempotency_key: "dispatch" }, '"phase": "dispatched"');
 
+
+  await invoke("issue_material", { work_order: "WO-NEW", batch: "LOT-1", idempotency_key: "issue" }, '"ok": true');
+  for (const operation of ["machining", "assembly"]) {
+    if (operation === "assembly") {
+      await invoke("dispatch_operation", { work_order: "WO-NEW", operation, idempotency_key: "dispatch-assembly" }, '"phase": "dispatched"');
+    }
+    await invoke("start_operation", { work_order: "WO-NEW", operation, idempotency_key: `start-${operation}` }, '"phase": "running"');
+    await invoke("report_operation", { work_order: "WO-NEW", operation, idempotency_key: `report-${operation}` }, '"remaining": 0');
+  }
+  await invoke("dispatch_operation", { work_order: "WO-NEW", operation: "inspection", idempotency_key: "dispatch-inspection" }, '"phase": "dispatched"');
+  const inspected = await invoke("inspect_units", { work_order: "WO-NEW", result: "pass", idempotency_key: "inspect" }, '"phase": "complete"');
+  await invoke("close_work_order", { work_order: "WO-NEW", expected_cursor: inspected.cursor, idempotency_key: "close" }, "COMPLETION_REQUIRED");
+  const completed = await invoke("complete_work_order", { work_order: "WO-NEW", expected_cursor: inspected.cursor, idempotency_key: "complete" }, '"status": "completed"');
+  await invoke("close_work_order", { work_order: "WO-NEW", expected_cursor: completed.cursor, idempotency_key: "close" }, '"status": "closed"');
 
   await button("关闭运行").click();
   await expect(status).toContainText('"closed": true');
