@@ -220,6 +220,13 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             || definition.manufacturing.is_some(),
         "work order release requires assembly or manufacturing setup"
     );
+    anyhow::ensure!(
+        (!definition.capabilities.contains(&Action::CreateWorkOrder)
+            && !definition.capabilities.contains(&Action::UpdateDraftOrder))
+            || (definition.capabilities.contains(&Action::CreateWorkOrder)
+                && definition.capabilities.contains(&Action::ReleaseWorkOrder)),
+        "draft capabilities require work order creation and release"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -281,6 +288,11 @@ impl Scenarios {
              CREATE TABLE IF NOT EXISTS smt_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS mes_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS des_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS scenario_created_orders (
+                 run TEXT NOT NULL, id TEXT NOT NULL, template TEXT NOT NULL,
+                 demand TEXT NOT NULL, serial TEXT,
+                 PRIMARY KEY (run, id)
+             );
              CREATE TABLE IF NOT EXISTS scenario_requests (
                  run TEXT NOT NULL, key TEXT NOT NULL, request TEXT NOT NULL, response TEXT NOT NULL,
                  PRIMARY KEY (run, key)
@@ -291,6 +303,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-manufacturing.json"),
             include_str!("../fixtures/cnc-public-orders.json"),
             include_str!("../fixtures/cnc-order-release.json"),
+            include_str!("../fixtures/cnc-order-drafts.json"),
+            include_str!("../fixtures/assembly-order-drafts.json"),
             include_str!("../fixtures/assembly-order-release.json"),
             include_str!("../fixtures/assembly-shortage-order-release.json"),
             include_str!("../fixtures/cnc-shortage.json"),
@@ -486,7 +500,27 @@ impl Scenarios {
             params![scenario, version],
             |row| row.get(0),
         )?;
-        let definition: Definition = serde_json::from_str(&source)?;
+        let mut definition: Definition = serde_json::from_str(&source)?;
+        let mut created = BTreeMap::new();
+        if definition.capabilities.contains(&Action::CreateWorkOrder) {
+            let mut statement = tx.prepare(
+                "SELECT id,template,demand,serial FROM scenario_created_orders WHERE run=?1",
+            )?;
+            let mut rows = statement.query([run])?;
+            while let Some(row) = rows.next()? {
+                let id: String = row.get(0)?;
+                let template: String = row.get(1)?;
+                let demand: String = row.get(2)?;
+                if let Some(setup) = &mut definition.assembly {
+                    let serial: String = row.get(3)?;
+                    setup
+                        .add_order(&id, &template, &serial)
+                        .map_err(anyhow::Error::msg)?;
+                }
+                definition.work_orders.push(id.clone());
+                created.insert(id, (template, demand));
+            }
+        }
         if matches!(name, "advance_run" | "intervene_run" | "inspect_run") {
             let model = simulation::load_model(
                 &definition.model,
@@ -580,6 +614,92 @@ impl Scenarios {
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if matches!(action, Action::CreateWorkOrder | Action::UpdateDraftOrder) {
+            let id = parameters["work_order"].as_str().unwrap();
+            let demand = parameters["source_demand"].as_str().unwrap();
+            if !identifier(id) || demand.trim().is_empty() {
+                return Ok(Err(reject(
+                    "INVALID_ARGUMENT",
+                    if !identifier(id) {
+                        "work_order"
+                    } else {
+                        "source_demand"
+                    },
+                )));
+            }
+            let key = parameters["idempotency_key"].as_str().unwrap();
+            let request = json!({"action":action,"arguments":parameters}).to_string();
+            let saved: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT request,response FROM scenario_requests WHERE run=?1 AND key=?2",
+                    params![run, key],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((original, response)) = saved {
+                return Ok(if original == request {
+                    Ok(serde_json::from_str(&response)?)
+                } else {
+                    Err(reject("IDEMPOTENCY_CONFLICT", "idempotency_key"))
+                });
+            }
+            if parameters["expected_cursor"].as_i64() != Some(cursor) {
+                return Ok(Err(reject("VERSION_CONFLICT", "expected_cursor")));
+            }
+            let template = if action == Action::CreateWorkOrder {
+                if definition.work_orders.iter().any(|order| order == id) {
+                    return Ok(Err(reject("WORK_ORDER_EXISTS", "work_order")));
+                }
+                let template = parameters["template_work_order"].as_str().unwrap();
+                if created.contains_key(template)
+                    || !definition.work_orders.iter().any(|order| order == template)
+                {
+                    return Ok(Err(reject("TEMPLATE_NOT_FOUND", "template_work_order")));
+                }
+                let serial = parameters.get("serial").and_then(Value::as_str);
+                if let Some(setup) = &mut definition.assembly {
+                    let Some(serial) = serial.filter(|value| identifier(value)) else {
+                        return Ok(Err(reject("INVALID_ARGUMENT", "serial")));
+                    };
+                    if let Err(code) = setup.add_order(id, template, serial) {
+                        return Ok(Err(reject(code, "serial")));
+                    }
+                } else if serial.is_some() {
+                    return Ok(Err(reject("INVALID_ARGUMENT", "serial")));
+                }
+                tx.execute(
+                    "INSERT INTO scenario_created_orders (run,id,template,demand,serial) VALUES (?1,?2,?3,?4,?5)",
+                    params![run,id,template,demand,serial],
+                )?;
+                template
+            } else {
+                let Some((template, _)) = created.get(id) else {
+                    return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
+                };
+                if !read_work_order(&tx, run, &definition, id)?
+                    .is_some_and(|order| order["status"] == "planned")
+                {
+                    return Ok(Err(reject("INVALID_STATE", "work_order")));
+                }
+                tx.execute(
+                    "UPDATE scenario_created_orders SET demand=?3 WHERE run=?1 AND id=?2",
+                    params![run, id, demand],
+                )?;
+                template
+            };
+            let response = json!({"ok":true,"run_id":run,"work_order":id,"status":"planned",
+                "source_demand":demand,"template_work_order":template,"cursor":cursor+1});
+            tx.execute(
+                "UPDATE scenario_runs SET cursor=cursor+1 WHERE id=?1",
+                [run],
+            )?;
+            tx.execute(
+                "INSERT INTO scenario_requests VALUES (?1,?2,?3,?4)",
+                params![run, key, request, response.to_string()],
+            )?;
+            tx.commit()?;
+            return Ok(Ok(response));
         }
         if action == Action::GetReleaseReadiness {
             if let Some(setup) = &definition.assembly {
@@ -679,8 +799,14 @@ impl Scenarios {
         }
         if action == Action::GetWorkOrder {
             let order = parameters["work_order"].as_str().unwrap();
-            return Ok(read_work_order(&tx, run, &definition, order)?
-                .ok_or_else(|| reject("WORK_ORDER_NOT_FOUND", "work_order")));
+            let Some(mut detail) = read_work_order(&tx, run, &definition, order)? else {
+                return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
+            };
+            if let Some((template, demand)) = created.get(order) {
+                detail["source_demand"] = json!(demand);
+                detail["template_work_order"] = json!(template);
+            }
+            return Ok(Ok(detail));
         }
         if action == Action::ListWorkOrders {
             let limit = parameters

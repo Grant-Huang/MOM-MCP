@@ -5,7 +5,7 @@ test("P8B-UI Public order discovery and readiness", async ({ page }) => {
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
   await button("加载场景").click();
-  await page.getByLabel("已发布场景").selectOption("cnc@4");
+  await page.getByLabel("已发布场景").selectOption("cnc@5");
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   await button("搜索工具").click();
@@ -20,9 +20,12 @@ test("P8B-UI Public order discovery and readiness", async ({ page }) => {
   }
 
   await invoke("list_work_orders", { limit: 1 }, '"next_after_work_order": "WO-1"');
-  const cnc = await invoke("get_release_readiness", { work_order: "WO-1" }, '"ready": true');
-  await invoke("release_work_order", { work_order: "WO-1", idempotency_key: "release", expected_cursor: cnc.cursor }, '"status": "released"');
-  await invoke("get_release_readiness", { work_order: "WO-1" }, "INVALID_STATE");
+  const { cursor } = await invoke("get_release_readiness", { work_order: "WO-1" }, '"ready": true');
+  const draft = await invoke("create_work_order", { work_order: "WO-NEW", template_work_order: "WO-1", source_demand: "Demand-1", idempotency_key: "create", expected_cursor: cursor }, "Demand-1");
+  await invoke("update_draft_order", { work_order: "WO-NEW", source_demand: "Demand-2", idempotency_key: "update", expected_cursor: draft.cursor }, "Demand-2");
+  const cnc = await invoke("get_release_readiness", { work_order: "WO-NEW" }, '"ready": true');
+  const released = await invoke("release_work_order", { work_order: "WO-NEW", idempotency_key: "release", expected_cursor: cnc.cursor }, '"status": "released"');
+  await invoke("update_draft_order", { work_order: "WO-NEW", source_demand: "Demand-3", idempotency_key: "late-update", expected_cursor: released.cursor }, "INVALID_STATE");
 
   await button("关闭运行").click();
   await expect(status).toContainText('"closed": true');

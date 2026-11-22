@@ -9,6 +9,8 @@ use crate::scenario::Rejection;
 pub enum Action {
     GetWorkOrder,
     ListWorkOrders,
+    CreateWorkOrder,
+    UpdateDraftOrder,
     GetReleaseReadiness,
     ReleaseWorkOrder,
     GetMaterial,
@@ -112,6 +114,8 @@ impl Action {
         [
             Self::GetWorkOrder,
             Self::ListWorkOrders,
+            Self::CreateWorkOrder,
+            Self::UpdateDraftOrder,
             Self::GetMaterial,
             Self::HoldMaterial,
         ]
@@ -132,6 +136,8 @@ impl Action {
         match self {
             Self::GetWorkOrder => "get_work_order",
             Self::ListWorkOrders => "list_work_orders",
+            Self::CreateWorkOrder => "create_work_order",
+            Self::UpdateDraftOrder => "update_draft_order",
             Self::GetMaterial => "get_material",
             Self::HoldMaterial => "hold_material",
             _ => {
@@ -151,6 +157,8 @@ impl Action {
         match self {
             Self::GetWorkOrder
             | Self::ListWorkOrders
+            | Self::CreateWorkOrder
+            | Self::UpdateDraftOrder
             | Self::GetReleaseReadiness
             | Self::ReleaseWorkOrder => &["工单", "work order", "order"],
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
@@ -192,6 +200,49 @@ impl Action {
                 "none",
                 &["INVALID_ARGUMENT"][..],
             ),
+            Self::CreateWorkOrder | Self::UpdateDraftOrder => {
+                let create = self == Self::CreateWorkOrder;
+                let mut required = vec![
+                    "work_order",
+                    "source_demand",
+                    "expected_cursor",
+                    "idempotency_key",
+                ];
+                let mut properties = json!({"work_order":text(),"source_demand":text(),
+                    "expected_cursor":{"type":"integer","minimum":0,"maximum":i64::MAX},"idempotency_key":text()});
+                if create {
+                    required.push("template_work_order");
+                    properties["template_work_order"] = text();
+                    properties["serial"] = text();
+                }
+                (
+                    if create {
+                        "按参考工单定义创建工单草稿"
+                    } else {
+                        "更新工单草稿的来源需求"
+                    },
+                    "production",
+                    "write",
+                    object(&required, properties),
+                    json!({"work_order":text(),"status":{"const":"planned"},"source_demand":text(),
+                        "template_work_order":text(),"cursor":{"type":"integer","minimum":0}}),
+                    if create {
+                        "create_planned_work_order"
+                    } else {
+                        "update_draft_demand"
+                    },
+                    &[
+                        "INVALID_ARGUMENT",
+                        "WORK_ORDER_EXISTS",
+                        "WORK_ORDER_NOT_FOUND",
+                        "INVALID_STATE",
+                        "TEMPLATE_NOT_FOUND",
+                        "SERIAL_IN_USE",
+                        "VERSION_CONFLICT",
+                        "IDEMPOTENCY_CONFLICT",
+                    ][..],
+                )
+            }
             Self::GetMaterial => (
                 "查询物料批次及冻结状态",
                 "inventory",
@@ -232,6 +283,11 @@ impl Action {
         let mut fields = fields.as_object().unwrap().clone();
         fields.insert("ok".into(), json!({"const":true}));
         fields.insert("run_id".into(), text());
+        let mut output_fields = fields.clone();
+        if self == Self::GetWorkOrder {
+            output_fields.insert("source_demand".into(), text());
+            output_fields.insert("template_work_order".into(), text());
+        }
         let required: Vec<_> = fields.keys().map(String::as_str).collect();
         Spec {
             name: self.name(),
@@ -239,7 +295,7 @@ impl Action {
             domain,
             effect,
             input,
-            output: json!({"oneOf":[object(&required, Value::Object(fields.clone())),
+            output: json!({"oneOf":[object(&required, Value::Object(output_fields)),
                 object(&["ok","code","field"],json!({"ok":{"const":false},"code":text(),"field":text()}))]}),
             preconditions: &["run_open", "tool_enabled_in_scenario"],
             side_effect,

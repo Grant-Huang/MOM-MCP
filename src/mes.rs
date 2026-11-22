@@ -310,10 +310,14 @@ fn load(
             row.get(0)
         })
         .optional()?;
-    Ok(stored.map_or_else(
-        || Ok(State::new(setup, orders)),
-        |state| serde_json::from_str(&state),
-    )?)
+    let mut state: State = match stored {
+        Some(value) => serde_json::from_str(&value)?,
+        None => return Ok(State::new(setup, orders)),
+    };
+    for id in orders {
+        state.orders.entry(id.clone()).or_default();
+    }
+    Ok(state)
 }
 
 fn store(tx: &Transaction<'_>, run: &str, state: &State) -> anyhow::Result<()> {
