@@ -5,3 +5,5 @@ Use the feature map and the acceptance checklist for each delivery milestone. Ru
 After every milestone, report overall progress, the current stage and its acceptance/PR status, and the remaining stages.
 
 Implement all MES behavior with mocks. Public MCP metadata, schemas, calls and errors use manufacturing business terminology only. Keep mock provenance, fixtures, random seeds, model details and evaluation data behind the trusted control boundary. Verify both public discovery and direct calls.
+
+See [DEV_STANDARD.md](DEV_STANDARD.md) for the project development, verification, and review workflow.

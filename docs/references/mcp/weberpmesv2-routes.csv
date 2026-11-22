@@ -1,0 +1,1074 @@
+source,line,declaration,route_fragment,handler,capability,description_basis
+routes/api.php,32,get,/user,,get · /user,inferred from route and handler
+routes/api.php,37,get,/callback,QontoIntegrationController::callback,Callback (qonto integration),inferred from route and handler
+routes/api.php,39,post,/webhook/invoice,QontoWebhookController::handle,Handle (qonto webhook),inferred from route and handler
+routes/api.php,44,post,integrations/esignature/webhook,ESignatureWebhookController::handle,Handle (e signature webhook),inferred from route and handler
+routes/api.php,54,post,/{system_code}/inbound,IntegrationInboundController::handle,Handle (integration inbound),inferred from route and handler
+routes/api.php,63,get,n2p/sheet-lots/{ref}/stock,SheetLotStockController::show,Read detail for sheet lot stock,inferred from route and handler
+routes/api.php,67,get,clients,CompanyController::clients,Clients (company),inferred from route and handler
+routes/api.php,70,post,leads/inbound,InboundLeadController::store,Create or submit inbound lead,inferred from route and handler
+routes/api.php,74,post,quote,QuoteController::store,Create or submit quote,inferred from route and handler
+routes/api.php,75,put,quote/{quote},QuoteController::update,Update quote,inferred from route and handler
+routes/api.php,76,post,product,ProductController::store,Create or submit product,inferred from route and handler
+routes/api.php,77,put,product/{product},ProductController::update,Update product,inferred from route and handler
+routes/api.php,83,get,/list,FileApiController::index,List or display file api records,inferred from route and handler
+routes/api.php,84,post,/store,FileApiController::store,Create or submit file api,inferred from route and handler
+routes/api.php,85,patch,/{file},FileApiController::update,Update file api,inferred from route and handler
+routes/api.php,86,delete,/{file},FileApiController::destroy,Remove file api,inferred from route and handler
+routes/api.php,92,apiResource,companies,CompanyController,"Manage companies through resource actions, subject to route restrictions",inferred from route and handler
+routes/api.php,94,apiResource,quote,QuoteController,"Manage quote through resource actions, subject to route restrictions",inferred from route and handler
+routes/api.php,95,apiResource,order,OrderController,"Manage order through resource actions, subject to route restrictions",inferred from route and handler
+routes/api.php,96,apiResource,product,ProductController,"Manage product through resource actions, subject to route restrictions",inferred from route and handler
+routes/api.php,97,apiResource,tasks,TaskController,"Manage tasks through resource actions, subject to route restrictions",inferred from route and handler
+routes/api.php,98,apiResource,energy-consumptions,EnergyConsumptionController,"Manage energy-consumptions through resource actions, subject to route restrictions",inferred from route and handler
+routes/api.php,102,get,/exports/sales-orders,ExportSalesOrderController,get · /exports/sales-orders,inferred from route and handler
+routes/api.php,110,get,/status,QontoIntegrationController::status,Status (qonto integration),inferred from route and handler
+routes/api.php,111,get,/connect,QontoIntegrationController::connect,Connect (qonto integration),inferred from route and handler
+routes/api.php,112,post,/clients/sync,QontoIntegrationController::sync,Sync (qonto integration),inferred from route and handler
+routes/api.php,113,post,/clients/reconcile,QontoIntegrationController::reconcile,Reconcile (qonto integration),inferred from route and handler
+routes/api.php,114,post,/clients/{wemClientId}/push,QontoIntegrationController::push,Push (qonto integration),inferred from route and handler
+routes/api.php,115,post,/clients/{reviewId}/resolve,QontoIntegrationController::resolve,Resolve (qonto integration),inferred from route and handler
+routes/api.php,116,post,/settings,QontoIntegrationController::settings,Settings (qonto integration),inferred from route and handler
+routes/api.php,117,post,/disconnect,QontoIntegrationController::disconnect,Disconnect (qonto integration),inferred from route and handler
+routes/api.php,118,post,/invoices/{invoiceId}/submit,QontoIntegrationController::submitInvoice,Submit invoice (qonto integration),inferred from route and handler
+routes/api.php,119,post,/invoices/{invoiceId}/poll,QontoIntegrationController::pollInvoice,Poll invoice (qonto integration),inferred from route and handler
+routes/api.php,125,get,/status,PdpIntegrationController::status,Status (pdp integration),inferred from route and handler
+routes/api.php,126,post,/invoices/{invoiceId}/submit,PdpIntegrationController::submitInvoice,Submit invoice (pdp integration),inferred from route and handler
+routes/api.php,127,post,/invoices/{invoiceId}/poll,PdpIntegrationController::pollInvoice,Poll invoice (pdp integration),inferred from route and handler
+routes/auth.php,18,get,/login,AuthenticatedSessionController::create,Open the creation workflow for authenticated session,inferred from route and handler
+routes/auth.php,26,redirect,/,/login,redirect · /,inferred from route and handler
+routes/auth.php,29,post,/login,AuthenticatedSessionController::store,Create or submit authenticated session,inferred from route and handler
+routes/auth.php,34,get,/register,RegisteredUserController::create,Open the creation workflow for registered user,inferred from route and handler
+routes/auth.php,37,post,/register,RegisteredUserController::store,Create or submit registered user,inferred from route and handler
+routes/auth.php,41,get,/forgot/password,PasswordResetLinkController::create,Open the creation workflow for password reset link,inferred from route and handler
+routes/auth.php,45,post,/forgot/password,PasswordResetLinkController::store,Create or submit password reset link,inferred from route and handler
+routes/auth.php,49,get,/password/reset/{token},NewPasswordController::create,Open the creation workflow for new password,inferred from route and handler
+routes/auth.php,53,post,/password/reset/store,NewPasswordController::store,Create or submit new password,inferred from route and handler
+routes/auth.php,62,get,verify-email,EmailVerificationPromptController,get · verify-email,inferred from route and handler
+routes/auth.php,65,get,verify-email/{id}/{hash},VerifyEmailController,get · verify-email/{id}/{hash},inferred from route and handler
+routes/auth.php,69,post,email/verification-notification,EmailVerificationNotificationController::store,Create or submit email verification notification,inferred from route and handler
+routes/auth.php,73,get,confirm-password,ConfirmablePasswordController::show,Read detail for confirmable password,inferred from route and handler
+routes/auth.php,76,post,confirm-password,ConfirmablePasswordController::store,Create or submit confirmable password,inferred from route and handler
+routes/auth.php,78,put,password,PasswordController::update,Update password,inferred from route and handler
+routes/auth.php,80,post,logout,AuthenticatedSessionController::destroy,Remove authenticated session,inferred from route and handler
+routes/dav.php,18,match,/dav/{token}/{name?},OfficeDavController::handle,Handle (office dav),inferred from route and handler
+routes/web.php,33,get,/guest/quote/{uuid},App\Http\Controllers\GuestController@ShowQuoteDocument,Show quote document (guest),inferred from route and handler
+routes/web.php,34,get,/guest/order/{uuid},App\Http\Controllers\GuestController@ShowOrderDocument,Show order document (guest),inferred from route and handler
+routes/web.php,35,get,/guest/delivery/{uuid},App\Http\Controllers\GuestController@ShowDeliveryDocument,Show delivery document (guest),inferred from route and handler
+routes/web.php,36,get,/guest/nonConformitie/{uuid}/{id},App\Http\Controllers\Quality\QualityNonConformityController@createNCFromDelivery,Create nc from delivery (quality non conformity),inferred from route and handler
+routes/web.php,37,get,/guest/,App\Http\Controllers\GuestController@index,List or display guest records,inferred from route and handler
+routes/web.php,39,get,/guest/quote/{uuid}/chats,\App\Http\Controllers\GuestChatController::index,List or display guest chat records,inferred from route and handler
+routes/web.php,40,post,/guest/quote/{uuid}/chats,\App\Http\Controllers\GuestChatController::store,Create or submit guest chat,inferred from route and handler
+routes/web.php,42,post,/guest/quote/{uuid}/signature,\App\Http\Controllers\GuestQuoteSignatureController::start,Start (guest quote signature),inferred from route and handler
+routes/web.php,43,get,/guest/quote/{uuid}/signature/return,\App\Http\Controllers\GuestQuoteSignatureController::return,Return (guest quote signature),inferred from route and handler
+routes/web.php,45,get,/integrations/qonto/callback,\App\Http\Controllers\Integrations\QontoSettingsController::callback,Callback (qonto settings),inferred from route and handler
+routes/web.php,47,get,/pointage,AttendanceController::index,List or display attendance records,inferred from route and handler
+routes/web.php,48,post,/pointage,AttendanceController::store,Create or submit attendance,inferred from route and handler
+routes/web.php,50,post,/order/ratings,App\Http\Controllers\Workflow\OrdersRatingController@store,Create or submit orders rating,inferred from route and handler
+routes/web.php,54,get,login,App\Http\Controllers\Customer\Auth\AuthenticatedSessionController@create,Open the creation workflow for authenticated session,inferred from route and handler
+routes/web.php,55,post,login,App\Http\Controllers\Customer\Auth\AuthenticatedSessionController@store,Create or submit authenticated session,inferred from route and handler
+routes/web.php,59,post,logout,App\Http\Controllers\Customer\Auth\AuthenticatedSessionController@destroy,Remove authenticated session,inferred from route and handler
+routes/web.php,60,get,/,App\Http\Controllers\Customer\PortalController@index,List or display portal records,inferred from route and handler
+routes/web.php,61,get,/orders/{order},App\Http\Controllers\Customer\PortalController@showOrder,Show order (portal),inferred from route and handler
+routes/web.php,62,get,/deliveries/{delivery},App\Http\Controllers\Customer\PortalController@showDelivery,Show delivery (portal),inferred from route and handler
+routes/web.php,63,get,/invoices/{invoice},App\Http\Controllers\Customer\PortalController@showInvoice,Show invoice (portal),inferred from route and handler
+routes/web.php,66,get,/,\App\Http\Controllers\Customer\CustomerRgpdController::index,List or display customer rgpd records,inferred from route and handler
+routes/web.php,67,get,/export,\App\Http\Controllers\Customer\CustomerRgpdController::export,Export customer rgpd records,inferred from route and handler
+routes/web.php,68,post,/erase,\App\Http\Controllers\Customer\CustomerRgpdController::eraseRequest,Erase request (customer rgpd),inferred from route and handler
+routes/web.php,74,get,/pending-role,,get · /pending-role,inferred from route and handler
+routes/web.php,81,get,/,App\Http\Controllers\Setup\SetupController@index,List or display setup records,inferred from route and handler
+routes/web.php,83,post,/company,App\Http\Controllers\Setup\SetupController@saveCompany,Save company (setup),inferred from route and handler
+routes/web.php,84,post,/vat,App\Http\Controllers\Setup\SetupController@saveVat,Save vat (setup),inferred from route and handler
+routes/web.php,85,post,/payment-condition,App\Http\Controllers\Setup\SetupController@savePaymentCondition,Save payment condition (setup),inferred from route and handler
+routes/web.php,86,post,/payment-method,App\Http\Controllers\Setup\SetupController@savePaymentMethod,Save payment method (setup),inferred from route and handler
+routes/web.php,87,post,/delivery,App\Http\Controllers\Setup\SetupController@saveDelivery,Save delivery (setup),inferred from route and handler
+routes/web.php,88,post,/unit,App\Http\Controllers\Setup\SetupController@saveUnit,Save unit (setup),inferred from route and handler
+routes/web.php,90,post,/role,App\Http\Controllers\Setup\SetupController@saveRole,Save role (setup),inferred from route and handler
+routes/web.php,91,post,/estimated-budget,App\Http\Controllers\Setup\SetupController@saveEstimatedBudget,Save estimated budget (setup),inferred from route and handler
+routes/web.php,94,get,/dashboard,App\Http\Controllers\HomeController@index,List or display home records,inferred from route and handler
+routes/web.php,98,get,/quotes/rate,App\Http\Controllers\Api\KpiController@quoteRate,Quote rate (kpi),inferred from route and handler
+routes/web.php,99,get,/orders/monthly,App\Http\Controllers\Api\KpiController@ordersMonthly,Orders monthly (kpi),inferred from route and handler
+routes/web.php,100,get,/delivery/board,App\Http\Controllers\Api\KpiController@deliveryBoard,Delivery board (kpi),inferred from route and handler
+routes/web.php,101,get,/recent/orders,App\Http\Controllers\Api\KpiController@recentOrders,Recent orders (kpi),inferred from route and handler
+routes/web.php,102,get,/recent/quotes,App\Http\Controllers\Api\KpiController@recentQuotes,Recent quotes (kpi),inferred from route and handler
+routes/web.php,103,get,/recent/invoices,App\Http\Controllers\Api\KpiController@recentInvoices,Recent invoices (kpi),inferred from route and handler
+routes/web.php,104,get,/recent/deliveries,App\Http\Controllers\Api\KpiController@recentDeliveries,Recent deliveries (kpi),inferred from route and handler
+routes/web.php,105,get,/recent/purchases,App\Http\Controllers\Api\KpiController@recentPurchases,Recent purchases (kpi),inferred from route and handler
+routes/web.php,106,get,/top-clients,App\Http\Controllers\Api\KpiController@topClients,Top clients (kpi),inferred from route and handler
+routes/web.php,107,get,/nc-stats,App\Http\Controllers\Api\KpiController@ncStats,Nc stats (kpi),inferred from route and handler
+routes/web.php,108,get,/supplier-delays,App\Http\Controllers\Api\KpiController@supplierDelays,Supplier delays (kpi),inferred from route and handler
+routes/web.php,109,get,/otd,App\Http\Controllers\Api\KpiController@otd,Otd (kpi),inferred from route and handler
+routes/web.php,110,get,/mood,App\Http\Controllers\Api\KpiController@mood,Mood (kpi),inferred from route and handler
+routes/web.php,111,post,/mood,App\Http\Controllers\Api\KpiController@setMood,Set mood (kpi),inferred from route and handler
+routes/web.php,116,post,/chat,\App\Http\Controllers\AI\AssistantChatController::chat,Chat (assistant chat),inferred from route and handler
+routes/web.php,118,post,/rewrite,\App\Http\Controllers\AI\TextRewriteController::rewrite,Rewrite (text rewrite),inferred from route and handler
+routes/web.php,123,get,/chats,\App\Http\Controllers\ChatController::index,List or display chat records,inferred from route and handler
+routes/web.php,124,post,/chats,\App\Http\Controllers\ChatController::store,Create or submit chat,inferred from route and handler
+routes/web.php,129,get,/dashboard/config,App\Http\Controllers\DashboardConfigController@show,Read detail for dashboard config,inferred from route and handler
+routes/web.php,130,put,/dashboard/config,App\Http\Controllers\DashboardConfigController@update,Update dashboard config,inferred from route and handler
+routes/web.php,135,get,/config,App\Http\Controllers\TodayController@configShow,Config show (today),inferred from route and handler
+routes/web.php,136,put,/config,App\Http\Controllers\TodayController@configUpdate,Config update (today),inferred from route and handler
+routes/web.php,137,get,/invoices-overdue,App\Http\Controllers\TodayController@invoicesOverdue,Invoices overdue (today),inferred from route and handler
+routes/web.php,138,get,/orders-late,App\Http\Controllers\TodayController@ordersLate,Orders late (today),inferred from route and handler
+routes/web.php,139,get,/orders-due-week,App\Http\Controllers\TodayController@ordersDueWeek,Orders due week (today),inferred from route and handler
+routes/web.php,140,get,/quotes-expiring,App\Http\Controllers\TodayController@quotesExpiring,Quotes expiring (today),inferred from route and handler
+routes/web.php,141,get,/leads-pending,App\Http\Controllers\TodayController@leadsPending,Leads pending (today),inferred from route and handler
+routes/web.php,142,get,/recent-activity,App\Http\Controllers\TodayController@recentActivity,Recent activity (today),inferred from route and handler
+routes/web.php,146,get,/whiteboards,CollaborationWhiteboardController::show,Read detail for collaboration whiteboard,inferred from route and handler
+routes/web.php,147,get,/whiteboards/{whiteboard},CollaborationWhiteboardController::show,Read detail for collaboration whiteboard,inferred from route and handler
+routes/web.php,154,get,/,ApiWhiteboardController::index,List or display api whiteboard records,inferred from route and handler
+routes/web.php,155,post,/,ApiWhiteboardController::store,Create or submit api whiteboard,inferred from route and handler
+routes/web.php,156,get,/{whiteboard},ApiWhiteboardController::show,Read detail for api whiteboard,inferred from route and handler
+routes/web.php,157,put,/{whiteboard},ApiWhiteboardController::update,Update api whiteboard,inferred from route and handler
+routes/web.php,159,get,/{whiteboard}/snapshots,WhiteboardSnapshotController::index,List or display whiteboard snapshot records,inferred from route and handler
+routes/web.php,160,post,/{whiteboard}/snapshots,WhiteboardSnapshotController::store,Create or submit whiteboard snapshot,inferred from route and handler
+routes/web.php,162,get,/{whiteboard}/files,WhiteboardFileController::index,List or display whiteboard file records,inferred from route and handler
+routes/web.php,163,post,/{whiteboard}/files,WhiteboardFileController::store,Create or submit whiteboard file,inferred from route and handler
+routes/web.php,167,get,/reports,App\\Http\\Controllers\\ReportsController@index,List or display reports records,inferred from route and handler
+routes/web.php,168,get,/reports/accounting,App\\Http\\Controllers\\ReportsController@accounting,Accounting (reports),inferred from route and handler
+routes/web.php,170,get,/documents,DocumentController::index,List or display document records,inferred from route and handler
+routes/web.php,176,get,/,GuideController::index,List or display guide records,inferred from route and handler
+routes/web.php,177,get,/{slug},GuideController::show,Read detail for guide,inferred from route and handler
+routes/web.php,178,get,/{slug}/media/{file},GuideController::media,Media (guide),inferred from route and handler
+routes/web.php,184,get,/,SpreadsheetController::index,List or display spreadsheet records,inferred from route and handler
+routes/web.php,185,get,/create,SpreadsheetController::create,Open the creation workflow for spreadsheet,inferred from route and handler
+routes/web.php,186,post,/,SpreadsheetController::store,Create or submit spreadsheet,inferred from route and handler
+routes/web.php,187,get,/{spreadsheet}/edit,SpreadsheetController::edit,Open the edit workflow for spreadsheet,inferred from route and handler
+routes/web.php,188,put,/{spreadsheet},SpreadsheetController::update,Update spreadsheet,inferred from route and handler
+routes/web.php,189,delete,/{spreadsheet},SpreadsheetController::destroy,Remove spreadsheet,inferred from route and handler
+routes/web.php,190,post,/{spreadsheet}/save,SpreadsheetController::save,Save (spreadsheet),inferred from route and handler
+routes/web.php,194,get,/,App\Http\Controllers\Workshop\WorkshopController@index,List or display workshop records,inferred from route and handler
+routes/web.php,195,get,/Task/Lines,App\Http\Controllers\Workshop\WorkshopController@taskLines,Task lines (workshop),inferred from route and handler
+routes/web.php,196,get,/Task/Lines/json/list,App\Http\Controllers\Workshop\WorkshopController@taskLinesJson,Task lines json (workshop),inferred from route and handler
+routes/web.php,197,get,/Task/Statu/Id/{id},App\Http\Controllers\Workshop\WorkshopController@statu,Statu (workshop),inferred from route and handler
+routes/web.php,198,get,/Task/Statu,App\Http\Controllers\Workshop\WorkshopController@statu,Statu (workshop),inferred from route and handler
+routes/web.php,200,get,/Scan,App\Http\Controllers\Workshop\ScanStationController@index,List or display scan station records,inferred from route and handler
+routes/web.php,201,post,/Scan,App\Http\Controllers\Workshop\ScanStationController@scan,Scan (scan station),inferred from route and handler
+routes/web.php,202,get,/Stock/Detail/{id},App\Http\Controllers\Workshop\WorkshopController@stockDetail,Stock detail (workshop),inferred from route and handler
+routes/web.php,203,get,/Stock/Detail,App\Http\Controllers\Workshop\WorkshopController@stockDetail,Stock detail (workshop),inferred from route and handler
+routes/web.php,204,get,/Stock/Scan,App\Http\Controllers\Workshop\WorkshopController@stockScan,Stock scan (workshop),inferred from route and handler
+routes/web.php,206,get,/Reports,App\Http\Controllers\Workshop\WorkshopController@reports,Reports (workshop),inferred from route and handler
+routes/web.php,207,get,/Reports/json,App\Http\Controllers\Workshop\WorkshopController@reportsJson,Reports json (workshop),inferred from route and handler
+routes/web.php,210,get,/andon,App\Http\Controllers\Planning\AndonAlertController@taskAlertsDashboard,Task alerts dashboard (andon alert),inferred from route and handler
+routes/web.php,211,post,/andon/store,App\Http\Controllers\Planning\AndonAlertController@triggerAlert,Trigger alert (andon alert),inferred from route and handler
+routes/web.php,212,post,/andon/inProgress/{id},App\Http\Controllers\Planning\AndonAlertController@inProgressAlert,In progress alert (andon alert),inferred from route and handler
+routes/web.php,213,post,/andon/resolve/{id},App\Http\Controllers\Planning\AndonAlertController@resolveAlert,Resolve alert (andon alert),inferred from route and handler
+routes/web.php,215,get,/andon/task-activity,App\Http\Controllers\Planning\AndonAlertController@taskActivityDashboard,Task activity dashboard (andon alert),inferred from route and handler
+routes/web.php,216,get,/andon/orders-dashboard,App\Http\Controllers\Planning\AndonAlertController@orderWorkshopDashboard,Order workshop dashboard (andon alert),inferred from route and handler
+routes/web.php,222,get,/,App\Http\Controllers\Companies\CompaniesController@index,List or display companies records,inferred from route and handler
+routes/web.php,225,get,/json/list,App\Http\Controllers\Companies\CompaniesController@listJson,List json (companies),inferred from route and handler
+routes/web.php,226,post,/json/store,App\Http\Controllers\Companies\CompaniesController@storeJson,Store json (companies),inferred from route and handler
+routes/web.php,227,get,/json/select-data,App\Http\Controllers\Companies\CompaniesController@selectDataJson,Select data json (companies),inferred from route and handler
+routes/web.php,229,get,/json/registry-search,App\Http\Controllers\Companies\CompaniesController@registrySearch,Registry search (companies),inferred from route and handler
+routes/web.php,234,post,/create/{id},App\Http\Controllers\Companies\AddressesController@store,Create or submit addresses,inferred from route and handler
+routes/web.php,235,post,/edit/{id},App\Http\Controllers\Companies\AddressesController@update,Update addresses,inferred from route and handler
+routes/web.php,236,get,/edit/{id},App\Http\Controllers\Companies\AddressesController@edit,Open the edit workflow for addresses,inferred from route and handler
+routes/web.php,237,post,/json/store,App\Http\Controllers\Companies\AddressesController@storeJson,Store json (addresses),inferred from route and handler
+routes/web.php,238,post,/json/update/{address},App\Http\Controllers\Companies\AddressesController@updateJson,Update json (addresses),inferred from route and handler
+routes/web.php,241,post,/import,App\Http\Controllers\Admin\ImportsExportsController@importCompanies,Import companies (imports exports),inferred from route and handler
+routes/web.php,242,post,/edit/{id},App\Http\Controllers\Companies\CompaniesController@update,Update companies,inferred from route and handler
+routes/web.php,243,post,/json/update/{company},App\Http\Controllers\Companies\CompaniesController@updateJson,Update json (companies),inferred from route and handler
+routes/web.php,245,get,/{id}/pdp/lookup,App\Http\Controllers\Companies\CompaniesController@pdpLookup,Pdp lookup (companies),inferred from route and handler
+routes/web.php,246,get,/{id},App\Http\Controllers\Companies\CompaniesController@show,Read detail for companies,inferred from route and handler
+routes/web.php,247,get,/{id}/json/timeline,App\Http\Controllers\Companies\CompaniesController@timelineJson,Timeline json (companies),inferred from route and handler
+routes/web.php,249,get,/store/quote/{id},App\Http\Controllers\Companies\CompaniesController@storeQuote,Store quote (companies),inferred from route and handler
+routes/web.php,252,post,/supplier/ratings,App\Http\Controllers\Companies\SupplierRatingController@store,Create or submit supplier rating,inferred from route and handler
+routes/web.php,258,post,/create/{id},App\Http\Controllers\Companies\ContactsController@store,Create or submit contacts,inferred from route and handler
+routes/web.php,259,match,/edit/{id},App\Http\Controllers\Companies\ContactsController@update,Update contacts,inferred from route and handler
+routes/web.php,260,get,/edit/{id},App\Http\Controllers\Companies\ContactsController@edit,Open the edit workflow for contacts,inferred from route and handler
+routes/web.php,261,post,/json/store,App\Http\Controllers\Companies\ContactsController@storeJson,Store json (contacts),inferred from route and handler
+routes/web.php,262,post,/json/update/{contact},App\Http\Controllers\Companies\ContactsController@updateJson,Update json (contacts),inferred from route and handler
+routes/web.php,266,post,/{company}/document-defaults/sync-contact/{contact},App\Http\Controllers\Companies\CompanyDocumentDefaultsController@syncContact,Sync contact (company document defaults),inferred from route and handler
+routes/web.php,267,post,/{company}/document-defaults/sync-address/{address},App\Http\Controllers\Companies\CompanyDocumentDefaultsController@syncAddress,Sync address (company document defaults),inferred from route and handler
+routes/web.php,271,get,/,App\Http\Controllers\Workflow\LeadsController@index,List or display leads records,inferred from route and handler
+routes/web.php,272,post,/edit/{id},App\Http\Controllers\Workflow\LeadsController@update,Update leads,inferred from route and handler
+routes/web.php,273,get,/store/opportunity/{id},App\Http\Controllers\Workflow\LeadsController@storeOpportunity,Store opportunity (leads),inferred from route and handler
+routes/web.php,276,get,/json/list,App\Http\Controllers\Workflow\LeadsController@listJson,List json (leads),inferred from route and handler
+routes/web.php,277,get,/json/kanban,App\Http\Controllers\Workflow\LeadsController@kanbanJson,Kanban json (leads),inferred from route and handler
+routes/web.php,278,put,/json/kanban/{id}/move,App\Http\Controllers\Workflow\LeadsController@kanbanMoveJson,Kanban move json (leads),inferred from route and handler
+routes/web.php,279,post,/json/store,App\Http\Controllers\Workflow\LeadsController@storeJson,Store json (leads),inferred from route and handler
+routes/web.php,280,post,/json/import-mail,App\Http\Controllers\Workflow\LeadsController@importMailJson,Import mail json (leads),inferred from route and handler
+routes/web.php,281,post,/{id}/quote,App\Http\Controllers\Workflow\LeadsController@storeQuote,Store quote (leads),inferred from route and handler
+routes/web.php,282,get,/json/select-data,App\Http\Controllers\Workflow\LeadsController@selectDataJson,Select data json (leads),inferred from route and handler
+routes/web.php,283,get,/json/addresses/{companyId},App\Http\Controllers\Workflow\LeadsController@addressesJson,Addresses json (leads),inferred from route and handler
+routes/web.php,284,get,/json/contacts/{companyId},App\Http\Controllers\Workflow\LeadsController@contactsJson,Contacts json (leads),inferred from route and handler
+routes/web.php,286,get,/{id},App\Http\Controllers\Workflow\LeadsController@show,Read detail for leads,inferred from route and handler
+routes/web.php,287,post,/{id}/json/statu,App\Http\Controllers\Workflow\LeadsController@changeStatusJson,Change status json (leads),inferred from route and handler
+routes/web.php,288,post,/{id}/json/priority,App\Http\Controllers\Workflow\LeadsController@changePriorityJson,Change priority json (leads),inferred from route and handler
+routes/web.php,292,get,/,App\Http\Controllers\Workflow\OpportunitiesController@index,List or display opportunities records,inferred from route and handler
+routes/web.php,293,post,/edit/{id},App\Http\Controllers\Workflow\OpportunitiesController@update,Update opportunities,inferred from route and handler
+routes/web.php,294,get,/store/quote/{id},App\Http\Controllers\Workflow\OpportunitiesController@storeQuote,Store quote (opportunities),inferred from route and handler
+routes/web.php,297,get,/json/list,App\Http\Controllers\Workflow\OpportunitiesController@listJson,List json (opportunities),inferred from route and handler
+routes/web.php,298,get,/json/kanban,App\Http\Controllers\Workflow\OpportunitiesController@kanbanJson,Kanban json (opportunities),inferred from route and handler
+routes/web.php,299,put,/json/kanban/{id}/move,App\Http\Controllers\Workflow\OpportunitiesController@kanbanMoveJson,Kanban move json (opportunities),inferred from route and handler
+routes/web.php,300,post,/json/store,App\Http\Controllers\Workflow\OpportunitiesController@storeJson,Store json (opportunities),inferred from route and handler
+routes/web.php,301,get,/json/select-data,App\Http\Controllers\Workflow\OpportunitiesController@selectDataJson,Select data json (opportunities),inferred from route and handler
+routes/web.php,302,get,/json/addresses/{companyId},App\Http\Controllers\Workflow\OpportunitiesController@addressesJson,Addresses json (opportunities),inferred from route and handler
+routes/web.php,303,get,/json/contacts/{companyId},App\Http\Controllers\Workflow\OpportunitiesController@contactsJson,Contacts json (opportunities),inferred from route and handler
+routes/web.php,306,get,/calendar,App\Http\Controllers\Workflow\OpportunityCalendarController@index,List or display opportunity calendar records,inferred from route and handler
+routes/web.php,307,get,/calendar/events,App\Http\Controllers\Workflow\OpportunityCalendarController@events,Events (opportunity calendar),inferred from route and handler
+routes/web.php,310,patch,/visits/{visit}/json,App\Http\Controllers\Workflow\OpportunityVisitsController@update,Update opportunity visits,inferred from route and handler
+routes/web.php,311,post,/visits/{visit}/json/transcribe,App\Http\Controllers\Workflow\OpportunityVisitsController@transcribe,Transcribe (opportunity visits),inferred from route and handler
+routes/web.php,312,post,/visits/{visit}/json/report,App\Http\Controllers\Workflow\OpportunityVisitsController@report,Report (opportunity visits),inferred from route and handler
+routes/web.php,313,post,/visits/{visit}/json/validate,App\Http\Controllers\Workflow\OpportunityVisitsController@validateVisit,Validate visit (opportunity visits),inferred from route and handler
+routes/web.php,314,delete,/visits/{visit}/json,App\Http\Controllers\Workflow\OpportunityVisitsController@destroy,Remove opportunity visits,inferred from route and handler
+routes/web.php,316,get,/{id},App\Http\Controllers\Workflow\OpportunitiesController@show,Read detail for opportunities,inferred from route and handler
+routes/web.php,317,post,/{id}/json/statu,App\Http\Controllers\Workflow\OpportunitiesController@changeStatusJson,Change status json (opportunities),inferred from route and handler
+routes/web.php,318,post,/{id}/json/loss-reason,App\Http\Controllers\Workflow\OpportunitiesController@lossReasonJson,Loss reason json (opportunities),inferred from route and handler
+routes/web.php,319,get,/{id}/json/summary,App\Http\Controllers\Workflow\OpportunitySummaryController@summary,Summary (opportunity summary),inferred from route and handler
+routes/web.php,320,get,/{id}/json/timeline,App\Http\Controllers\Workflow\OpportunitySummaryController@timeline,Timeline (opportunity summary),inferred from route and handler
+routes/web.php,322,get,/{id}/json/risks,App\Http\Controllers\Workflow\AffairRisksController@index,List or display affair risks records,inferred from route and handler
+routes/web.php,323,post,/{id}/json/risks,App\Http\Controllers\Workflow\AffairRisksController@store,Create or submit affair risks,inferred from route and handler
+routes/web.php,324,put,/{id}/json/risks/{risk},App\Http\Controllers\Workflow\AffairRisksController@update,Update affair risks,inferred from route and handler
+routes/web.php,325,get,/{id}/visit,App\Http\Controllers\Workflow\OpportunityVisitsController@show,Read detail for opportunity visits,inferred from route and handler
+routes/web.php,326,post,/{id}/visits/json,App\Http\Controllers\Workflow\OpportunityVisitsController@store,Create or submit opportunity visits,inferred from route and handler
+routes/web.php,330,post,/activity/{id},App\Http\Controllers\Workflow\OpportunityActivitiesController@store,Create or submit opportunity activities,inferred from route and handler
+routes/web.php,331,post,/event/{id},App\Http\Controllers\Workflow\OpportunityEventsController@store,Create or submit opportunity events,inferred from route and handler
+routes/web.php,336,post,/activity/{id},App\Http\Controllers\Workflow\OpportunityActivitiesController@update,Update opportunity activities,inferred from route and handler
+routes/web.php,337,post,/event/{id},App\Http\Controllers\Workflow\OpportunityEventsController@update,Update opportunity events,inferred from route and handler
+routes/web.php,343,get,/,App\Http\Controllers\Workflow\QuotesController@index,List or display quotes records,inferred from route and handler
+routes/web.php,344,get,/lines,App\Http\Controllers\Workflow\QuoteLinesController@index,List or display quote lines records,inferred from route and handler
+routes/web.php,345,get,/lines/json,App\Http\Controllers\Workflow\QuoteLinesController@listJson,List json (quote lines),inferred from route and handler
+routes/web.php,346,post,/edit/{id},App\Http\Controllers\Workflow\QuotesController@update,Update quotes,inferred from route and handler
+routes/web.php,348,get,/json/list,App\Http\Controllers\Workflow\QuotesController@listJson,List json (quotes),inferred from route and handler
+routes/web.php,349,post,/json/store,App\Http\Controllers\Workflow\QuotesController@storeJson,Store json (quotes),inferred from route and handler
+routes/web.php,350,get,/json/select-data,App\Http\Controllers\Workflow\QuotesController@selectDataJson,Select data json (quotes),inferred from route and handler
+routes/web.php,351,get,/json/addresses/{companyId},App\Http\Controllers\Workflow\QuotesController@addressesJson,Addresses json (quotes),inferred from route and handler
+routes/web.php,352,get,/json/contacts/{companyId},App\Http\Controllers\Workflow\QuotesController@contactsJson,Contacts json (quotes),inferred from route and handler
+routes/web.php,353,post,/json/address,App\Http\Controllers\Workflow\QuotesController@storeAddressJson,Store address json (quotes),inferred from route and handler
+routes/web.php,354,post,/json/contact,App\Http\Controllers\Workflow\QuotesController@storeContactJson,Store contact json (quotes),inferred from route and handler
+routes/web.php,355,get,/json/templates,App\Http\Controllers\Workflow\QuotesController@templatesJson,Templates json (quotes),inferred from route and handler
+routes/web.php,356,get,/json/loss-stats,App\Http\Controllers\Workflow\QuotesController@lossStatsJson,Loss stats json (quotes),inferred from route and handler
+routes/web.php,357,post,/{id}/duplicate,App\Http\Controllers\Workflow\QuotesController@duplicate,Duplicate (quotes),inferred from route and handler
+routes/web.php,358,post,/{id}/revision,App\Http\Controllers\Workflow\QuotesController@newRevision,New revision (quotes),inferred from route and handler
+routes/web.php,359,post,/{id}/variant,App\Http\Controllers\Workflow\QuotesController@newVariant,New variant (quotes),inferred from route and handler
+routes/web.php,360,post,/{id}/family/close,App\Http\Controllers\Workflow\QuotesController@closeFamily,Close family (quotes),inferred from route and handler
+routes/web.php,361,post,/{id}/review,App\Http\Controllers\Workflow\QuotesController@updateReview,Update review (quotes),inferred from route and handler
+routes/web.php,362,post,/{id}/margin/apply,App\Http\Controllers\Workflow\QuotesController@applyMargin,Apply margin (quotes),inferred from route and handler
+routes/web.php,363,post,/{id}/save-as-template,App\Http\Controllers\Workflow\QuotesController@saveAsTemplate,Save as template (quotes),inferred from route and handler
+routes/web.php,364,delete,/{id}/template,App\Http\Controllers\Workflow\QuotesController@destroyTemplate,Destroy template (quotes),inferred from route and handler
+routes/web.php,365,get,/{id},App\Http\Controllers\Workflow\QuotesController@show,Read detail for quotes,inferred from route and handler
+routes/web.php,366,post,/{id}/json/statu,App\Http\Controllers\Workflow\QuotesController@changeStatusJson,Change status json (quotes),inferred from route and handler
+routes/web.php,367,post,/{id}/json/loss-reason,App\Http\Controllers\Workflow\QuotesController@lossReasonJson,Loss reason json (quotes),inferred from route and handler
+routes/web.php,369,post,/{idQuote}/edit-detail-lines/{id},App\Http\Controllers\Workflow\QuoteLinesController@update,Update quote lines,inferred from route and handler
+routes/web.php,370,post,/{idQuote}/edit-detail-lines/{id}/image,App\Http\Controllers\Workflow\QuoteLinesController@StoreImage,Store image (quote lines),inferred from route and handler
+routes/web.php,371,post,/{idQuote}/lines/import,App\Http\Controllers\Workflow\QuoteLinesController@import,Import (quote lines),inferred from route and handler
+routes/web.php,373,get,/{quoteId}/lines/json,App\Http\Controllers\Workflow\QuoteLinesController@linesForQuoteJson,Lines for quote json (quote lines),inferred from route and handler
+routes/web.php,374,get,/{quoteId}/lines/json/select-data,App\Http\Controllers\Workflow\QuoteLinesController@selectDataForQuoteJson,Select data for quote json (quote lines),inferred from route and handler
+routes/web.php,375,get,/{quoteId}/lines/json/import-sources,App\Http\Controllers\Workflow\QuoteLinesController@importSourcesJson,Import sources json (quote lines),inferred from route and handler
+routes/web.php,376,post,/{quoteId}/lines/json/import-from,App\Http\Controllers\Workflow\QuoteLinesController@importFromJson,Import from json (quote lines),inferred from route and handler
+routes/web.php,378,post,/{quoteId}/lines/json/dictation/transcribe,\App\Http\Controllers\Workflow\QuoteDictationController::transcribe,Transcribe (quote dictation),inferred from route and handler
+routes/web.php,379,post,/{quoteId}/lines/json/dictation/propose,\App\Http\Controllers\Workflow\QuoteDictationController::propose,Propose (quote dictation),inferred from route and handler
+routes/web.php,380,post,/{quoteId}/lines/json/dictation/store,App\Http\Controllers\Workflow\QuoteLinesController@storeDictatedJson,Store dictated json (quote lines),inferred from route and handler
+routes/web.php,382,post,/{quoteId}/lines/json/dpgf/preview,\App\Http\Controllers\Workflow\QuoteDpgfController::preview,Preview (quote dpgf),inferred from route and handler
+routes/web.php,383,post,/{quoteId}/lines/json/dpgf/analyse,\App\Http\Controllers\Workflow\QuoteDpgfController::analyse,Analyse (quote dpgf),inferred from route and handler
+routes/web.php,384,post,/{quoteId}/lines/json/dpgf/store,App\Http\Controllers\Workflow\QuoteLinesController@storeDpgfJson,Store dpgf json (quote lines),inferred from route and handler
+routes/web.php,385,get,/{quoteId}/lines/json/price-list/{productId},App\Http\Controllers\Workflow\QuoteLinesController@priceListForProductJson,Price list for product json (quote lines),inferred from route and handler
+routes/web.php,386,post,/{quoteId}/lines/json/store,App\Http\Controllers\Workflow\QuoteLinesController@storeLineJson,Store line json (quote lines),inferred from route and handler
+routes/web.php,387,post,/{quoteId}/lines/json/price-increase,App\Http\Controllers\Workflow\QuoteLinesController@priceIncreaseJson,Price increase json (quote lines),inferred from route and handler
+routes/web.php,388,put,/{quoteId}/lines/json/{id},App\Http\Controllers\Workflow\QuoteLinesController@updateLineJson,Update line json (quote lines),inferred from route and handler
+routes/web.php,389,delete,/{quoteId}/lines/json/{id},App\Http\Controllers\Workflow\QuoteLinesController@destroyLineJson,Destroy line json (quote lines),inferred from route and handler
+routes/web.php,390,post,/{quoteId}/lines/json/{id}/duplicate,App\Http\Controllers\Workflow\QuoteLinesController@duplicateLineJson,Duplicate line json (quote lines),inferred from route and handler
+routes/web.php,391,post,/{quoteId}/lines/json/{id}/breakdown,App\Http\Controllers\Workflow\QuoteLinesController@breakDownLineJson,Break down line json (quote lines),inferred from route and handler
+routes/web.php,392,post,/{quoteId}/lines/json/{id}/move,App\Http\Controllers\Workflow\QuoteLinesController@moveLineJson,Move line json (quote lines),inferred from route and handler
+routes/web.php,393,post,/{quoteId}/lines/json/reorder,App\Http\Controllers\Workflow\QuoteLinesController@reorderJson,Reorder json (quote lines),inferred from route and handler
+routes/web.php,394,post,/{quoteId}/lines/json/store-order,App\Http\Controllers\Workflow\QuoteLinesController@storeOrderJson,Store order json (quote lines),inferred from route and handler
+routes/web.php,395,get,/{quoteId}/lines/json/required-operations,App\Http\Controllers\Workflow\QuoteLinesController@requiredOperationsJson,Required operations json (quote lines),inferred from route and handler
+routes/web.php,396,post,/{quoteId}/lines/json/import-cad,App\Http\Controllers\Workflow\QuoteLinesController@importCadJson,Import cad json (quote lines),inferred from route and handler
+routes/web.php,397,post,/{quoteId}/lines/json/create-products,App\Http\Controllers\Workflow\QuoteLinesController@createProductsFromLinesJson,Create products from lines json (quote lines),inferred from route and handler
+routes/web.php,398,post,/{quoteId}/lines/json/{id}/create-product,App\Http\Controllers\Workflow\QuoteLinesController@createProductJson,Create product json (quote lines),inferred from route and handler
+routes/web.php,399,get,/{quoteId}/lines/json/{id}/tasks,App\Http\Controllers\Workflow\QuoteLinesController@tasksForLineJson,Tasks for line json (quote lines),inferred from route and handler
+routes/web.php,400,patch,/{quoteId}/lines/json/{id}/calculated-price,App\Http\Controllers\Workflow\QuoteLinesController@toggleCalculatedPriceJson,Toggle calculated price json (quote lines),inferred from route and handler
+routes/web.php,401,patch,/{quoteId}/lines/json/{id}/presentation,App\Http\Controllers\Workflow\QuoteLinesController@presentationJson,Presentation json (quote lines),inferred from route and handler
+routes/web.php,402,get,/{idQuote}/lines/{id}/detail-edit,App\Http\Controllers\Workflow\QuoteLinesController@detailEdit,Detail edit (quote lines),inferred from route and handler
+routes/web.php,404,post,/{quoteId}/lines/{id}/nest2bend/session,\App\Http\Controllers\Workflow\BendingSimulationController::store,Create or submit bending simulation,inferred from route and handler
+routes/web.php,405,post,/{quoteId}/lines/{id}/nest2bend/result,\App\Http\Controllers\Workflow\BendingSimulationController::complete,Complete (bending simulation),inferred from route and handler
+routes/web.php,407,post,/{quoteId}/lines/{id}/nest2bend/sheet,\App\Http\Controllers\Workflow\BendingSimulationController::sheet,Sheet (bending simulation),inferred from route and handler
+routes/web.php,408,post,/{id}/delivery-simulation,App\Http\Controllers\Workflow\QuotesController@simulateDelivery,Simulate delivery (quotes),inferred from route and handler
+routes/web.php,410,post,project-estimate/save/{id},App\Http\Controllers\Workflow\QuotesController@saveProjectEstimate,Save project estimate (quotes),inferred from route and handler
+routes/web.php,412,post,/import,App\Http\Controllers\Admin\ImportsExportsController@importQuotes,Import quotes (imports exports),inferred from route and handler
+routes/web.php,419,get,/,App\Http\Controllers\Workflow\OrdersController@index,List or display orders records,inferred from route and handler
+routes/web.php,420,get,/lines,App\Http\Controllers\Workflow\OrderLinesController@index,List or display order lines records,inferred from route and handler
+routes/web.php,421,get,/lines/json,App\Http\Controllers\Workflow\OrderLinesController@listJson,List json (order lines),inferred from route and handler
+routes/web.php,423,post,/lines/json/{id}/release,App\Http\Controllers\Workflow\OrderLinesController@releaseJson,Release json (order lines),inferred from route and handler
+routes/web.php,424,delete,/lines/json/{id}/release,App\Http\Controllers\Workflow\OrderLinesController@revokeReleaseJson,Revoke release json (order lines),inferred from route and handler
+routes/web.php,425,post,/edit/{id},App\Http\Controllers\Workflow\OrdersController@update,Update orders,inferred from route and handler
+routes/web.php,427,get,/json/list,App\Http\Controllers\Workflow\OrdersController@listJson,List json (orders),inferred from route and handler
+routes/web.php,428,post,/json/store,App\Http\Controllers\Workflow\OrdersController@storeJson,Store json (orders),inferred from route and handler
+routes/web.php,429,get,/json/select-data,App\Http\Controllers\Workflow\OrdersController@selectDataJson,Select data json (orders),inferred from route and handler
+routes/web.php,430,get,/json/addresses/{companyId},App\Http\Controllers\Workflow\OrdersController@addressesJson,Addresses json (orders),inferred from route and handler
+routes/web.php,431,get,/json/contacts/{companyId},App\Http\Controllers\Workflow\OrdersController@contactsJson,Contacts json (orders),inferred from route and handler
+routes/web.php,432,post,/json/address/store,App\Http\Controllers\Workflow\OrdersController@storeAddressJson,Store address json (orders),inferred from route and handler
+routes/web.php,433,post,/json/contact/store,App\Http\Controllers\Workflow\OrdersController@storeContactJson,Store contact json (orders),inferred from route and handler
+routes/web.php,434,get,/{id},App\Http\Controllers\Workflow\OrdersController@show,Read detail for orders,inferred from route and handler
+routes/web.php,435,post,/{id}/json/statu,App\Http\Controllers\Workflow\OrdersController@changeStatusJson,Change status json (orders),inferred from route and handler
+routes/web.php,436,get,/{id}/json/purchase-history,App\Http\Controllers\Workflow\OrdersController@purchaseHistoryJson,Purchase history json (orders),inferred from route and handler
+routes/web.php,438,get,/{id}/json/contract-review,App\Http\Controllers\Workflow\OrderContractReviewController@show,Read detail for order contract review,inferred from route and handler
+routes/web.php,439,put,/{id}/json/contract-review,App\Http\Controllers\Workflow\OrderContractReviewController@update,Update order contract review,inferred from route and handler
+routes/web.php,440,post,/{id}/json/contract-review/decision,App\Http\Controllers\Workflow\OrderContractReviewController@decide,Decide (order contract review),inferred from route and handler
+routes/web.php,442,post,/{id}/json/amendments,App\Http\Controllers\Workflow\OrderContractReviewController@storeAmendment,Store amendment (order contract review),inferred from route and handler
+routes/web.php,443,post,/{id}/json/amendments/{amendment}/cancel,App\Http\Controllers\Workflow\OrderContractReviewController@cancelAmendment,Cancel amendment (order contract review),inferred from route and handler
+routes/web.php,444,post,/{order}/calculate-task-dates,App\Http\Controllers\Workflow\OrdersController@calculateTaskDates,Calculate task dates (orders),inferred from route and handler
+routes/web.php,446,post,/{idOrder}/edit-detail-lines/{id},App\Http\Controllers\Workflow\OrderLinesController@update,Update order lines,inferred from route and handler
+routes/web.php,447,post,/{idOrder}/edit-detail-lines/{id}/image,App\Http\Controllers\Workflow\OrderLinesController@StoreImage,Store image (order lines),inferred from route and handler
+routes/web.php,448,post,/{idOrder}/lines/import,App\Http\Controllers\Workflow\OrderLinesController@import,Import (order lines),inferred from route and handler
+routes/web.php,450,get,/{orderId}/lines/json,App\Http\Controllers\Workflow\OrderLinesController@linesForOrderJson,Lines for order json (order lines),inferred from route and handler
+routes/web.php,451,get,/{orderId}/lines/json/select-data,App\Http\Controllers\Workflow\OrderLinesController@selectDataForOrderJson,Select data for order json (order lines),inferred from route and handler
+routes/web.php,452,get,/{orderId}/lines/json/price-list/{productId},App\Http\Controllers\Workflow\OrderLinesController@priceListForProductJson,Price list for product json (order lines),inferred from route and handler
+routes/web.php,453,post,/{orderId}/lines/json/store,App\Http\Controllers\Workflow\OrderLinesController@storeLineJson,Store line json (order lines),inferred from route and handler
+routes/web.php,454,put,/{orderId}/lines/json/{id},App\Http\Controllers\Workflow\OrderLinesController@updateLineJson,Update line json (order lines),inferred from route and handler
+routes/web.php,455,delete,/{orderId}/lines/json/{id},App\Http\Controllers\Workflow\OrderLinesController@destroyLineJson,Destroy line json (order lines),inferred from route and handler
+routes/web.php,456,post,/{orderId}/lines/json/{id}/duplicate,App\Http\Controllers\Workflow\OrderLinesController@duplicateLineJson,Duplicate line json (order lines),inferred from route and handler
+routes/web.php,457,post,/{orderId}/lines/json/{id}/breakdown,App\Http\Controllers\Workflow\OrderLinesController@breakDownLineJson,Break down line json (order lines),inferred from route and handler
+routes/web.php,458,post,/{orderId}/lines/json/{id}/move,App\Http\Controllers\Workflow\OrderLinesController@moveLineJson,Move line json (order lines),inferred from route and handler
+routes/web.php,459,post,/{orderId}/lines/json/release,App\Http\Controllers\Workflow\OrderLinesController@releaseManyJson,Release many json (order lines),inferred from route and handler
+routes/web.php,460,post,/{orderId}/lines/json/dossier,App\Http\Controllers\Workflow\OrderLinesController@dossierManyJson,Dossier many json (order lines),inferred from route and handler
+routes/web.php,461,post,/{orderId}/lines/json/reorder,App\Http\Controllers\Workflow\OrderLinesController@reorderJson,Reorder json (order lines),inferred from route and handler
+routes/web.php,462,post,/{orderId}/lines/json/price-increase,App\Http\Controllers\Workflow\OrderLinesController@priceIncreaseJson,Price increase json (order lines),inferred from route and handler
+routes/web.php,463,get,/{idOrder}/lines/{id}/detail-edit,App\Http\Controllers\Workflow\OrderLinesController@detailEdit,Detail edit (order lines),inferred from route and handler
+routes/web.php,464,get,/{orderId}/lines/json/{id}/delay-history,App\Http\Controllers\Workflow\OrderLinesController@delayHistoryJson,Delay history json (order lines),inferred from route and handler
+routes/web.php,465,get,/{orderId}/lines/json/{id}/tasks,App\Http\Controllers\Workflow\OrderLinesController@tasksForLineJson,Tasks for line json (order lines),inferred from route and handler
+routes/web.php,466,patch,/{orderId}/lines/json/{id}/calculated-price,App\Http\Controllers\Workflow\OrderLinesController@toggleCalculatedPriceJson,Toggle calculated price json (order lines),inferred from route and handler
+routes/web.php,467,post,/{orderId}/lines/json/{id}/cancel,App\Http\Controllers\Workflow\OrderLinesController@cancelLineJson,Cancel line json (order lines),inferred from route and handler
+routes/web.php,468,post,/{orderId}/lines/json/store-delivery,App\Http\Controllers\Workflow\OrderLinesController@storeDeliveryJson,Store delivery json (order lines),inferred from route and handler
+routes/web.php,469,post,/{orderId}/lines/json/store-invoice,App\Http\Controllers\Workflow\OrderLinesController@storeInvoiceJson,Store invoice json (order lines),inferred from route and handler
+routes/web.php,470,post,/{orderId}/lines/json/create-products,App\Http\Controllers\Workflow\OrderLinesController@createProductsFromLinesJson,Create products from lines json (order lines),inferred from route and handler
+routes/web.php,471,post,/{orderId}/lines/json/link-products,App\Http\Controllers\Workflow\OrderLinesController@linkProductsToLinesJson,Link products to lines json (order lines),inferred from route and handler
+routes/web.php,472,post,/{orderId}/lines/json/import-cad,App\Http\Controllers\Workflow\OrderLinesController@importCadJson,Import cad json (order lines),inferred from route and handler
+routes/web.php,474,post,/import,App\Http\Controllers\Admin\ImportsExportsController@importOrders,Import orders (imports exports),inferred from route and handler
+routes/web.php,476,post,/{id}/site,App\Http\Controllers\Workflow\OrderSiteController@store,Create or submit order site,inferred from route and handler
+routes/web.php,477,put,/{order}/site/{site},App\Http\Controllers\Workflow\OrderSiteController@update,Update order site,inferred from route and handler
+routes/web.php,478,delete,/{order}/site/{site},App\Http\Controllers\Workflow\OrderSiteController@destroy,Remove order site,inferred from route and handler
+routes/web.php,479,post,/{order}/site/{site}/implantation,App\Http\Controllers\Workflow\OrderSiteController@storeImplantation,Store implantation (order site),inferred from route and handler
+routes/web.php,480,put,/{order}/site/{site}/implantation/{implantation},App\Http\Controllers\Workflow\OrderSiteController@updateImplantation,Update implantation (order site),inferred from route and handler
+routes/web.php,481,delete,/{order}/site/{site}/implantation/{implantation},App\Http\Controllers\Workflow\OrderSiteController@destroyImplantation,Destroy implantation (order site),inferred from route and handler
+routes/web.php,485,get,/,App\Http\Controllers\Workflow\PreOrdersController@index,List or display pre orders records,inferred from route and handler
+routes/web.php,486,post,/upload,App\Http\Controllers\Workflow\PreOrdersController@upload,Upload (pre orders),inferred from route and handler
+routes/web.php,487,get,/pdf/{preOrder},App\Http\Controllers\Workflow\PreOrdersController@pdf,Pdf (pre orders),inferred from route and handler
+routes/web.php,488,get,/{preOrder},App\Http\Controllers\Workflow\PreOrdersController@show,Read detail for pre orders,inferred from route and handler
+routes/web.php,489,get,/{preOrder}/source-pdf,App\Http\Controllers\Workflow\PreOrdersController@sourcePdf,Source pdf (pre orders),inferred from route and handler
+routes/web.php,490,get,/{preOrder}/lines/{line}/image,App\Http\Controllers\Workflow\PreOrdersController@lineImage,Line image (pre orders),inferred from route and handler
+routes/web.php,491,post,/{preOrder}/matching,App\Http\Controllers\Workflow\PreOrdersController@matchArticles,Match articles (pre orders),inferred from route and handler
+routes/web.php,492,post,/{preOrder}/lines/{line}/accept-matching,App\Http\Controllers\Workflow\PreOrdersController@acceptMatching,Accept matching (pre orders),inferred from route and handler
+routes/web.php,493,post,/{preOrder}/accept-all-matching,App\Http\Controllers\Workflow\PreOrdersController@acceptAllMatching,Accept all matching (pre orders),inferred from route and handler
+routes/web.php,494,get,/{preOrder}/export-zero-price,App\Http\Controllers\Workflow\PreOrdersController@exportZeroPriceCsv,Export zero price csv (pre orders),inferred from route and handler
+routes/web.php,495,post,/{preOrder}/convert,App\Http\Controllers\Workflow\PreOrdersController@convert,Convert (pre orders),inferred from route and handler
+routes/web.php,496,delete,/{preOrder},App\Http\Controllers\Workflow\PreOrdersController@destroy,Remove pre orders,inferred from route and handler
+routes/web.php,502,get,/,App\Http\Controllers\Workflow\OrderConfirmationsController@index,List or display order confirmations records,inferred from route and handler
+routes/web.php,503,get,/json/list,App\Http\Controllers\Workflow\OrderConfirmationsController@listJson,List json (order confirmations),inferred from route and handler
+routes/web.php,504,post,/from-order/{order},App\Http\Controllers\Workflow\OrderConfirmationsController@storeFromOrder,Store from order (order confirmations),inferred from route and handler
+routes/web.php,505,post,/json/{id}/send,App\Http\Controllers\Workflow\OrderConfirmationsController@sendJson,Send json (order confirmations),inferred from route and handler
+routes/web.php,506,get,/{id},App\Http\Controllers\Workflow\OrderConfirmationsController@show,Read detail for order confirmations,inferred from route and handler
+routes/web.php,510,get,/,App\Http\Controllers\Workflow\DeliverysController@index,List or display deliverys records,inferred from route and handler
+routes/web.php,511,get,/request,App\Http\Controllers\Workflow\DeliverysController@request,Request (deliverys),inferred from route and handler
+routes/web.php,513,get,/request/company-data,App\Http\Controllers\Workflow\DeliverysController@requestCompanyData,Request company data (deliverys),inferred from route and handler
+routes/web.php,514,post,/request/store,App\Http\Controllers\Workflow\DeliverysController@storeDeliveryNoteApi,Store delivery note api (deliverys),inferred from route and handler
+routes/web.php,515,post,/edit/{id},App\Http\Controllers\Workflow\DeliverysController@update,Update deliverys,inferred from route and handler
+routes/web.php,516,get,/company-ac,App\Http\Controllers\Workflow\DeliverysController@companyAc,Company ac (deliverys),inferred from route and handler
+routes/web.php,517,post,/{id}/json/statu,App\Http\Controllers\Workflow\DeliverysController@changeStatusJson,Change status json (deliverys),inferred from route and handler
+routes/web.php,518,post,/{id}/json/line/{lineId}/not-chargeable,App\Http\Controllers\Workflow\DeliverysController@markLineNotChargeable,Mark line not chargeable (deliverys),inferred from route and handler
+routes/web.php,519,post,/{id}/json/line/{lineId}/cancel,App\Http\Controllers\Workflow\DeliverysController@cancelLine,Cancel line (deliverys),inferred from route and handler
+routes/web.php,521,get,/json/list,App\Http\Controllers\Workflow\DeliverysController@listJson,List json (deliverys),inferred from route and handler
+routes/web.php,522,get,/json/{id}/lines,App\Http\Controllers\Workflow\DeliverysController@linesJson,Lines json (deliverys),inferred from route and handler
+routes/web.php,523,post,{id}/packaging/store/,App\Http\Controllers\Workflow\DeliverysController@packagingsStore,Packagings store (deliverys),inferred from route and handler
+routes/web.php,524,post,{id}/packaging/update/,App\Http\Controllers\Workflow\DeliverysController@packagingsUpdate,Packagings update (deliverys),inferred from route and handler
+routes/web.php,525,get,/{id},App\Http\Controllers\Workflow\DeliverysController@show,Read detail for deliverys,inferred from route and handler
+routes/web.php,529,get,/,App\\Http\\Controllers\\Workflow\\ReturnsController@index,List or display returns records,inferred from route and handler
+routes/web.php,530,get,/json/list,App\\Http\\Controllers\\Workflow\\ReturnsController@listJson,List json (returns),inferred from route and handler
+routes/web.php,531,post,/json/store,App\\Http\\Controllers\\Workflow\\ReturnsController@storeJson,Store json (returns),inferred from route and handler
+routes/web.php,532,post,/json/{id}/diagnose,App\\Http\\Controllers\\Workflow\\ReturnsController@diagnoseJson,Diagnose json (returns),inferred from route and handler
+routes/web.php,533,post,/json/{id}/reopen,App\\Http\\Controllers\\Workflow\\ReturnsController@reopenJson,Reopen json (returns),inferred from route and handler
+routes/web.php,534,post,/json/{id}/close,App\\Http\\Controllers\\Workflow\\ReturnsController@closeJson,Close json (returns),inferred from route and handler
+routes/web.php,535,get,/{id},App\\Http\\Controllers\\Workflow\\ReturnsController@show,Read detail for returns,inferred from route and handler
+routes/web.php,539,get,/,App\Http\Controllers\Workflow\InvoicesController@index,List or display invoices records,inferred from route and handler
+routes/web.php,540,get,/store/delevery/{id},App\Http\Controllers\Workflow\InvoicesController@storeFromDelevery,Store from delevery (invoices),inferred from route and handler
+routes/web.php,541,get,/request,App\Http\Controllers\Workflow\InvoicesController@request,Request (invoices),inferred from route and handler
+routes/web.php,543,get,/request/lines,App\Http\Controllers\Workflow\InvoicesController@requestLines,Request lines (invoices),inferred from route and handler
+routes/web.php,544,post,/request/store,App\Http\Controllers\Workflow\InvoicesController@storeInvoiceApi,Store invoice api (invoices),inferred from route and handler
+routes/web.php,545,post,/request/generate-all,App\Http\Controllers\Workflow\InvoicesController@generateInvoicesForCompanyApi,Generate invoices for company api (invoices),inferred from route and handler
+routes/web.php,546,post,/edit/{id},App\Http\Controllers\Workflow\InvoicesController@update,Update invoices,inferred from route and handler
+routes/web.php,547,post,/{id}/json/statu,App\Http\Controllers\Workflow\InvoicesController@changeStatusJson,Change status json (invoices),inferred from route and handler
+routes/web.php,548,patch,/{id}/lines/{lineId},App\Http\Controllers\Workflow\InvoicesController@updateLine,Update line (invoices),inferred from route and handler
+routes/web.php,550,post,/{id}/lines,App\Http\Controllers\Workflow\InvoicesController@storeLine,Store line (invoices),inferred from route and handler
+routes/web.php,551,delete,/{id}/lines/{lineId},App\Http\Controllers\Workflow\InvoicesController@destroyLine,Destroy line (invoices),inferred from route and handler
+routes/web.php,552,patch,/{id}/emit,App\Http\Controllers\Workflow\InvoicesController@emit,Emit (invoices),inferred from route and handler
+routes/web.php,553,post,/down-payments/order/{orderId},App\Http\Controllers\Workflow\DownPaymentController@store,Create or submit down payment,inferred from route and handler
+routes/web.php,554,post,/{id}/down-payments/recompute,App\Http\Controllers\Workflow\DownPaymentController@recompute,Recompute (down payment),inferred from route and handler
+routes/web.php,558,post,/{id}/pdp/submit,App\Http\Controllers\Workflow\InvoicesController@pdpSubmit,Pdp submit (invoices),inferred from route and handler
+routes/web.php,559,post,/{id}/pdp/poll,App\Http\Controllers\Workflow\InvoicesController@pdpPoll,Pdp poll (invoices),inferred from route and handler
+routes/web.php,561,get,/json/list,App\Http\Controllers\Workflow\InvoicesController@listJson,List json (invoices),inferred from route and handler
+routes/web.php,563,get,/reminders,\App\Http\Controllers\Workflow\InvoiceRemindersController::index,List or display invoice reminders records,inferred from route and handler
+routes/web.php,564,get,/reminders/json/list,\App\Http\Controllers\Workflow\InvoiceRemindersController::listJson,List json (invoice reminders),inferred from route and handler
+routes/web.php,566,post,/preview,\App\Http\Controllers\Workflow\InvoiceRemindersController::preview,Preview (invoice reminders),inferred from route and handler
+routes/web.php,567,post,/send,\App\Http\Controllers\Workflow\InvoiceRemindersController::send,Send (invoice reminders),inferred from route and handler
+routes/web.php,568,post,/log,\App\Http\Controllers\Workflow\InvoiceRemindersController::logManual,Log manual (invoice reminders),inferred from route and handler
+routes/web.php,569,get,/levels,\App\Http\Controllers\Workflow\InvoiceRemindersController::levels,Levels (invoice reminders),inferred from route and handler
+routes/web.php,570,post,/levels,\App\Http\Controllers\Workflow\InvoiceRemindersController::storeLevel,Store level (invoice reminders),inferred from route and handler
+routes/web.php,571,put,/levels/{level},\App\Http\Controllers\Workflow\InvoiceRemindersController::updateLevel,Update level (invoice reminders),inferred from route and handler
+routes/web.php,572,delete,/levels/{level},\App\Http\Controllers\Workflow\InvoiceRemindersController::destroyLevel,Destroy level (invoice reminders),inferred from route and handler
+routes/web.php,575,get,/company-ac,App\Http\Controllers\Workflow\InvoicesController@companyAddressContact,Company address contact (invoices),inferred from route and handler
+routes/web.php,577,get,/{invoice}/payments,\App\Http\Controllers\Workflow\InvoicesController::paymentsIndex,Payments index (invoices),inferred from route and handler
+routes/web.php,578,post,/{invoice}/payments,\App\Http\Controllers\Workflow\InvoicesController::paymentsStore,Payments store (invoices),inferred from route and handler
+routes/web.php,579,delete,/{invoice}/payments/{payment},\App\Http\Controllers\Workflow\InvoicesController::paymentsDestroy,Payments destroy (invoices),inferred from route and handler
+routes/web.php,580,get,/{id},App\Http\Controllers\Workflow\InvoicesController@show,Read detail for invoices,inferred from route and handler
+routes/web.php,584,get,/,App\Http\Controllers\Workflow\ProformaController@index,List or display proforma records,inferred from route and handler
+routes/web.php,585,get,/json/list,App\Http\Controllers\Workflow\ProformaController@listJson,List json (proforma),inferred from route and handler
+routes/web.php,586,get,/request,App\Http\Controllers\Workflow\ProformaController@request,Request (proforma),inferred from route and handler
+routes/web.php,587,get,/request/lines,App\Http\Controllers\Workflow\ProformaController@requestLines,Request lines (proforma),inferred from route and handler
+routes/web.php,588,get,/request/quotes,App\Http\Controllers\Workflow\ProformaController@requestQuotes,Request quotes (proforma),inferred from route and handler
+routes/web.php,589,post,/request/store,App\Http\Controllers\Workflow\ProformaController@storeFromOrder,Store from order (proforma),inferred from route and handler
+routes/web.php,590,post,/request/store-from-quote,App\Http\Controllers\Workflow\ProformaController@storeFromQuote,Store from quote (proforma),inferred from route and handler
+routes/web.php,591,post,/edit/{id},App\Http\Controllers\Workflow\ProformaController@update,Update proforma,inferred from route and handler
+routes/web.php,592,post,/{id}/json/statu,App\Http\Controllers\Workflow\ProformaController@changeStatusJson,Change status json (proforma),inferred from route and handler
+routes/web.php,593,post,/{id}/convert,App\Http\Controllers\Workflow\ProformaController@convertToInvoice,Convert to invoice (proforma),inferred from route and handler
+routes/web.php,594,post,/{id}/activate-order,App\Http\Controllers\Workflow\ProformaController@activateOrder,Activate order (proforma),inferred from route and handler
+routes/web.php,595,get,/{id},App\Http\Controllers\Workflow\ProformaController@show,Read detail for proforma,inferred from route and handler
+routes/web.php,599,get,/,App\Http\Controllers\Workflow\CreditNoteController@index,List or display credit note records,inferred from route and handler
+routes/web.php,600,post,/store/credit-notes,App\Http\Controllers\Workflow\CreditNoteController@CreateCreditNotes,Create credit notes (credit note),inferred from route and handler
+routes/web.php,602,get,/json/list,App\Http\Controllers\Workflow\CreditNoteController@listJson,List json (credit note),inferred from route and handler
+routes/web.php,603,get,/{id},App\Http\Controllers\Workflow\CreditNoteController@show,Read detail for credit note,inferred from route and handler
+routes/web.php,604,post,/edit/{id},App\Http\Controllers\Workflow\CreditNoteController@update,Update credit note,inferred from route and handler
+routes/web.php,609,get,/request,App\Http\Controllers\Purchases\PurchasesRFQController@request,Request (purchases rfq),inferred from route and handler
+routes/web.php,611,get,/reorder,App\Http\Controllers\Purchases\ReorderController@index,List or display reorder records,inferred from route and handler
+routes/web.php,612,get,/reorder/json,App\Http\Controllers\Purchases\ReorderController@json,Json (reorder),inferred from route and handler
+routes/web.php,613,post,/reorder,App\Http\Controllers\Purchases\ReorderController@store,Create or submit reorder,inferred from route and handler
+routes/web.php,615,get,/suppliers/qualified/export,App\Http\Controllers\Purchases\SupplierQualificationController@export,Export supplier qualification records,inferred from route and handler
+routes/web.php,618,get,/,App\Http\Controllers\Purchases\PurchaseQualityClausesController@index,List or display purchase quality clauses records,inferred from route and handler
+routes/web.php,619,post,/create,App\Http\Controllers\Purchases\PurchaseQualityClausesController@store,Create or submit purchase quality clauses,inferred from route and handler
+routes/web.php,620,post,/edit/{id},App\Http\Controllers\Purchases\PurchaseQualityClausesController@update,Update purchase quality clauses,inferred from route and handler
+routes/web.php,621,post,/{id}/rules,App\Http\Controllers\Purchases\PurchaseQualityClausesController@storeRule,Store rule (purchase quality clauses),inferred from route and handler
+routes/web.php,622,delete,/{id}/rules/{ruleId},App\Http\Controllers\Purchases\PurchaseQualityClausesController@destroyRule,Destroy rule (purchase quality clauses),inferred from route and handler
+routes/web.php,624,get,/request/tasks,App\Http\Controllers\Purchases\PurchasesRFQController@requestTasks,Request tasks (purchases rfq),inferred from route and handler
+routes/web.php,625,post,/request/store,App\Http\Controllers\Purchases\PurchasesRFQController@storePurchaseApi,Store purchase api (purchases rfq),inferred from route and handler
+routes/web.php,626,get,/request/export-csv,App\Http\Controllers\Purchases\PurchasesRFQController@exportCsvApi,Export csv api (purchases rfq),inferred from route and handler
+routes/web.php,627,get,/quotation,App\Http\Controllers\Purchases\PurchasesRFQController@quotation,Quotation (purchases rfq),inferred from route and handler
+routes/web.php,628,get,/,App\Http\Controllers\Purchases\PurchasesController@purchase,Purchase (purchases),inferred from route and handler
+routes/web.php,630,post,/,App\Http\Controllers\Purchases\PurchasesController@storeBankPurchase,Store bank purchase (purchases),inferred from route and handler
+routes/web.php,633,get,/quotation/api/list,App\Http\Controllers\Purchases\PurchasesRFQController@apiQuotationList,Api quotation list (purchases rfq),inferred from route and handler
+routes/web.php,634,get,/quotation/api/kpi,App\Http\Controllers\Purchases\PurchasesRFQController@apiQuotationKpi,Api quotation kpi (purchases rfq),inferred from route and handler
+routes/web.php,635,get,/quotation/api/products,App\Http\Controllers\Purchases\PurchasesRFQController@apiProducts,Api products (purchases rfq),inferred from route and handler
+routes/web.php,636,get,/quotation/api/company-data,App\Http\Controllers\Purchases\PurchasesRFQController@apiCompanyAddresses,Api company addresses (purchases rfq),inferred from route and handler
+routes/web.php,637,get,/quotation/api/{quotation},App\Http\Controllers\Purchases\PurchasesRFQController@apiQuotationShow,Api quotation show (purchases rfq),inferred from route and handler
+routes/web.php,638,patch,/quotation/api/{quotation},App\Http\Controllers\Purchases\PurchasesRFQController@apiQuotationUpdate,Api quotation update (purchases rfq),inferred from route and handler
+routes/web.php,639,patch,/quotation/api/{quotation}/statu,App\Http\Controllers\Purchases\PurchasesRFQController@apiQuotationUpdateStatu,Api quotation update statu (purchases rfq),inferred from route and handler
+routes/web.php,640,post,/quotation/api/{quotation}/lines,App\Http\Controllers\Purchases\PurchasesRFQController@apiQuotationStoreLine,Api quotation store line (purchases rfq),inferred from route and handler
+routes/web.php,641,patch,/quotation/api/{quotation}/lines/{line},App\Http\Controllers\Purchases\PurchasesRFQController@apiQuotationUpdateLine,Api quotation update line (purchases rfq),inferred from route and handler
+routes/web.php,642,post,/quotation/api/{quotation}/lines/{line}/retain,App\Http\Controllers\Purchases\PurchasesRFQController@apiQuotationRetainLine,Api quotation retain line (purchases rfq),inferred from route and handler
+routes/web.php,643,post,/quotation/api/{quotation}/revision,App\Http\Controllers\Purchases\PurchasesRFQController@apiQuotationNewRevision,Api quotation new revision (purchases rfq),inferred from route and handler
+routes/web.php,646,get,/json/list,App\Http\Controllers\Purchases\PurchasesController@listJson,List json (purchases),inferred from route and handler
+routes/web.php,647,post,/json/store,App\Http\Controllers\Purchases\PurchasesController@storeJson,Store json (purchases),inferred from route and handler
+routes/web.php,648,get,/json/select-data,App\Http\Controllers\Purchases\PurchasesController@selectDataJson,Select data json (purchases),inferred from route and handler
+routes/web.php,649,get,/json/addresses/{companyId},App\Http\Controllers\Purchases\PurchasesController@addressesJson,Addresses json (purchases),inferred from route and handler
+routes/web.php,650,get,/json/contacts/{companyId},App\Http\Controllers\Purchases\PurchasesController@contactsJson,Contacts json (purchases),inferred from route and handler
+routes/web.php,651,post,/json/address,App\Http\Controllers\Purchases\PurchasesController@storeAddressJson,Store address json (purchases),inferred from route and handler
+routes/web.php,652,post,/json/contact,App\Http\Controllers\Purchases\PurchasesController@storeContactJson,Store contact json (purchases),inferred from route and handler
+routes/web.php,654,get,/waiting/receipt,App\Http\Controllers\Purchases\PurchasesReceiptController@waintingReceipt,Wainting receipt (purchases receipt),inferred from route and handler
+routes/web.php,655,get,/waiting/receipt/json/init,App\Http\Controllers\Purchases\PurchasesReceiptController@waitingReceiptInit,Waiting receipt init (purchases receipt),inferred from route and handler
+routes/web.php,656,post,/waiting/receipt/json/store,App\Http\Controllers\Purchases\PurchasesReceiptController@storeReceiptJson,Store receipt json (purchases receipt),inferred from route and handler
+routes/web.php,657,post,/waiting/receipt/json/store-empty,App\Http\Controllers\Purchases\PurchasesReceiptController@storeEmptyReceiptJson,Store empty receipt json (purchases receipt),inferred from route and handler
+routes/web.php,658,get,/receipt,App\Http\Controllers\Purchases\PurchasesReceiptController@receipt,Receipt (purchases receipt),inferred from route and handler
+routes/web.php,659,get,/receipt/json/list,App\Http\Controllers\Purchases\PurchasesReceiptController@listJson,List json (purchases receipt),inferred from route and handler
+routes/web.php,660,get,/waiting/invoice,App\Http\Controllers\Purchases\PurchasesInvoiceController@waintingInvoice,Wainting invoice (purchases invoice),inferred from route and handler
+routes/web.php,661,get,/waiting/invoice/json/init,App\Http\Controllers\Purchases\PurchasesInvoiceController@waitingInvoiceInit,Waiting invoice init (purchases invoice),inferred from route and handler
+routes/web.php,662,post,/waiting/invoice/json/store,App\Http\Controllers\Purchases\PurchasesInvoiceController@storeInvoiceJson,Store invoice json (purchases invoice),inferred from route and handler
+routes/web.php,663,get,/invoice,App\Http\Controllers\Purchases\PurchasesInvoiceController@invoice,Invoice (purchases invoice),inferred from route and handler
+routes/web.php,664,get,/invoice/json/list,App\Http\Controllers\Purchases\PurchasesInvoiceController@listJson,List json (purchases invoice),inferred from route and handler
+routes/web.php,667,get,/incoming-invoices,App\Http\Controllers\Purchases\IncomingInvoiceController@index,List or display incoming invoice records,inferred from route and handler
+routes/web.php,668,get,/incoming-invoices/json/list,App\Http\Controllers\Purchases\IncomingInvoiceController@listJson,List json (incoming invoice),inferred from route and handler
+routes/web.php,669,post,/incoming-invoices/upload,App\Http\Controllers\Purchases\IncomingInvoiceController@upload,Upload (incoming invoice),inferred from route and handler
+routes/web.php,670,post,/incoming-invoices/{incoming}/convert,App\Http\Controllers\Purchases\IncomingInvoiceController@convert,Convert (incoming invoice),inferred from route and handler
+routes/web.php,671,post,/incoming-invoices/{incoming}/reject,App\Http\Controllers\Purchases\IncomingInvoiceController@reject,Reject (incoming invoice),inferred from route and handler
+routes/web.php,673,post,/incoming-invoices/{incoming}/status,App\Http\Controllers\Purchases\IncomingInvoiceController@reportStatus,Report status (incoming invoice),inferred from route and handler
+routes/web.php,676,post,/Purchase/Order/Create/{id},App\Http\Controllers\Purchases\PurchasesController@storePurchaseOrderFromRFQ,Store purchase order from rfq (purchases),inferred from route and handler
+routes/web.php,678,post,/edit/{id},App\Http\Controllers\Purchases\PurchasesController@updatePurchase,Update purchase (purchases),inferred from route and handler
+routes/web.php,679,post,/quotation/edit/{id},App\Http\Controllers\Purchases\PurchasesRFQController@updatePurchaseQuotation,Update purchase quotation (purchases rfq),inferred from route and handler
+routes/web.php,680,get,/quotation/{id}/duplicate,App\Http\Controllers\Purchases\PurchasesRFQController@duplicateQuotation,Duplicate quotation (purchases rfq),inferred from route and handler
+routes/web.php,681,post,/receipt/edit/{id},App\Http\Controllers\Purchases\PurchasesReceiptController@updatePurchaseReceipt,Update purchase receipt (purchases receipt),inferred from route and handler
+routes/web.php,682,post,/receipt/control/{id},App\Http\Controllers\Purchases\PurchasesReceiptController@updateReceiptControl,Update receipt control (purchases receipt),inferred from route and handler
+routes/web.php,683,post,/receipt/line/{purchaseReceiptLine}/inspection,App\Http\Controllers\Purchases\PurchasesReceiptController@updateLineInspection,Update line inspection (purchases receipt),inferred from route and handler
+routes/web.php,684,post,/receipt/{id}/manual-line,App\Http\Controllers\Purchases\PurchasesReceiptController@storeManualReceiptLine,Store manual receipt line (purchases receipt),inferred from route and handler
+routes/web.php,685,get,/receipt/{id}/lines/json,App\Http\Controllers\Purchases\PurchasesReceiptController@receiptLinesJson,Receipt lines json (purchases receipt),inferred from route and handler
+routes/web.php,687,get,/acknowledgements/missing,App\Http\Controllers\Purchases\SupplierAcknowledgementController@index,List or display supplier acknowledgement records,inferred from route and handler
+routes/web.php,689,get,/receipt/document-check,App\Http\Controllers\Purchases\ReceiptDocumentCheckController@index,List or display receipt document check records,inferred from route and handler
+routes/web.php,690,get,/receipt/document-check/json,App\Http\Controllers\Purchases\ReceiptDocumentCheckController@listJson,List json (receipt document check),inferred from route and handler
+routes/web.php,691,post,/receipt/line/{purchaseReceiptLine}/document-check,App\Http\Controllers\Purchases\PurchasesReceiptController@updateLineDocumentCheck,Update line document check (purchases receipt),inferred from route and handler
+routes/web.php,693,post,/receipt/{receipt}/rating,App\Http\Controllers\Purchases\PurchaseReceiptRatingController@store,Create or submit purchase receipt rating,inferred from route and handler
+routes/web.php,694,post,/invoice/edit/{id},App\Http\Controllers\Purchases\PurchasesInvoiceController@updatePurchaseInvoice,Update purchase invoice (purchases invoice),inferred from route and handler
+routes/web.php,697,get,/{purchaseId}/lines/json,App\Http\Controllers\Purchases\PurchaseLinesController@linesForPurchaseJson,Lines for purchase json (purchase lines),inferred from route and handler
+routes/web.php,698,get,/{purchaseId}/lines/json/select-data,App\Http\Controllers\Purchases\PurchaseLinesController@selectDataForPurchaseJson,Select data for purchase json (purchase lines),inferred from route and handler
+routes/web.php,699,post,/{purchaseId}/lines/json/store,App\Http\Controllers\Purchases\PurchaseLinesController@storeLineJson,Store line json (purchase lines),inferred from route and handler
+routes/web.php,700,put,/{purchaseId}/lines/json/{id},App\Http\Controllers\Purchases\PurchaseLinesController@updateLineJson,Update line json (purchase lines),inferred from route and handler
+routes/web.php,701,delete,/{purchaseId}/lines/json/{id},App\Http\Controllers\Purchases\PurchaseLinesController@destroyLineJson,Destroy line json (purchase lines),inferred from route and handler
+routes/web.php,702,post,/{purchaseId}/lines/json/{id}/duplicate,App\Http\Controllers\Purchases\PurchaseLinesController@duplicateLineJson,Duplicate line json (purchase lines),inferred from route and handler
+routes/web.php,703,post,/{purchaseId}/lines/json/reorder,App\Http\Controllers\Purchases\PurchaseLinesController@reorderJson,Reorder json (purchase lines),inferred from route and handler
+routes/web.php,704,post,/{purchaseId}/lines/json/acknowledge,App\Http\Controllers\Purchases\PurchaseLinesController@acknowledgeJson,Acknowledge json (purchase lines),inferred from route and handler
+routes/web.php,705,post,/{purchaseId}/lines/json/store-receipt,App\Http\Controllers\Purchases\PurchaseLinesController@storeReceiptJson,Store receipt json (purchase lines),inferred from route and handler
+routes/web.php,707,get,/{id},App\Http\Controllers\Purchases\PurchasesController@showPurchase,Show purchase (purchases),inferred from route and handler
+routes/web.php,708,post,/{id}/json/statu,App\Http\Controllers\Purchases\PurchasesController@changeStatusJson,Change status json (purchases),inferred from route and handler
+routes/web.php,709,get,/quotation/{id},App\Http\Controllers\Purchases\PurchasesRFQController@showQuotation,Show quotation (purchases rfq),inferred from route and handler
+routes/web.php,710,get,/quotation/group/{group}/compare,App\Http\Controllers\Purchases\PurchasesRFQController@compareQuotationGroup,Compare quotation group (purchases rfq),inferred from route and handler
+routes/web.php,711,get,/receipt/{id},App\Http\Controllers\Purchases\PurchasesReceiptController@showReceipt,Show receipt (purchases receipt),inferred from route and handler
+routes/web.php,712,get,/invoice/{id},App\Http\Controllers\Purchases\PurchasesInvoiceController@showInvoice,Show invoice (purchases invoice),inferred from route and handler
+routes/web.php,716,get,/order/manufacturing/{Document},App\Http\Controllers\PrintController@printOrderManufacturingInstruction,Print order manufacturing instruction (print),inferred from route and handler
+routes/web.php,720,get,/quote/{Document},App\Http\Controllers\PrintController@getQuotePdf,Get quote pdf (print),inferred from route and handler
+routes/web.php,721,get,/order/{Document},App\Http\Controllers\PrintController@getOrderPdf,Get order pdf (print),inferred from route and handler
+routes/web.php,724,get,/order/Confirm/{Document},App\Http\Controllers\PrintController@getOrderConfirmPdf,Get order confirm pdf (print),inferred from route and handler
+routes/web.php,725,get,/delivery/{Document},App\Http\Controllers\PrintController@getDeliveryPdf,Get delivery pdf (print),inferred from route and handler
+routes/web.php,726,get,/invoice/{Document},App\Http\Controllers\PrintController@getInvoicePdf,Get invoice pdf (print),inferred from route and handler
+routes/web.php,727,get,/proforma/{Document},App\Http\Controllers\PrintController@getProformaPdf,Get proforma pdf (print),inferred from route and handler
+routes/web.php,728,get,/credit-note/{Document},App\Http\Controllers\PrintController@getCreditNotePdf,Get credit note pdf (print),inferred from route and handler
+routes/web.php,729,get,/facture-x/{Document},App\Http\Controllers\PrintController@getInvoiceFactureX,Get invoice facture x (print),inferred from route and handler
+routes/web.php,730,get,/purchase/quotation/{Document},App\Http\Controllers\PrintController@getPurchaseQuotationPdf,Get purchase quotation pdf (print),inferred from route and handler
+routes/web.php,731,get,/purchase/{Document},App\Http\Controllers\PrintController@getPurchasePdf,Get purchase pdf (print),inferred from route and handler
+routes/web.php,732,get,/receipt/{Document},App\Http\Controllers\PrintController@getReceiptPdf,Get receipt pdf (print),inferred from route and handler
+routes/web.php,733,get,/nc/{Document},App\Http\Controllers\PrintController@getNCPdf,Get nc pdf (print),inferred from route and handler
+routes/web.php,738,get,/,App\Http\Controllers\Accounting\AccountingController@index,List or display accounting records,inferred from route and handler
+routes/web.php,739,get,/payment-conditions,App\Http\Controllers\Accounting\AccountingController@paymentConditions,Payment conditions (accounting),inferred from route and handler
+routes/web.php,740,get,/payment-methods,App\Http\Controllers\Accounting\AccountingController@paymentMethods,Payment methods (accounting),inferred from route and handler
+routes/web.php,741,get,/vats,App\Http\Controllers\Accounting\AccountingController@vats,Vats (accounting),inferred from route and handler
+routes/web.php,742,get,/allocations,App\Http\Controllers\Accounting\AccountingController@allocations,Allocations (accounting),inferred from route and handler
+routes/web.php,743,get,/deliveries,App\Http\Controllers\Accounting\AccountingController@deliveries,Deliveries (accounting),inferred from route and handler
+routes/web.php,744,get,/assets,App\Http\Controllers\Accounting\AccountingController@assets,Assets (accounting),inferred from route and handler
+routes/web.php,745,get,/periods-ui,App\Http\Controllers\Accounting\AccountingController@periods,Periods (accounting),inferred from route and handler
+routes/web.php,749,post,/create,App\Http\Controllers\Accounting\AllocationController@store,Create or submit allocation,inferred from route and handler
+routes/web.php,750,post,/edit/{id},App\Http\Controllers\Accounting\AllocationController@update,Update allocation,inferred from route and handler
+routes/web.php,755,post,/create,App\Http\Controllers\Accounting\DeliveryController@store,Create or submit delivery,inferred from route and handler
+routes/web.php,756,post,/edit/{id},App\Http\Controllers\Accounting\DeliveryController@update,Update delivery,inferred from route and handler
+routes/web.php,761,post,/create,App\Http\Controllers\Accounting\PaymentConditionsController@store,Create or submit payment conditions,inferred from route and handler
+routes/web.php,762,post,/edit/{id},App\Http\Controllers\Accounting\PaymentConditionsController@update,Update payment conditions,inferred from route and handler
+routes/web.php,767,post,/create,App\Http\Controllers\Accounting\PaymentMethodController@store,Create or submit payment method,inferred from route and handler
+routes/web.php,768,post,/edit/{id},App\Http\Controllers\Accounting\PaymentMethodController@update,Update payment method,inferred from route and handler
+routes/web.php,773,post,/create,App\Http\Controllers\Accounting\VatController@store,Create or submit vat,inferred from route and handler
+routes/web.php,774,post,/edit/{id},App\Http\Controllers\Accounting\VatController@update,Update vat,inferred from route and handler
+routes/web.php,779,get,/json,\App\Http\Controllers\Accounting\AccountingPeriodController::listJson,List json (accounting period),inferred from route and handler
+routes/web.php,780,post,/lock,\App\Http\Controllers\Accounting\AccountingPeriodController::lock,Lock (accounting period),inferred from route and handler
+routes/web.php,781,delete,/{year}/{month},\App\Http\Controllers\Accounting\AccountingPeriodController::unlock,Unlock (accounting period),inferred from route and handler
+routes/web.php,786,get,/vat-references,App\Http\Controllers\Accounting\AccountingController@vatReferences,Vat references (accounting),inferred from route and handler
+routes/web.php,787,get,/vat-matrix-sales,App\Http\Controllers\Accounting\AccountingController@vatMatrixSales,Vat matrix sales (accounting),inferred from route and handler
+routes/web.php,788,get,/vat-matrix-purchase,App\Http\Controllers\Accounting\AccountingController@vatMatrixPurchase,Vat matrix purchase (accounting),inferred from route and handler
+routes/web.php,791,post,/create,App\Http\Controllers\Accounting\VatReferenceController@regimeStore,Regime store (vat reference),inferred from route and handler
+routes/web.php,792,post,/edit/{id},App\Http\Controllers\Accounting\VatReferenceController@regimeUpdate,Regime update (vat reference),inferred from route and handler
+routes/web.php,793,delete,/{id},App\Http\Controllers\Accounting\VatReferenceController@regimeDestroy,Regime destroy (vat reference),inferred from route and handler
+routes/web.php,796,post,/create,App\Http\Controllers\Accounting\VatReferenceController@natureStore,Nature store (vat reference),inferred from route and handler
+routes/web.php,797,post,/edit/{id},App\Http\Controllers\Accounting\VatReferenceController@natureUpdate,Nature update (vat reference),inferred from route and handler
+routes/web.php,798,delete,/{id},App\Http\Controllers\Accounting\VatReferenceController@natureDestroy,Nature destroy (vat reference),inferred from route and handler
+routes/web.php,801,post,/create,App\Http\Controllers\Accounting\VatMatrixController@salesStore,Sales store (vat matrix),inferred from route and handler
+routes/web.php,802,post,/edit/{id},App\Http\Controllers\Accounting\VatMatrixController@salesUpdate,Sales update (vat matrix),inferred from route and handler
+routes/web.php,803,delete,/{id},App\Http\Controllers\Accounting\VatMatrixController@salesDestroy,Sales destroy (vat matrix),inferred from route and handler
+routes/web.php,806,post,/create,App\Http\Controllers\Accounting\VatMatrixController@purchaseStore,Purchase store (vat matrix),inferred from route and handler
+routes/web.php,807,post,/edit/{id},App\Http\Controllers\Accounting\VatMatrixController@purchaseUpdate,Purchase update (vat matrix),inferred from route and handler
+routes/web.php,808,delete,/{id},App\Http\Controllers\Accounting\VatMatrixController@purchaseDestroy,Purchase destroy (vat matrix),inferred from route and handler
+routes/web.php,814,get,/,App\\Http\\Controllers\\AssetController@index,List or display asset records,inferred from route and handler
+routes/web.php,815,get,/create,App\\Http\\Controllers\\AssetController@create,Open the creation workflow for asset,inferred from route and handler
+routes/web.php,816,post,/create,App\\Http\\Controllers\\AssetController@store,Create or submit asset,inferred from route and handler
+routes/web.php,817,get,/{id},App\\Http\\Controllers\\AssetController@show,Read detail for asset,inferred from route and handler
+routes/web.php,818,get,/edit/{id},App\\Http\\Controllers\\AssetController@edit,Open the edit workflow for asset,inferred from route and handler
+routes/web.php,819,post,/edit/{id},App\\Http\\Controllers\\AssetController@update,Update asset,inferred from route and handler
+routes/web.php,820,delete,/{id},App\\Http\\Controllers\\AssetController@destroy,Remove asset,inferred from route and handler
+routes/web.php,824,get,/dashboard,App\\Http\\Controllers\\Maintenance\\DashboardController,get · /dashboard,inferred from route and handler
+routes/web.php,825,get,/work-orders,App\\Http\\Controllers\\Maintenance\\WorkOrderController@index,List or display work order records,inferred from route and handler
+routes/web.php,826,get,/work-orders/create,App\\Http\\Controllers\\Maintenance\\WorkOrderController@create,Open the creation workflow for work order,inferred from route and handler
+routes/web.php,827,post,/work-orders,App\\Http\\Controllers\\Maintenance\\WorkOrderController@store,Create or submit work order,inferred from route and handler
+routes/web.php,828,get,/work-orders/{id},App\\Http\\Controllers\\Maintenance\\WorkOrderController@show,Read detail for work order,inferred from route and handler
+routes/web.php,829,get,/work-orders/{id}/edit,App\\Http\\Controllers\\Maintenance\\WorkOrderController@edit,Open the edit workflow for work order,inferred from route and handler
+routes/web.php,830,put,/work-orders/{id},App\\Http\\Controllers\\Maintenance\\WorkOrderController@update,Update work order,inferred from route and handler
+routes/web.php,831,delete,/work-orders/{id},App\\Http\\Controllers\\Maintenance\\WorkOrderController@destroy,Remove work order,inferred from route and handler
+routes/web.php,832,get,/maintenance-plans,App\\Http\\Controllers\\Maintenance\\MaintenancePlanController@index,List or display maintenance plan records,inferred from route and handler
+routes/web.php,833,get,/maintenance-plans/create,App\\Http\\Controllers\\Maintenance\\MaintenancePlanController@create,Open the creation workflow for maintenance plan,inferred from route and handler
+routes/web.php,834,post,/maintenance-plans,App\\Http\\Controllers\\Maintenance\\MaintenancePlanController@store,Create or submit maintenance plan,inferred from route and handler
+routes/web.php,835,get,/maintenance-plans/{id},App\\Http\\Controllers\\Maintenance\\MaintenancePlanController@show,Read detail for maintenance plan,inferred from route and handler
+routes/web.php,836,get,/maintenance-plans/{id}/edit,App\\Http\\Controllers\\Maintenance\\MaintenancePlanController@edit,Open the edit workflow for maintenance plan,inferred from route and handler
+routes/web.php,837,put,/maintenance-plans/{id},App\\Http\\Controllers\\Maintenance\\MaintenancePlanController@update,Update maintenance plan,inferred from route and handler
+routes/web.php,838,delete,/maintenance-plans/{id},App\\Http\\Controllers\\Maintenance\\MaintenancePlanController@destroy,Remove maintenance plan,inferred from route and handler
+routes/web.php,839,post,/maintenance-plans/{id}/generate-work-order,App\\Http\\Controllers\\Maintenance\\MaintenancePlanController@generateWorkOrder,Generate work order (maintenance plan),inferred from route and handler
+routes/web.php,844,get,/,App\Http\Controllers\Times\TimesController@index,List or display times records,inferred from route and handler
+routes/web.php,848,post,/create,App\Http\Controllers\Times\AbsenceController@store,Create or submit absence,inferred from route and handler
+routes/web.php,849,post,/edit/{id},App\Http\Controllers\Times\AbsenceController@update,Update absence,inferred from route and handler
+routes/web.php,854,post,/create,App\Http\Controllers\Times\BanckHolidayController@store,Create or submit banck holiday,inferred from route and handler
+routes/web.php,855,post,/edit/{id},App\Http\Controllers\Times\BanckHolidayController@update,Update banck holiday,inferred from route and handler
+routes/web.php,860,post,/create,App\Http\Controllers\Times\ImproductTimeController@store,Create or submit improduct time,inferred from route and handler
+routes/web.php,861,post,/edit/{id},App\Http\Controllers\Times\ImproductTimeController@update,Update improduct time,inferred from route and handler
+routes/web.php,866,post,/create,App\Http\Controllers\Times\MachineEventController@store,Create or submit machine event,inferred from route and handler
+routes/web.php,867,post,/edit/{id},App\Http\Controllers\Times\MachineEventController@update,Update machine event,inferred from route and handler
+routes/web.php,872,get,/,App\Http\Controllers\Times\ShiftPatternsController@index,List or display shift patterns records,inferred from route and handler
+routes/web.php,873,post,/create,App\Http\Controllers\Times\ShiftPatternsController@store,Create or submit shift patterns,inferred from route and handler
+routes/web.php,874,post,/edit/{id},App\Http\Controllers\Times\ShiftPatternsController@update,Update shift patterns,inferred from route and handler
+routes/web.php,875,post,/{id}/slot,App\Http\Controllers\Times\ShiftPatternsController@storeSlot,Store slot (shift patterns),inferred from route and handler
+routes/web.php,876,delete,/{id}/slot/{slotId},App\Http\Controllers\Times\ShiftPatternsController@destroySlot,Destroy slot (shift patterns),inferred from route and handler
+routes/web.php,884,get,/json/select-data,App\Http\Controllers\Products\ProductsController@selectDataJson,Select data json (products),inferred from route and handler
+routes/web.php,885,get,/json/search,App\Http\Controllers\Products\ProductsController@searchJson,Search json (products),inferred from route and handler
+routes/web.php,893,get,/,App\Http\Controllers\Products\ProductsController@index,List or display products records,inferred from route and handler
+routes/web.php,896,get,/json/list,App\Http\Controllers\Products\ProductsController@listJson,List json (products),inferred from route and handler
+routes/web.php,897,get,/{id}/json/history,App\Http\Controllers\Products\ProductsController@historyJson,History json (products),inferred from route and handler
+routes/web.php,898,get,/{id}/json/price-history,App\Http\Controllers\Products\ProductsController@priceHistoryJson,Price history json (products),inferred from route and handler
+routes/web.php,904,post,/create,App\Http\Controllers\Products\ProductsController@store,Create or submit products,inferred from route and handler
+routes/web.php,905,post,/supplier,App\Http\Controllers\Products\ProductsController@StoreSupplier,Store supplier (products),inferred from route and handler
+routes/web.php,906,post,/supplier/price/qty/{id},App\Http\Controllers\Products\ProductsController@StoreSupplierPriceQty,Store supplier price qty (products),inferred from route and handler
+routes/web.php,908,post,/edit/{id},App\Http\Controllers\Products\ProductsController@update,Update products,inferred from route and handler
+routes/web.php,909,post,/{id}/selling-price/from-last-sale,App\Http\Controllers\Products\ProductsController@updateSellingPriceFromLastSale,Update selling price from last sale (products),inferred from route and handler
+routes/web.php,910,get,/duplicate/{id},App\Http\Controllers\Products\ProductsController@duplicate,Duplicate (products),inferred from route and handler
+routes/web.php,912,post,/json/store,App\Http\Controllers\Products\ProductsController@storeJson,Store json (products),inferred from route and handler
+routes/web.php,915,post,/,App\Http\Controllers\Products\CustomerPriceListController@store,Create or submit customer price list,inferred from route and handler
+routes/web.php,916,put,/{priceList},App\Http\Controllers\Products\CustomerPriceListController@update,Update customer price list,inferred from route and handler
+routes/web.php,917,delete,/{priceList},App\Http\Controllers\Products\CustomerPriceListController@destroy,Remove customer price list,inferred from route and handler
+routes/web.php,921,post,/import,App\Http\Controllers\Admin\ImportsExportsController@importProducts,Import products (imports exports),inferred from route and handler
+routes/web.php,926,get,/json/duplicates,App\Http\Controllers\Products\ProductsController@duplicatesJson,Duplicates json (products),inferred from route and handler
+routes/web.php,927,get,/json/merge/{master}/{duplicate}/preview,App\Http\Controllers\Products\ProductsController@mergePreviewJson,Merge preview json (products),inferred from route and handler
+routes/web.php,928,post,/json/merge/{master}/{duplicate},App\Http\Controllers\Products\ProductsController@mergeJson,Merge json (products),inferred from route and handler
+routes/web.php,933,get,/,App\Http\Controllers\Products\SerialNumbersController@index,List or display serial numbers records,inferred from route and handler
+routes/web.php,934,get,/json/list,App\Http\Controllers\Products\SerialNumbersController@listJson,List json (serial numbers),inferred from route and handler
+routes/web.php,938,get,/,App\Http\Controllers\Products\BatchesController@index,List or display batches records,inferred from route and handler
+routes/web.php,939,get,/{batch},App\Http\Controllers\Products\BatchesController@show,Read detail for batches,inferred from route and handler
+routes/web.php,944,get,/,App\Http\Controllers\Products\NestsController@index,List or display nests records,inferred from route and handler
+routes/web.php,945,get,/create,App\Http\Controllers\Products\NestsController@create,Open the creation workflow for nests,inferred from route and handler
+routes/web.php,946,post,/,App\Http\Controllers\Products\NestsController@store,Create or submit nests,inferred from route and handler
+routes/web.php,947,get,/{nest},App\Http\Controllers\Products\NestsController@show,Read detail for nests,inferred from route and handler
+routes/web.php,952,get,/,App\Http\Controllers\Products\StockController@index,List or display stock records,inferred from route and handler
+routes/web.php,953,post,/create,App\Http\Controllers\Products\StockController@store,Create or submit stock,inferred from route and handler
+routes/web.php,954,post,/edit/{id},App\Http\Controllers\Products\StockController@update,Update stock,inferred from route and handler
+routes/web.php,958,get,/shortages,App\Http\Controllers\Products\StockShortagesController@index,List or display stock shortages records,inferred from route and handler
+routes/web.php,959,get,/shortages/json,App\Http\Controllers\Products\StockShortagesController@json,Json (stock shortages),inferred from route and handler
+routes/web.php,961,get,/{id},App\Http\Controllers\Products\StockController@show,Read detail for stock,inferred from route and handler
+routes/web.php,964,get,/json/current,App\Http\Controllers\Products\StockController@stockCurrentJson,Stock current json (stock),inferred from route and handler
+routes/web.php,965,post,/json/store-order,App\Http\Controllers\Products\StockController@storeOrderJson,Store order json (stock),inferred from route and handler
+routes/web.php,968,get,/detail/{id},App\Http\Controllers\Products\StockController@detail,Detail (stock),inferred from route and handler
+routes/web.php,969,post,/detail/edit/{id},App\Http\Controllers\Products\StockController@detailUpdate,Detail update (stock),inferred from route and handler
+routes/web.php,970,patch,/detail/update/{id},App\Http\Controllers\Products\StockController@detailUpdateJson,Detail update json (stock),inferred from route and handler
+routes/web.php,973,get,/json/valuation,App\Http\Controllers\Products\StockController@valuationJson,Valuation json (stock),inferred from route and handler
+routes/web.php,978,get,/,App\Http\Controllers\Products\InventoryController@index,List or display inventory records,inferred from route and handler
+routes/web.php,979,get,/json,App\Http\Controllers\Products\InventoryController@indexJson,Index json (inventory),inferred from route and handler
+routes/web.php,980,post,/,App\Http\Controllers\Products\InventoryController@store,Create or submit inventory,inferred from route and handler
+routes/web.php,981,get,/{id},App\Http\Controllers\Products\InventoryController@show,Read detail for inventory,inferred from route and handler
+routes/web.php,982,get,/{id}/json,App\Http\Controllers\Products\InventoryController@showJson,Show json (inventory),inferred from route and handler
+routes/web.php,983,get,/{id}/export/{blind?},App\Http\Controllers\Products\InventoryController@exportXlsx,Export xlsx (inventory),inferred from route and handler
+routes/web.php,984,post,/{id}/import/preview,App\Http\Controllers\Products\InventoryController@previewImport,Preview import (inventory),inferred from route and handler
+routes/web.php,985,post,/{id}/import,App\Http\Controllers\Products\InventoryController@import,Import (inventory),inferred from route and handler
+routes/web.php,986,post,/{id}/validate,App\Http\Controllers\Products\InventoryController@validateInventory,Validate inventory (inventory),inferred from route and handler
+routes/web.php,987,post,/{id}/cancel,App\Http\Controllers\Products\InventoryController@cancel,Cancel (inventory),inferred from route and handler
+routes/web.php,992,post,/create,App\Http\Controllers\Products\StockLocationController@store,Create or submit stock location,inferred from route and handler
+routes/web.php,993,post,/edit/{id},App\Http\Controllers\Products\StockLocationController@update,Update stock location,inferred from route and handler
+routes/web.php,994,get,/{id},App\Http\Controllers\Products\StockLocationController@show,Read detail for stock location,inferred from route and handler
+routes/web.php,999,post,/create,App\Http\Controllers\Products\StockLocationProductsController@store,Create or submit stock location products,inferred from route and handler
+routes/web.php,1000,post,/create/internal-order,App\Http\Controllers\Products\StockLocationProductsController@storeFromInternalOrder,Store from internal order (stock location products),inferred from route and handler
+routes/web.php,1001,post,/create/purchase-order,App\Http\Controllers\Products\StockLocationProductsController@storeFromPurchaseOrder,Store from purchase order (stock location products),inferred from route and handler
+routes/web.php,1002,post,/edit/{id},App\Http\Controllers\Products\StockLocationProductsController@update,Update stock location products,inferred from route and handler
+routes/web.php,1003,get,/{id},App\Http\Controllers\Products\StockLocationProductsController@show,Read detail for stock location products,inferred from route and handler
+routes/web.php,1004,post,/entry,App\Http\Controllers\Products\StockLocationProductsController@entry,Entry (stock location products),inferred from route and handler
+routes/web.php,1005,post,/entry/internal-order,App\Http\Controllers\Products\StockLocationProductsController@entryFromInternalOrder,Entry from internal order (stock location products),inferred from route and handler
+routes/web.php,1006,post,/entry/purchase-order,App\Http\Controllers\Products\StockLocationProductsController@entryFromPurchaseOrder,Entry from purchase order (stock location products),inferred from route and handler
+routes/web.php,1007,post,/sorting,App\Http\Controllers\Products\StockLocationProductsController@sorting,Sorting (stock location products),inferred from route and handler
+routes/web.php,1008,post,/transfer,App\Http\Controllers\Products\StockLocationProductsController@transfer,Transfer (stock location products),inferred from route and handler
+routes/web.php,1012,get,/{id},App\Http\Controllers\Products\ProductsController@show,Read detail for products,inferred from route and handler
+routes/web.php,1016,put,/sync,App\Http\Controllers\Planning\TaskController@sync,Sync (task),inferred from route and handler
+routes/web.php,1017,get,/{id_type}/{id_page}/show/{id_line},App\Http\Controllers\Planning\TaskController@manage,Manage (task),inferred from route and handler
+routes/web.php,1018,get,/{id_type}/{id_page}/delete/{id_task},App\Http\Controllers\Planning\TaskController@delete,Delete (task),inferred from route and handler
+routes/web.php,1019,post,/create/{id},App\Http\Controllers\Planning\TaskController@store,Create or submit task,inferred from route and handler
+routes/web.php,1020,post,/update/{id},App\Http\Controllers\Planning\TaskController@update,Update task,inferred from route and handler
+routes/web.php,1023,get,/{id_type}/{id_page}/json/{id_line},App\Http\Controllers\Planning\TaskManageApiController@initialDataJson,Initial data json (task manage api),inferred from route and handler
+routes/web.php,1024,get,/{id_type}/{id_page}/json/{id_line}/select-data,App\Http\Controllers\Planning\TaskManageApiController@selectDataJson,Select data json (task manage api),inferred from route and handler
+routes/web.php,1025,post,/{id_type}/{id_page}/json/{id_line}/task,App\Http\Controllers\Planning\TaskManageApiController@storeTaskJson,Store task json (task manage api),inferred from route and handler
+routes/web.php,1026,put,/{id_type}/{id_page}/json/task/{id},App\Http\Controllers\Planning\TaskManageApiController@updateTaskJson,Update task json (task manage api),inferred from route and handler
+routes/web.php,1027,delete,/{id_type}/{id_page}/json/task/{id},App\Http\Controllers\Planning\TaskManageApiController@destroyTaskJson,Destroy task json (task manage api),inferred from route and handler
+routes/web.php,1028,post,/{id_type}/{id_page}/json/task/{id}/duplicate,App\Http\Controllers\Planning\TaskManageApiController@duplicateTaskJson,Duplicate task json (task manage api),inferred from route and handler
+routes/web.php,1029,get,/{id_type}/{id_page}/json/task/{id}/dependencies,App\Http\Controllers\Planning\TaskManageApiController@dependenciesJson,Dependencies json (task manage api),inferred from route and handler
+routes/web.php,1030,put,/{id_type}/{id_page}/json/task/{id}/dependencies,App\Http\Controllers\Planning\TaskManageApiController@updateDependenciesJson,Update dependencies json (task manage api),inferred from route and handler
+routes/web.php,1031,patch,/{id_type}/{id_page}/json/task/{id}/planned-qty,App\Http\Controllers\Planning\TaskManageApiController@updatePlannedQtyJson,Update planned qty json (task manage api),inferred from route and handler
+routes/web.php,1032,post,/{id_type}/{id_page}/json/{id_line}/sub-assembly,App\Http\Controllers\Planning\TaskManageApiController@storeSubAssemblyJson,Store sub assembly json (task manage api),inferred from route and handler
+routes/web.php,1033,put,/{id_type}/{id_page}/json/sub-assembly/{id},App\Http\Controllers\Planning\TaskManageApiController@updateSubAssemblyJson,Update sub assembly json (task manage api),inferred from route and handler
+routes/web.php,1034,delete,/{id_type}/{id_page}/json/sub-assembly/{id},App\Http\Controllers\Planning\TaskManageApiController@destroySubAssemblyJson,Destroy sub assembly json (task manage api),inferred from route and handler
+routes/web.php,1035,post,/{id_type}/{id_page}/json/sub-assembly/{id}/duplicate,App\Http\Controllers\Planning\TaskManageApiController@duplicateSubAssemblyJson,Duplicate sub assembly json (task manage api),inferred from route and handler
+routes/web.php,1036,post,/{id_type}/{id_page}/json/{id_line}/import-csv,App\Http\Controllers\Planning\TaskManageApiController@importCsvJson,Import csv json (task manage api),inferred from route and handler
+routes/web.php,1037,post,/{id_type}/{id_page}/json/{id_line}/apply-nomenclature/{tpl_id},App\Http\Controllers\Planning\TaskManageApiController@applyNomenclatureJson,Apply nomenclature json (task manage api),inferred from route and handler
+routes/web.php,1042,get,/Task/Statu/Id/{id},App\Http\Controllers\Planning\TaskController@statu,Statu (task),inferred from route and handler
+routes/web.php,1043,get,/Task/Statu,App\Http\Controllers\Planning\TaskController@statu,Statu (task),inferred from route and handler
+routes/web.php,1044,get,/Task,App\Http\Controllers\Planning\TaskController@index,List or display task records,inferred from route and handler
+routes/web.php,1045,get,/Task/gtd,App\Http\Controllers\Planning\TaskController@gtd,Gtd (task),inferred from route and handler
+routes/web.php,1046,get,/gtd/json/board,App\Http\Controllers\Planning\TaskController@gtdBoard,Gtd board (task),inferred from route and handler
+routes/web.php,1047,patch,/gtd/json/move,App\Http\Controllers\Planning\TaskController@gtdMove,Gtd move (task),inferred from route and handler
+routes/web.php,1048,patch,/gtd/json/assign,App\Http\Controllers\Planning\TaskController@gtdAssign,Gtd assign (task),inferred from route and handler
+routes/web.php,1049,patch,/gtd/json/priority,App\Http\Controllers\Planning\TaskController@gtdPriority,Gtd priority (task),inferred from route and handler
+routes/web.php,1050,post,/gtd/json/comment,App\Http\Controllers\Planning\TaskController@gtdComment,Gtd comment (task),inferred from route and handler
+routes/web.php,1051,get,/kanban,App\Http\Controllers\Planning\TaskController@kanban,Kanban (task),inferred from route and handler
+routes/web.php,1052,get,/calendar/orders,App\Http\Controllers\Planning\CalendarController@calendarOders,Calendar oders (calendar),inferred from route and handler
+routes/web.php,1053,get,/calendar/tasks,App\Http\Controllers\Planning\CalendarController@calendarTasks,Calendar tasks (calendar),inferred from route and handler
+routes/web.php,1054,get,/calendar/orders/events,App\Http\Controllers\Planning\CalendarController@eventsOrders,Events orders (calendar),inferred from route and handler
+routes/web.php,1055,get,/calendar/tasks/events,App\Http\Controllers\Planning\CalendarController@eventsTasks,Events tasks (calendar),inferred from route and handler
+routes/web.php,1056,get,/gantt,App\Http\Controllers\Planning\GanttController@index,List or display gantt records,inferred from route and handler
+routes/web.php,1057,get,/gantt/order/{order_id},App\Http\Controllers\Planning\GanttController@getTasksByOrder,Get tasks by order (gantt),inferred from route and handler
+routes/web.php,1059,view,/digital-twin,planning/digital-twin,view · /digital-twin,inferred from route and handler
+routes/web.php,1061,get,/load-planning,App\Http\Controllers\Planning\PlanningController@index,List or display planning records,inferred from route and handler
+routes/web.php,1062,get,/load-planning/data,App\Http\Controllers\Planning\PlanningController@dataJson,Data json (planning),inferred from route and handler
+routes/web.php,1063,get,/load-planning/calculation-status,App\Http\Controllers\Planning\PlanningController@calculationStatus,Calculation status (planning),inferred from route and handler
+routes/web.php,1064,post,/load-planning/calculate-dates,App\Http\Controllers\Planning\PlanningController@calculateDates,Calculate dates (planning),inferred from route and handler
+routes/web.php,1065,post,/load-planning/calculate-resources,App\Http\Controllers\Planning\PlanningController@calculateResources,Calculate resources (planning),inferred from route and handler
+routes/web.php,1069,get,/Task/Statu/Api/resolve,App\Http\Controllers\Api\TaskStatuController@resolve,Resolve (task statu),inferred from route and handler
+routes/web.php,1070,get,/Task/Statu/Api/{id},App\Http\Controllers\Api\TaskStatuController@show,Read detail for task statu,inferred from route and handler
+routes/web.php,1071,post,/Task/Statu/Api/{id}/start,App\Http\Controllers\Api\TaskStatuController@start,Start (task statu),inferred from route and handler
+routes/web.php,1072,post,/Task/Statu/Api/{id}/pause,App\Http\Controllers\Api\TaskStatuController@pause,Pause (task statu),inferred from route and handler
+routes/web.php,1073,post,/Task/Statu/Api/{id}/finish,App\Http\Controllers\Api\TaskStatuController@finish,Finish (task statu),inferred from route and handler
+routes/web.php,1074,post,/Task/Statu/Api/{id}/good-qty,App\Http\Controllers\Api\TaskStatuController@goodQty,Good qty (task statu),inferred from route and handler
+routes/web.php,1075,post,/Task/Statu/Api/{id}/good-qty-stock,App\Http\Controllers\Api\TaskStatuController@goodQtyStock,Good qty stock (task statu),inferred from route and handler
+routes/web.php,1076,post,/Task/Statu/Api/{id}/bad-qty,App\Http\Controllers\Api\TaskStatuController@badQty,Bad qty (task statu),inferred from route and handler
+routes/web.php,1077,put,/Task/Statu/Api/{id}/date,App\Http\Controllers\Api\TaskStatuController@updateDate,Update date (task statu),inferred from route and handler
+routes/web.php,1078,put,/Task/Statu/Api/{id}/resource,App\Http\Controllers\Api\TaskStatuController@updateResource,Update resource (task statu),inferred from route and handler
+routes/web.php,1079,post,/Task/Statu/Api/{id}/nc,App\Http\Controllers\Api\TaskStatuController@createNc,Create nc (task statu),inferred from route and handler
+routes/web.php,1081,post,/Task/Statu/Api/{id}/release,App\Http\Controllers\Api\TaskStatuController@release,Release (task statu),inferred from route and handler
+routes/web.php,1082,delete,/Task/Statu/Api/{id}/release,App\Http\Controllers\Api\TaskStatuController@revokeRelease,Revoke release (task statu),inferred from route and handler
+routes/web.php,1084,get,/Task/Statu/Api/{id}/inspection,App\Http\Controllers\Inspection\InspectionDossierController@taskShow,Task show (inspection dossier),inferred from route and handler
+routes/web.php,1085,post,/Task/Statu/Api/{id}/inspection/measure,App\Http\Controllers\Inspection\InspectionDossierController@taskMeasure,Task measure (inspection dossier),inferred from route and handler
+routes/web.php,1086,post,/Task/Statu/Api/{id}/inspection/close,App\Http\Controllers\Inspection\InspectionDossierController@taskClose,Task close (inspection dossier),inferred from route and handler
+routes/web.php,1087,post,/Task/Statu/Api/{id}/inspection/measures/{measure}/nc,App\Http\Controllers\Inspection\InspectionDossierController@taskNonConformity,Task non conformity (inspection dossier),inferred from route and handler
+routes/web.php,1091,get,/,App\Http\Controllers\Planning\NestingController@index,List or display nesting records,inferred from route and handler
+routes/web.php,1092,get,/document,App\Http\Controllers\Planning\NestingController@document,Document (nesting),inferred from route and handler
+routes/web.php,1093,get,/parts,App\Http\Controllers\Planning\NestingController@parts,Parts (nesting),inferred from route and handler
+routes/web.php,1094,get,/services,App\Http\Controllers\Planning\NestingController@services,Services (nesting),inferred from route and handler
+routes/web.php,1095,get,/sheet-stock,App\Http\Controllers\Planning\NestingController@sheetStock,Sheet stock (nesting),inferred from route and handler
+routes/web.php,1096,get,/bar-stock,App\Http\Controllers\Planning\NestingController@barStock,Bar stock (nesting),inferred from route and handler
+routes/web.php,1097,post,/compute,App\Http\Controllers\Planning\NestingController@compute,Compute (nesting),inferred from route and handler
+routes/web.php,1098,get,/engine/status/{jobId},App\Http\Controllers\Planning\NestingController@engineStatus,Engine status (nesting),inferred from route and handler
+routes/web.php,1099,get,/engine/preview/{jobId}/{sheet},App\Http\Controllers\Planning\NestingController@enginePreview,Engine preview (nesting),inferred from route and handler
+routes/web.php,1100,get,/engine/download/{jobId}/{sheet},App\Http\Controllers\Planning\NestingController@engineDownload,Engine download (nesting),inferred from route and handler
+routes/web.php,1111,post,/factory/announcement/create,App\Http\Controllers\Admin\FactoryController@storeAnnouncement,Store announcement (factory),inferred from route and handler
+routes/web.php,1112,get,/factory/announcement/delete/{id},App\Http\Controllers\Admin\FactoryController@deleteAnnouncement,Delete announcement (factory),inferred from route and handler
+routes/web.php,1113,post,/factory/update,App\Http\Controllers\Admin\FactoryController@update,Update factory,inferred from route and handler
+routes/web.php,1114,get,/factory,App\Http\Controllers\Admin\FactoryController@index,List or display factory records,inferred from route and handler
+routes/web.php,1116,get,/roles-permissions,App\Http\Controllers\Admin\RoleController@index,List or display role records,inferred from route and handler
+routes/web.php,1117,post,/factory/role/store,App\Http\Controllers\Admin\RoleController@store,Create or submit role,inferred from route and handler
+routes/web.php,1118,post,/factory/role/update/{id},App\Http\Controllers\Admin\RoleController@update,Update role,inferred from route and handler
+routes/web.php,1119,get,/factory/role/delete/{role},App\Http\Controllers\Admin\RoleController@destroy,Remove role,inferred from route and handler
+routes/web.php,1120,post,/factory/permissions/store,App\Http\Controllers\Admin\PermissionController@store,Create or submit permission,inferred from route and handler
+routes/web.php,1121,get,/factory/permissions/delete/{permission},App\Http\Controllers\Admin\PermissionController@destroy,Remove permission,inferred from route and handler
+routes/web.php,1122,post,/factory/role/permissions/store,App\Http\Controllers\Admin\RoleController@RolePemissionStore,Role pemission store (role),inferred from route and handler
+routes/web.php,1123,get,/integrations,\App\Http\Controllers\Admin\IntegrationHubController::index,List or display integration hub records,inferred from route and handler
+routes/web.php,1130,get,/,\App\Http\Controllers\Admin\IntegrationEndpointController::index,List or display integration endpoint records,inferred from route and handler
+routes/web.php,1131,get,/create,\App\Http\Controllers\Admin\IntegrationEndpointController::create,Open the creation workflow for integration endpoint,inferred from route and handler
+routes/web.php,1132,post,/,\App\Http\Controllers\Admin\IntegrationEndpointController::store,Create or submit integration endpoint,inferred from route and handler
+routes/web.php,1133,get,/{endpoint}/edit,\App\Http\Controllers\Admin\IntegrationEndpointController::edit,Open the edit workflow for integration endpoint,inferred from route and handler
+routes/web.php,1134,put,/{endpoint},\App\Http\Controllers\Admin\IntegrationEndpointController::update,Update integration endpoint,inferred from route and handler
+routes/web.php,1135,delete,/{endpoint},\App\Http\Controllers\Admin\IntegrationEndpointController::destroy,Remove integration endpoint,inferred from route and handler
+routes/web.php,1136,post,/{endpoint}/regenerate,\App\Http\Controllers\Admin\IntegrationEndpointController::regenerate,Regenerate (integration endpoint),inferred from route and handler
+routes/web.php,1137,post,/{endpoint}/test,\App\Http\Controllers\Admin\IntegrationEndpointController::testConnection,Test connection (integration endpoint),inferred from route and handler
+routes/web.php,1138,post,/{endpoint}/resync-sheets,\App\Http\Controllers\Admin\IntegrationEndpointController::resyncSheets,Resync sheets (integration endpoint),inferred from route and handler
+routes/web.php,1139,get,/{endpoint}/deliveries,\App\Http\Controllers\Admin\IntegrationEndpointController::deliveries,Deliveries (integration endpoint),inferred from route and handler
+routes/web.php,1143,get,/,\App\Http\Controllers\Admin\AISettingsController::index,List or display ai settings records,inferred from route and handler
+routes/web.php,1144,put,/,\App\Http\Controllers\Admin\AISettingsController::update,Update ai settings,inferred from route and handler
+routes/web.php,1145,post,/import-env,\App\Http\Controllers\Admin\AISettingsController::importFromEnv,Import from env (ai settings),inferred from route and handler
+routes/web.php,1146,post,/test,\App\Http\Controllers\Admin\AISettingsController::test,Test (ai settings),inferred from route and handler
+routes/web.php,1150,get,/,\App\Http\Controllers\Admin\MailSettingsController::index,List or display mail settings records,inferred from route and handler
+routes/web.php,1151,put,/,\App\Http\Controllers\Admin\MailSettingsController::update,Update mail settings,inferred from route and handler
+routes/web.php,1152,post,/test,\App\Http\Controllers\Admin\MailSettingsController::test,Test (mail settings),inferred from route and handler
+routes/web.php,1156,get,/,\App\Http\Controllers\Admin\ESignatureSettingsController::index,List or display e signature settings records,inferred from route and handler
+routes/web.php,1157,put,/,\App\Http\Controllers\Admin\ESignatureSettingsController::update,Update e signature settings,inferred from route and handler
+routes/web.php,1158,post,/test,\App\Http\Controllers\Admin\ESignatureSettingsController::test,Test (e signature settings),inferred from route and handler
+routes/web.php,1163,get,/,\App\Http\Controllers\Admin\Nest2BendSettingsController::index,List or display nest2 bend settings records,inferred from route and handler
+routes/web.php,1164,put,/,\App\Http\Controllers\Admin\Nest2BendSettingsController::update,Update nest2 bend settings,inferred from route and handler
+routes/web.php,1165,post,/test,\App\Http\Controllers\Admin\Nest2BendSettingsController::test,Test (nest2 bend settings),inferred from route and handler
+routes/web.php,1170,get,/,\App\Http\Controllers\Admin\SharePointSettingsController::index,List or display share point settings records,inferred from route and handler
+routes/web.php,1171,put,/,\App\Http\Controllers\Admin\SharePointSettingsController::update,Update share point settings,inferred from route and handler
+routes/web.php,1172,post,/test,\App\Http\Controllers\Admin\SharePointSettingsController::test,Test (share point settings),inferred from route and handler
+routes/web.php,1173,post,/backfill,\App\Http\Controllers\Admin\SharePointSettingsController::backfill,Backfill (share point settings),inferred from route and handler
+routes/web.php,1174,post,/retry,\App\Http\Controllers\Admin\SharePointSettingsController::retry,Retry (share point settings),inferred from route and handler
+routes/web.php,1178,get,/,\App\Http\Controllers\Admin\EmailLogsController::index,List or display email logs records,inferred from route and handler
+routes/web.php,1179,get,/{log},\App\Http\Controllers\Admin\EmailLogsController::show,Read detail for email logs,inferred from route and handler
+routes/web.php,1180,post,/{log}/resend,\App\Http\Controllers\Admin\EmailLogsController::resend,Resend (email logs),inferred from route and handler
+routes/web.php,1184,get,/,\App\Http\Controllers\Integrations\QontoSettingsController::index,List or display qonto settings records,inferred from route and handler
+routes/web.php,1185,get,/connect,\App\Http\Controllers\Integrations\QontoSettingsController::connect,Connect (qonto settings),inferred from route and handler
+routes/web.php,1186,post,/sync,\App\Http\Controllers\Integrations\QontoSettingsController::sync,Sync (qonto settings),inferred from route and handler
+routes/web.php,1187,post,/settings,\App\Http\Controllers\Integrations\QontoSettingsController::settings,Settings (qonto settings),inferred from route and handler
+routes/web.php,1188,post,/disconnect,\App\Http\Controllers\Integrations\QontoSettingsController::disconnect,Disconnect (qonto settings),inferred from route and handler
+routes/web.php,1189,post,/reviews/{reviewId}/resolve,\App\Http\Controllers\Integrations\QontoSettingsController::resolve,Resolve (qonto settings),inferred from route and handler
+routes/web.php,1192,post,/factory/custom-field/store,App\Http\Controllers\Admin\FactoryController@storeCustomField,Store custom field (factory),inferred from route and handler
+routes/web.php,1193,post,/factory/custom-field-value/storeOrUpdate/{id}/{type},App\Http\Controllers\Admin\FactoryController@storeOrUpdateCustomField,Store or update custom field (factory),inferred from route and handler
+routes/web.php,1195,post,/document-code-template/store,App\Http\Controllers\Admin\DocumentCodeTemplateController@store,Create or submit document code template,inferred from route and handler
+routes/web.php,1196,post,/document-code-template/update/{id},App\Http\Controllers\Admin\DocumentCodeTemplateController@update,Update document code template,inferred from route and handler
+routes/web.php,1198,get,/time-unit-settings,\App\Http\Controllers\Admin\TimeUnitSettingsController::index,List or display time unit settings records,inferred from route and handler
+routes/web.php,1199,put,/time-unit-settings,\App\Http\Controllers\Admin\TimeUnitSettingsController::update,Update time unit settings,inferred from route and handler
+routes/web.php,1200,get,/estimated-budgets-settings,App\Http\Controllers\Admin\FactoryController@estimatedBudgetsSettingView,Estimated budgets setting view (factory),inferred from route and handler
+routes/web.php,1201,get,/estimated-budgets/json/list,App\Http\Controllers\Admin\FactoryController@estimatedBudgetsJsonList,Estimated budgets json list (factory),inferred from route and handler
+routes/web.php,1202,post,/estimated-budgets/json/store,App\Http\Controllers\Admin\FactoryController@estimatedBudgetsJsonStore,Estimated budgets json store (factory),inferred from route and handler
+routes/web.php,1203,put,/estimated-budgets/json/update/{id},App\Http\Controllers\Admin\FactoryController@estimatedBudgetsJsonUpdate,Estimated budgets json update (factory),inferred from route and handler
+routes/web.php,1204,delete,/estimated-budgets/json/{id},App\Http\Controllers\Admin\FactoryController@estimatedBudgetsJsonDestroy,Estimated budgets json destroy (factory),inferred from route and handler
+routes/web.php,1206,get,/kanban-settings,App\Http\Controllers\Admin\FactoryController@kanbanSettingView,Kanban setting view (factory),inferred from route and handler
+routes/web.php,1207,get,/kanban-settings/json/list,App\Http\Controllers\Admin\FactoryController@kanbanSettingJsonList,Kanban setting json list (factory),inferred from route and handler
+routes/web.php,1208,post,/kanban-settings/json/store,App\Http\Controllers\Admin\FactoryController@kanbanSettingJsonStore,Kanban setting json store (factory),inferred from route and handler
+routes/web.php,1209,patch,/kanban-settings/json/{id}/up,App\Http\Controllers\Admin\FactoryController@kanbanSettingJsonUp,Kanban setting json up (factory),inferred from route and handler
+routes/web.php,1210,patch,/kanban-settings/json/{id}/down,App\Http\Controllers\Admin\FactoryController@kanbanSettingJsonDown,Kanban setting json down (factory),inferred from route and handler
+routes/web.php,1211,delete,/kanban-settings/json/{id},App\Http\Controllers\Admin\FactoryController@kanbanSettingJsonDestroy,Kanban setting json destroy (factory),inferred from route and handler
+routes/web.php,1213,get,/imports-exports,App\Http\Controllers\Admin\ImportsExportsController@index,List or display imports exports records,inferred from route and handler
+routes/web.php,1215,get,/imports/{type}/template,App\Http\Controllers\Admin\DataImportController@template,Template (data import),inferred from route and handler
+routes/web.php,1216,post,/imports/{type}/preview,App\Http\Controllers\Admin\DataImportController@preview,Preview (data import),inferred from route and handler
+routes/web.php,1217,post,/imports/{type}/check,App\Http\Controllers\Admin\DataImportController@check,Check (data import),inferred from route and handler
+routes/web.php,1218,post,/imports/{type}/run,App\Http\Controllers\Admin\DataImportController@run,Run (data import),inferred from route and handler
+routes/web.php,1219,get,/invoice-export/json/list,App\Http\Controllers\Admin\ImportsExportsController@invoiceExportJsonList,Invoice export json list (imports exports),inferred from route and handler
+routes/web.php,1220,post,/invoice-export/export/{ext},App\Http\Controllers\Admin\ImportsExportsController@invoiceExport,Invoice export (imports exports),inferred from route and handler
+routes/web.php,1221,get,/fec-export/json/list,App\Http\Controllers\Admin\ImportsExportsController@fecExportJsonList,Fec export json list (imports exports),inferred from route and handler
+routes/web.php,1222,post,/fec-export/export/{ext},App\Http\Controllers\Admin\ImportsExportsController@fecExport,Fec export (imports exports),inferred from route and handler
+routes/web.php,1226,get,/,\App\Http\Controllers\Admin\AccessLogController::index,List or display access log records,inferred from route and handler
+routes/web.php,1227,get,/json/list,\App\Http\Controllers\Admin\AccessLogController::list,List (access log),inferred from route and handler
+routes/web.php,1228,get,/export.csv,\App\Http\Controllers\Admin\AccessLogController::export,Export access log records,inferred from route and handler
+routes/web.php,1231,get,/logs-view,App\Http\Controllers\Admin\FactoryController@logsView,Logs view (factory),inferred from route and handler
+routes/web.php,1232,get,/logs-viewer/json/meta,App\Http\Controllers\Admin\LogsViewerController@meta,Meta (logs viewer),inferred from route and handler
+routes/web.php,1235,get,/,\App\Http\Controllers\Admin\ApiTokenController::index,List or display api token records,inferred from route and handler
+routes/web.php,1236,post,/,\App\Http\Controllers\Admin\ApiTokenController::store,Create or submit api token,inferred from route and handler
+routes/web.php,1237,delete,/{token},\App\Http\Controllers\Admin\ApiTokenController::destroy,Remove api token,inferred from route and handler
+routes/web.php,1239,get,/logs-viewer/json/list,App\Http\Controllers\Admin\LogsViewerController@list,List (logs viewer),inferred from route and handler
+routes/web.php,1245,get,/emails/templates,App\Http\Controllers\Admin\EmailTemplateController@index,List or display email template records,inferred from route and handler
+routes/web.php,1246,post,/emails/templates/store,App\Http\Controllers\Admin\EmailTemplateController@store,Create or submit email template,inferred from route and handler
+routes/web.php,1247,post,/emails/templates/update/{emailTemplate},App\Http\Controllers\Admin\EmailTemplateController@update,Update email template,inferred from route and handler
+routes/web.php,1248,delete,/emails/templates/delete/{emailTemplate},App\Http\Controllers\Admin\EmailTemplateController@destroy,Remove email template,inferred from route and handler
+routes/web.php,1255,get,/,App\Http\Controllers\Admin\HumanResourcesController@index,List or display human resources records,inferred from route and handler
+routes/web.php,1256,get,/index,App\Http\Controllers\Admin\HumanResourcesController@index,List or display human resources records,inferred from route and handler
+routes/web.php,1257,get,/attendance,App\Http\Controllers\Admin\HumanResourcesController@attendanceReport,Attendance report (human resources),inferred from route and handler
+routes/web.php,1260,get,/users,App\Http\Controllers\Admin\HumanResourcesController@indexUsers,Index users (human resources),inferred from route and handler
+routes/web.php,1263,get,/user/{id},App\Http\Controllers\Admin\HumanResourcesController@ShowUser,Show user (human resources),inferred from route and handler
+routes/web.php,1266,match,/update/user/{id},App\Http\Controllers\Admin\HumanResourcesController@UpdateUser,Update user (human resources),inferred from route and handler
+routes/web.php,1269,get,/user/{id}/badge,App\Http\Controllers\Admin\HumanResourcesController@printUserBadge,Print user badge (human resources),inferred from route and handler
+routes/web.php,1272,post,/lock/user/{id},App\Http\Controllers\Admin\HumanResourcesController@LockUser,Lock user (human resources),inferred from route and handler
+routes/web.php,1277,post,/create,App\Http\Controllers\Admin\HumanResourcesController@storeUserEmploymentContract,Store user employment contract (human resources),inferred from route and handler
+routes/web.php,1278,post,/store,App\Http\Controllers\Admin\HumanResourcesController@storeUserEmploymentContract,Store user employment contract (human resources),inferred from route and handler
+routes/web.php,1281,post,/update,App\Http\Controllers\Admin\HumanResourcesController@updateUserEmploymentContract,Update user employment contract (human resources),inferred from route and handler
+routes/web.php,1282,put,/{id},App\Http\Controllers\Admin\HumanResourcesController@updateUserEmploymentContract,Update user employment contract (human resources),inferred from route and handler
+routes/web.php,1287,get,/export,App\Http\Controllers\HumanResources\PayrollExportController@index,List or display payroll export records,inferred from route and handler
+routes/web.php,1288,post,/export/{ext},App\Http\Controllers\HumanResources\PayrollExportController@export,Export payroll export records,inferred from route and handler
+routes/web.php,1293,get,/balances,App\Http\Controllers\HumanResources\LeaveController@index,List or display leave records,inferred from route and handler
+routes/web.php,1294,post,/balances,App\Http\Controllers\HumanResources\LeaveController@storeBalance,Store balance (leave),inferred from route and handler
+routes/web.php,1295,post,/balances/generate,App\Http\Controllers\HumanResources\LeaveController@generateBalances,Generate balances (leave),inferred from route and handler
+routes/web.php,1296,post,/types,App\Http\Controllers\HumanResources\LeaveController@storeType,Store type (leave),inferred from route and handler
+routes/web.php,1297,post,/types/{id},App\Http\Controllers\HumanResources\LeaveController@updateType,Update type (leave),inferred from route and handler
+routes/web.php,1303,post,/create/category,App\Http\Controllers\Admin\HumanResourcesController@storeUserExpenseCategorie,Store user expense categorie (human resources),inferred from route and handler
+routes/web.php,1304,post,/category,App\Http\Controllers\Admin\HumanResourcesController@storeUserExpenseCategorie,Store user expense categorie (human resources),inferred from route and handler
+routes/web.php,1306,post,/update/category,App\Http\Controllers\Admin\HumanResourcesController@updateUserExpenseCategorie,Update user expense categorie (human resources),inferred from route and handler
+routes/web.php,1307,put,/category/{id},App\Http\Controllers\Admin\HumanResourcesController@updateUserExpenseCategorie,Update user expense categorie (human resources),inferred from route and handler
+routes/web.php,1309,post,/create/report,App\Http\Controllers\Admin\HumanResourcesController@storeUserExpenseReport,Store user expense report (human resources),inferred from route and handler
+routes/web.php,1310,post,/report,App\Http\Controllers\Admin\HumanResourcesController@storeUserExpenseReport,Store user expense report (human resources),inferred from route and handler
+routes/web.php,1312,post,/update/report,App\Http\Controllers\Admin\HumanResourcesController@updateUserExpenseReport,Update user expense report (human resources),inferred from route and handler
+routes/web.php,1313,put,/report/{id},App\Http\Controllers\Admin\HumanResourcesController@updateUserExpenseReport,Update user expense report (human resources),inferred from route and handler
+routes/web.php,1315,get,/show/{id},App\Http\Controllers\Admin\HumanResourcesController@ShowExpenseUser,Show expense user (human resources),inferred from route and handler
+routes/web.php,1317,post,/create/expense/{report_id},App\Http\Controllers\Admin\HumanResourcesController@storeExpenseUser,Store expense user (human resources),inferred from route and handler
+routes/web.php,1319,post,/update/expense/{id},App\Http\Controllers\Admin\HumanResourcesController@updateExpenseUser,Update expense user (human resources),inferred from route and handler
+routes/web.php,1321,post,/valide/report,App\Http\Controllers\Admin\HumanResourcesController@valideExpenseUser,Valide expense user (human resources),inferred from route and handler
+routes/web.php,1323,get,/receipts/{report_id},App\Http\Controllers\Admin\HumanResourcesController@expenseReceiptsJson,Expense receipts json (human resources),inferred from route and handler
+routes/web.php,1324,post,/receipts/{report_id}/read/{file_id},App\Http\Controllers\Admin\HumanResourcesController@readExpenseReceipt,Read expense receipt (human resources),inferred from route and handler
+routes/web.php,1326,get,/file/{filename},App\Http\Controllers\Admin\HumanResourcesController@serveExpenseFile,Serve expense file (human resources),inferred from route and handler
+routes/web.php,1332,get,/,App\Http\Controllers\Quality\QualityController@index,List or display quality records,inferred from route and handler
+routes/web.php,1334,redirect,/inspection-projects,plans,redirect · /inspection-projects,inferred from route and handler
+routes/web.php,1335,get,/plans,App\Http\Controllers\Inspection\InspectionPlanController@indexView,Index view (inspection plan),inferred from route and handler
+routes/web.php,1336,get,/plans/{plan}/bubbler,App\Http\Controllers\Inspection\InspectionPlanController@bubbler,Bubbler (inspection plan),inferred from route and handler
+routes/web.php,1337,get,/inspections/{dossier},App\Http\Controllers\Inspection\InspectionDossierController@page,Page (inspection dossier),inferred from route and handler
+routes/web.php,1338,get,/inspections/{dossier}/report,App\Http\Controllers\Inspection\InspectionReportController@page,Page (inspection report),inferred from route and handler
+routes/web.php,1341,get,/process-diagrams,App\Http\Controllers\Quality\ProcessDiagramController@indexView,Index view (process diagram),inferred from route and handler
+routes/web.php,1343,get,/list,App\Http\Controllers\Quality\ProcessDiagramController@index,List or display process diagram records,inferred from route and handler
+routes/web.php,1344,post,/list,App\Http\Controllers\Quality\ProcessDiagramController@store,Create or submit process diagram,inferred from route and handler
+routes/web.php,1345,get,/{id},App\Http\Controllers\Quality\ProcessDiagramController@show,Read detail for process diagram,inferred from route and handler
+routes/web.php,1346,put,/{id},App\Http\Controllers\Quality\ProcessDiagramController@update,Update process diagram,inferred from route and handler
+routes/web.php,1347,delete,/{id},App\Http\Controllers\Quality\ProcessDiagramController@delete,Delete (process diagram),inferred from route and handler
+routes/web.php,1352,get,/,App\Http\Controllers\Quality\QualityActionController@index,List or display quality action records,inferred from route and handler
+routes/web.php,1353,post,/create,App\Http\Controllers\Quality\QualityActionController@store,Create or submit quality action,inferred from route and handler
+routes/web.php,1354,post,/edit/{id},App\Http\Controllers\Quality\QualityActionController@update,Update quality action,inferred from route and handler
+routes/web.php,1359,post,/create,App\Http\Controllers\Quality\QualityControlDeviceController@store,Create or submit quality control device,inferred from route and handler
+routes/web.php,1360,post,/edit/{id},App\Http\Controllers\Quality\QualityControlDeviceController@update,Update quality control device,inferred from route and handler
+routes/web.php,1361,get,/picture/{filename},App\Http\Controllers\Quality\QualityControlDeviceController@servePicture,Serve picture (quality control device),inferred from route and handler
+routes/web.php,1368,get,/,App\Http\Controllers\Quality\QualityNonConformityController@index,List or display quality non conformity records,inferred from route and handler
+routes/web.php,1369,post,/create,App\Http\Controllers\Quality\QualityNonConformityController@store,Create or submit quality non conformity,inferred from route and handler
+routes/web.php,1370,post,/edit/{id},App\Http\Controllers\Quality\QualityNonConformityController@update,Update quality non conformity,inferred from route and handler
+routes/web.php,1371,post,/close/{id},App\Http\Controllers\Quality\QualityNonConformityController@closeResolutionDate,Close resolution date (quality non conformity),inferred from route and handler
+routes/web.php,1372,post,/reopen/{id},App\Http\Controllers\Quality\QualityNonConformityController@reopenResolutionDate,Reopen resolution date (quality non conformity),inferred from route and handler
+routes/web.php,1374,get,/api/list,App\Http\Controllers\Quality\QualityNonConformityController@apiList,Api list (quality non conformity),inferred from route and handler
+routes/web.php,1375,post,/api/store,App\Http\Controllers\Quality\QualityNonConformityController@apiStore,Api store (quality non conformity),inferred from route and handler
+routes/web.php,1376,post,/api/{id}/update,App\Http\Controllers\Quality\QualityNonConformityController@apiUpdate,Api update (quality non conformity),inferred from route and handler
+routes/web.php,1377,post,/api/{id}/close,App\Http\Controllers\Quality\QualityNonConformityController@apiClose,Api close (quality non conformity),inferred from route and handler
+routes/web.php,1378,post,/api/{id}/reopen,App\Http\Controllers\Quality\QualityNonConformityController@apiReopen,Api reopen (quality non conformity),inferred from route and handler
+routes/web.php,1379,get,/api/{id}/history,App\Http\Controllers\Quality\QualityNonConformityController@apiHistory,Api history (quality non conformity),inferred from route and handler
+routes/web.php,1381,get,/api/cost-stats,App\Http\Controllers\Quality\NonConformityImpactController@stats,Stats (non conformity impact),inferred from route and handler
+routes/web.php,1382,get,/api/{id}/impact,App\Http\Controllers\Quality\NonConformityImpactController@show,Read detail for non conformity impact,inferred from route and handler
+routes/web.php,1383,post,/api/{id}/impact,App\Http\Controllers\Quality\NonConformityImpactController@update,Update non conformity impact,inferred from route and handler
+routes/web.php,1384,post,/api/{id}/rework,App\Http\Controllers\Quality\NonConformityImpactController@rework,Rework (non conformity impact),inferred from route and handler
+routes/web.php,1386,post,/api/{id}/delay,App\Http\Controllers\Quality\NonConformityImpactController@delay,Delay (non conformity impact),inferred from route and handler
+routes/web.php,1392,get,/,App\Http\Controllers\Quality\QualityDerogationController@index,List or display quality derogation records,inferred from route and handler
+routes/web.php,1393,post,/create,App\Http\Controllers\Quality\QualityDerogationController@store,Create or submit quality derogation,inferred from route and handler
+routes/web.php,1394,post,/edit/{id},App\Http\Controllers\Quality\QualityDerogationController@update,Update quality derogation,inferred from route and handler
+routes/web.php,1395,get,/company-data,App\Http\Controllers\Quality\QualityDerogationController@companyData,Company data (quality derogation),inferred from route and handler
+routes/web.php,1396,get,/{id},App\Http\Controllers\Quality\QualityDerogationController@show,Read detail for quality derogation,inferred from route and handler
+routes/web.php,1397,get,/{id}/preview,App\Http\Controllers\Quality\QualityDerogationController@preview,Preview (quality derogation),inferred from route and handler
+routes/web.php,1399,post,/{id}/signature,App\Http\Controllers\Quality\QualityDerogationController@sendSignature,Send signature (quality derogation),inferred from route and handler
+routes/web.php,1400,post,/{id}/signature/sync,App\Http\Controllers\Quality\QualityDerogationController@syncSignature,Sync signature (quality derogation),inferred from route and handler
+routes/web.php,1405,get,/,App\Http\Controllers\Quality\QualityAmdecController@index,List or display quality amdec records,inferred from route and handler
+routes/web.php,1406,post,/create,App\Http\Controllers\Quality\QualityAmdecController@store,Create or submit quality amdec,inferred from route and handler
+routes/web.php,1407,post,/edit/{id},App\Http\Controllers\Quality\QualityAmdecController@update,Update quality amdec,inferred from route and handler
+routes/web.php,1412,post,/create,App\Http\Controllers\Quality\QualityFailureController@store,Create or submit quality failure,inferred from route and handler
+routes/web.php,1413,post,/edit/{id},App\Http\Controllers\Quality\QualityFailureController@update,Update quality failure,inferred from route and handler
+routes/web.php,1418,post,/create,App\Http\Controllers\Quality\QualityCauseController@store,Create or submit quality cause,inferred from route and handler
+routes/web.php,1419,post,/edit/{id},App\Http\Controllers\Quality\QualityCauseController@update,Update quality cause,inferred from route and handler
+routes/web.php,1424,post,/create,App\Http\Controllers\Quality\QualityCorrectionController@store,Create or submit quality correction,inferred from route and handler
+routes/web.php,1425,post,/edit/{id},App\Http\Controllers\Quality\QualityCorrectionController@update,Update quality correction,inferred from route and handler
+routes/web.php,1430,get,/devices,App\Http\Controllers\Quality\QualityControlDeviceController@jsonList,Json list (quality control device),inferred from route and handler
+routes/web.php,1431,post,/devices/create,App\Http\Controllers\Quality\QualityControlDeviceController@jsonStore,Json store (quality control device),inferred from route and handler
+routes/web.php,1432,post,/devices/update/{id},App\Http\Controllers\Quality\QualityControlDeviceController@jsonUpdate,Json update (quality control device),inferred from route and handler
+routes/web.php,1433,get,/select-data,App\Http\Controllers\Quality\QualityController@jsonSelectData,Json select data (quality),inferred from route and handler
+routes/web.php,1434,post,/failure/create,App\Http\Controllers\Quality\QualityFailureController@jsonStore,Json store (quality failure),inferred from route and handler
+routes/web.php,1435,post,/failure/update/{id},App\Http\Controllers\Quality\QualityFailureController@jsonUpdate,Json update (quality failure),inferred from route and handler
+routes/web.php,1436,post,/cause/create,App\Http\Controllers\Quality\QualityCauseController@jsonStore,Json store (quality cause),inferred from route and handler
+routes/web.php,1437,post,/cause/update/{id},App\Http\Controllers\Quality\QualityCauseController@jsonUpdate,Json update (quality cause),inferred from route and handler
+routes/web.php,1438,post,/correction/create,App\Http\Controllers\Quality\QualityCorrectionController@jsonStore,Json store (quality correction),inferred from route and handler
+routes/web.php,1439,post,/correction/update/{id},App\Http\Controllers\Quality\QualityCorrectionController@jsonUpdate,Json update (quality correction),inferred from route and handler
+routes/web.php,1450,get,/,,get · /,inferred from route and handler
+routes/web.php,1451,get,/product/{product},,get · /product/{product},inferred from route and handler
+routes/web.php,1452,get,/{plan},,get · /{plan},inferred from route and handler
+routes/web.php,1453,get,/{plan}/thumbnail,,get · /{plan}/thumbnail,inferred from route and handler
+routes/web.php,1455,post,/,,post · /,inferred from route and handler
+routes/web.php,1456,patch,/{plan},,patch · /{plan},inferred from route and handler
+routes/web.php,1457,delete,/{plan},,delete · /{plan},inferred from route and handler
+routes/web.php,1458,post,/{plan}/thumbnail,,post · /{plan}/thumbnail,inferred from route and handler
+routes/web.php,1459,post,/{plan}/approve,,post · /{plan}/approve,inferred from route and handler
+routes/web.php,1461,post,/{plan}/points,,post · /{plan}/points,inferred from route and handler
+routes/web.php,1462,post,/{plan}/points/renumber,,post · /{plan}/points/renumber,inferred from route and handler
+routes/web.php,1463,post,/{plan}/read-zone,,post · /{plan}/read-zone,inferred from route and handler
+routes/web.php,1464,patch,/points/{point},,patch · /points/{point},inferred from route and handler
+routes/web.php,1465,delete,/points/{point},,delete · /points/{point},inferred from route and handler
+routes/web.php,1472,post,/,,post · /,inferred from route and handler
+routes/web.php,1473,get,/{dossier},,get · /{dossier},inferred from route and handler
+routes/web.php,1474,post,/{dossier}/measure,,post · /{dossier}/measure,inferred from route and handler
+routes/web.php,1475,post,/{dossier}/close,,post · /{dossier}/close,inferred from route and handler
+routes/web.php,1476,post,/{dossier}/measures/{measure}/nc,,post · /{dossier}/measures/{measure}/nc,inferred from route and handler
+routes/web.php,1480,get,/{dossier}/report,,get · /{dossier}/report,inferred from route and handler
+routes/web.php,1481,patch,/{dossier}/report,,patch · /{dossier}/report,inferred from route and handler
+routes/web.php,1482,post,/{dossier}/report/sign,,post · /{dossier}/report/sign,inferred from route and handler
+routes/web.php,1483,post,/{dossier}/report/pdf,,post · /{dossier}/report/pdf,inferred from route and handler
+routes/web.php,1488,get,/,App\Http\Controllers\Methods\MethodsController@index,List or display methods records,inferred from route and handler
+routes/web.php,1492,get,/,App\Http\Controllers\Methods\UnitsController@index,List or display units records,inferred from route and handler
+routes/web.php,1493,post,/create,App\Http\Controllers\Methods\UnitsController@store,Create or submit units,inferred from route and handler
+routes/web.php,1494,post,/edit/{id},App\Http\Controllers\Methods\UnitsController@update,Update units,inferred from route and handler
+routes/web.php,1499,get,/,App\Http\Controllers\Methods\FamiliesController@index,List or display families records,inferred from route and handler
+routes/web.php,1500,post,/create,App\Http\Controllers\Methods\FamiliesController@store,Create or submit families,inferred from route and handler
+routes/web.php,1501,post,/edit/{id},App\Http\Controllers\Methods\FamiliesController@update,Update families,inferred from route and handler
+routes/web.php,1506,get,/,App\Http\Controllers\Methods\ServicesController@index,List or display services records,inferred from route and handler
+routes/web.php,1507,post,/create,App\Http\Controllers\Methods\ServicesController@store,Create or submit services,inferred from route and handler
+routes/web.php,1508,get,/show/{id},App\Http\Controllers\Methods\ServicesController@show,Read detail for services,inferred from route and handler
+routes/web.php,1509,post,/edit/{id},App\Http\Controllers\Methods\ServicesController@update,Update services,inferred from route and handler
+routes/web.php,1510,post,/edit/{id}/image,App\Http\Controllers\Methods\ServicesController@StoreImage,Store image (services),inferred from route and handler
+routes/web.php,1515,get,/,App\Http\Controllers\Methods\SectionsController@index,List or display sections records,inferred from route and handler
+routes/web.php,1516,post,/create,App\Http\Controllers\Methods\SectionsController@store,Create or submit sections,inferred from route and handler
+routes/web.php,1517,post,/edit/{id},App\Http\Controllers\Methods\SectionsController@update,Update sections,inferred from route and handler
+routes/web.php,1520,get,/overview,App\Http\Controllers\Methods\MethodsController@overview,Overview (methods),inferred from route and handler
+routes/web.php,1524,get,/,App\Http\Controllers\Methods\RessourcesController@index,List or display ressources records,inferred from route and handler
+routes/web.php,1525,post,/create,App\Http\Controllers\Methods\RessourcesController@store,Create or submit ressources,inferred from route and handler
+routes/web.php,1526,post,/edit/{id},App\Http\Controllers\Methods\RessourcesController@update,Update ressources,inferred from route and handler
+routes/web.php,1527,post,/edit/{id}/image,App\Http\Controllers\Methods\RessourcesController@StoreImage,Store image (ressources),inferred from route and handler
+routes/web.php,1532,get,/,App\Http\Controllers\Methods\LocationsController@index,List or display locations records,inferred from route and handler
+routes/web.php,1533,post,/create,App\Http\Controllers\Methods\LocationsController@store,Create or submit locations,inferred from route and handler
+routes/web.php,1534,post,/edit/{id},App\Http\Controllers\Methods\LocationsController@update,Update locations,inferred from route and handler
+routes/web.php,1539,get,/,App\Http\Controllers\Methods\ToolsController@index,List or display tools records,inferred from route and handler
+routes/web.php,1540,get,/punch-designer,App\Http\Controllers\Methods\ToolsController@punchDesigner,Punch designer (tools),inferred from route and handler
+routes/web.php,1541,get,/catalog,App\Http\Controllers\Methods\ToolsController@punchDesigner,Punch designer (tools),inferred from route and handler
+routes/web.php,1542,get,/configurator,App\Http\Controllers\Methods\ToolsController@configurator,Configurator (tools),inferred from route and handler
+routes/web.php,1543,post,/configurator,App\Http\Controllers\Methods\ToolsController@storeConfigured,Store configured (tools),inferred from route and handler
+routes/web.php,1544,post,/create,App\Http\Controllers\Methods\ToolsController@store,Create or submit tools,inferred from route and handler
+routes/web.php,1545,post,/edit/{id},App\Http\Controllers\Methods\ToolsController@update,Update tools,inferred from route and handler
+routes/web.php,1546,post,/edit/{id}/image,App\Http\Controllers\Methods\ToolsController@StoreImage,Store image (tools),inferred from route and handler
+routes/web.php,1547,post,/edit/{id}/stock-product,App\Http\Controllers\Methods\ToolsController@storeStockProduct,Store stock product (tools),inferred from route and handler
+routes/web.php,1552,get,/,App\Http\Controllers\Methods\StandardNomenclatureController@index,List or display standard nomenclature records,inferred from route and handler
+routes/web.php,1553,post,/create,App\Http\Controllers\Methods\StandardNomenclatureController@store,Create or submit standard nomenclature,inferred from route and handler
+routes/web.php,1554,post,/edit/{id},App\Http\Controllers\Methods\StandardNomenclatureController@update,Update standard nomenclature,inferred from route and handler
+routes/web.php,1559,get,/,App\Http\Controllers\Methods\OperationTransitionDelayController@index,List or display operation transition delay records,inferred from route and handler
+routes/web.php,1560,post,/create,App\Http\Controllers\Methods\OperationTransitionDelayController@store,Create or submit operation transition delay,inferred from route and handler
+routes/web.php,1561,post,/edit/{id},App\Http\Controllers\Methods\OperationTransitionDelayController@update,Update operation transition delay,inferred from route and handler
+routes/web.php,1562,post,/delete/{id},App\Http\Controllers\Methods\OperationTransitionDelayController@destroy,Remove operation transition delay,inferred from route and handler
+routes/web.php,1567,get,/,App\Http\Controllers\Methods\AffairCategoriesController@index,List or display affair categories records,inferred from route and handler
+routes/web.php,1568,post,/create,App\Http\Controllers\Methods\AffairCategoriesController@store,Create or submit affair categories,inferred from route and handler
+routes/web.php,1569,post,/edit/{id},App\Http\Controllers\Methods\AffairCategoriesController@update,Update affair categories,inferred from route and handler
+routes/web.php,1574,get,/,App\Http\Controllers\Methods\LossReasonsController@index,List or display loss reasons records,inferred from route and handler
+routes/web.php,1575,post,/create,App\Http\Controllers\Methods\LossReasonsController@store,Create or submit loss reasons,inferred from route and handler
+routes/web.php,1576,post,/edit/{id},App\Http\Controllers\Methods\LossReasonsController@update,Update loss reasons,inferred from route and handler
+routes/web.php,1582,get,/,App\Http\Controllers\OSH\ConformitiesController@index,List or display conformities records,inferred from route and handler
+routes/web.php,1583,post,/create,App\Http\Controllers\OSH\ConformitiesController@store,Create or submit conformities,inferred from route and handler
+routes/web.php,1584,post,/edit/{id},App\Http\Controllers\OSH\ConformitiesController@update,Update conformities,inferred from route and handler
+routes/web.php,1588,get,/,App\Http\Controllers\OSH\IncidentsController@index,List or display incidents records,inferred from route and handler
+routes/web.php,1589,post,/create,App\Http\Controllers\OSH\IncidentsController@store,Create or submit incidents,inferred from route and handler
+routes/web.php,1590,post,/edit/{id},App\Http\Controllers\OSH\IncidentsController@update,Update incidents,inferred from route and handler
+routes/web.php,1594,get,/,App\Http\Controllers\OSH\RisksController@index,List or display risks records,inferred from route and handler
+routes/web.php,1595,post,/create,App\Http\Controllers\OSH\RisksController@store,Create or submit risks,inferred from route and handler
+routes/web.php,1596,post,/edit/{id},App\Http\Controllers\OSH\RisksController@update,Update risks,inferred from route and handler
+routes/web.php,1600,get,/,App\Http\Controllers\OSH\TrainingsController@index,List or display trainings records,inferred from route and handler
+routes/web.php,1602,get,/skills-matrix,App\Http\Controllers\OSH\SkillsMatrixController@index,List or display skills matrix records,inferred from route and handler
+routes/web.php,1603,post,/types,App\Http\Controllers\OSH\SkillsMatrixController@storeType,Store type (skills matrix),inferred from route and handler
+routes/web.php,1604,post,/types/{id},App\Http\Controllers\OSH\SkillsMatrixController@updateType,Update type (skills matrix),inferred from route and handler
+routes/web.php,1605,post,/create,App\Http\Controllers\OSH\TrainingsController@store,Create or submit trainings,inferred from route and handler
+routes/web.php,1606,post,/edit/{id},App\Http\Controllers\OSH\TrainingsController@update,Update trainings,inferred from route and handler
+routes/web.php,1611,get,/get,App\Http\Controllers\NotificationsController@getNotificationsData,Get notifications data (notifications),inferred from route and handler
+routes/web.php,1612,get,/show,App\Http\Controllers\UsersController@profile,Profile (users),inferred from route and handler
+routes/web.php,1613,post,/show,App\Http\Controllers\UsersController@settingNotification,Setting notification (users),inferred from route and handler
+routes/web.php,1619,get,/{type}/{id}/email,App\Http\Controllers\EmailController@create,Open the creation workflow for email,inferred from route and handler
+routes/web.php,1620,post,/{type}/{id}/email,App\Http\Controllers\EmailController@send,Send (email),inferred from route and handler
+routes/web.php,1621,get,/{type}/{id}/email/preview.pdf,App\Http\Controllers\EmailController@previewPdf,Preview pdf (email),inferred from route and handler
+routes/web.php,1624,post,upload-file,App\Http\Controllers\FileUpload@fileUpload,File upload (file upload),inferred from route and handler
+routes/web.php,1625,post,upload-photo,App\Http\Controllers\FileUpload@photoUpload,Photo upload (file upload),inferred from route and handler
+routes/web.php,1630,get,/list,FileApiController::index,List or display file api records,inferred from route and handler
+routes/web.php,1631,post,/store,FileApiController::store,Create or submit file api,inferred from route and handler
+routes/web.php,1632,patch,/{file},FileApiController::update,Update file api,inferred from route and handler
+routes/web.php,1633,delete,/{file},FileApiController::destroy,Remove file api,inferred from route and handler
+routes/web.php,1634,post,/{file}/thumbnail,FileApiController::storeThumbnail,Store thumbnail (file api),inferred from route and handler
+routes/web.php,1635,post,/{file}/replace,FileApiController::replace,Replace (file api),inferred from route and handler
+routes/web.php,1636,get,/{file}/versions,FileApiController::versions,Versions (file api),inferred from route and handler
+routes/web.php,1637,post,/{file}/office-edit,FileApiController::officeEdit,Office edit (file api),inferred from route and handler
+routes/web.php,1640,get,/files/{file}/thumbnail,FileApiController::thumbnail,Thumbnail (file api),inferred from route and handler
+routes/web.php,1642,get,/files/{file}/raw,FileApiController::raw,Raw (file api),inferred from route and handler
+routes/web.php,1643,get,/files/{file}/download,FileApiController::download,Download (file api),inferred from route and handler
+routes/web.php,1644,get,/files/{file}/preview,FileApiController::preview,Preview (file api),inferred from route and handler
+routes/web.php,1645,get,/files/{file}/attachments/{index},FileApiController::previewAttachment,Preview attachment (file api),inferred from route and handler
+routes/web.php,1650,view,/licence,licence,view · /licence,inferred from route and handler
+routes/web.php,1652,view,/rgpd-policy,rgpd-policy,view · /rgpd-policy,inferred from route and handler
+routes/web.php,1654,view,/iframe-mode,iframe-mode,view · /iframe-mode,inferred from route and handler
+routes/web.php,1657,post,/theme-mode,\App\Http\Controllers\ThemeModeController::store,Create or submit theme mode,inferred from route and handler
+routes/web.php,1661,put,/profile/appearance,\App\Http\Controllers\UiAppearanceController::update,Update ui appearance,inferred from route and handler
+routes/web.php,1666,get,/,\App\Http\Controllers\RgpdSelfServiceController::index,List or display rgpd self service records,inferred from route and handler
+routes/web.php,1667,get,/export,\App\Http\Controllers\RgpdSelfServiceController::export,Export rgpd self service records,inferred from route and handler
+routes/web.php,1668,post,/erase,\App\Http\Controllers\RgpdSelfServiceController::eraseRequest,Erase request (rgpd self service),inferred from route and handler
+routes/web.php,1672,get,/,App\Http\Controllers\UsersController@List,List (users),inferred from route and handler
+routes/web.php,1673,get,/Profile/{id},App\Http\Controllers\UsersController@profile,Profile (users),inferred from route and handler
+routes/web.php,1674,get,/Profile/Update,App\Http\Controllers\UsersController@update,Update users,inferred from route and handler
+routes/web.php,1678,put,/account,App\Http\Controllers\UserProfileApiController@updateAccount,Update account (user profile api),inferred from route and handler
+routes/web.php,1679,put,/information,App\Http\Controllers\UserProfileApiController@updateInformation,Update information (user profile api),inferred from route and handler
+routes/web.php,1680,post,/notifications/{id}/read,App\Http\Controllers\UserProfileApiController@readNotification,Read notification (user profile api),inferred from route and handler
+routes/web.php,1681,post,/notifications/read-all,App\Http\Controllers\UserProfileApiController@readAllNotifications,Read all notifications (user profile api),inferred from route and handler
+routes/web.php,1682,get,/notifications/history,App\Http\Controllers\UserProfileApiController@getNotificationHistory,Get notification history (user profile api),inferred from route and handler
+routes/web.php,1683,put,/auto-email-reports,App\Http\Controllers\UserProfileApiController@saveAutoEmailReports,Save auto email reports (user profile api),inferred from route and handler
+routes/web.php,1687,match,/navbar/search,App\Http\Controllers\SearchController@showNavbarSearchResults,Show navbar search results (search),inferred from route and handler
+routes/web.php,1693,get,/production-trace/{serialNumber},ProductionTraceController::show,Read detail for production trace,inferred from route and handler
+routes/web.php,1695,get,/production-trace/{serial},App\Http\Controllers\ProductionTraceController@show,Read detail for production trace,inferred from route and handler
+routes/web.php,1700,get,/,EnergyConsumptionController::index,List or display energy consumption records,inferred from route and handler
+routes/web.php,1701,post,/,EnergyConsumptionController::store,Create or submit energy consumption,inferred from route and handler
+routes/web.php,1702,get,/{id},EnergyConsumptionController::show,Read detail for energy consumption,inferred from route and handler
+routes/web.php,1708,get,/home,App\Http\Controllers\HomeController@index,List or display home records,inferred from route and handler
+routes/web.php,1715,get,/,App\Http\Controllers\Audit\AuditController@index,List or display audit records,inferred from route and handler
+routes/web.php,1718,get,/api/plans,App\Http\Controllers\Audit\AuditController@plansIndex,Plans index (audit),inferred from route and handler
+routes/web.php,1719,post,/api/plans,App\Http\Controllers\Audit\AuditController@plansStore,Plans store (audit),inferred from route and handler
+routes/web.php,1720,put,/api/plans/{id},App\Http\Controllers\Audit\AuditController@plansUpdate,Plans update (audit),inferred from route and handler
+routes/web.php,1721,delete,/api/plans/{id},App\Http\Controllers\Audit\AuditController@plansDestroy,Plans destroy (audit),inferred from route and handler
+routes/web.php,1724,get,/api/processes,App\Http\Controllers\Audit\AuditController@processesIndex,Processes index (audit),inferred from route and handler
+routes/web.php,1725,post,/api/processes,App\Http\Controllers\Audit\AuditController@processesStore,Processes store (audit),inferred from route and handler
+routes/web.php,1726,put,/api/processes/{id},App\Http\Controllers\Audit\AuditController@processesUpdate,Processes update (audit),inferred from route and handler
+routes/web.php,1727,delete,/api/processes/{id},App\Http\Controllers\Audit\AuditController@processesDestroy,Processes destroy (audit),inferred from route and handler
+routes/web.php,1730,get,/api/schedules,App\Http\Controllers\Audit\AuditController@schedulesIndex,Schedules index (audit),inferred from route and handler
+routes/web.php,1731,post,/api/schedules,App\Http\Controllers\Audit\AuditController@schedulesStore,Schedules store (audit),inferred from route and handler
+routes/web.php,1732,put,/api/schedules/{id},App\Http\Controllers\Audit\AuditController@schedulesUpdate,Schedules update (audit),inferred from route and handler
+routes/web.php,1733,delete,/api/schedules/{id},App\Http\Controllers\Audit\AuditController@schedulesDestroy,Schedules destroy (audit),inferred from route and handler
+routes/web.php,1736,get,/api/checklists,App\Http\Controllers\Audit\AuditController@checklistsIndex,Checklists index (audit),inferred from route and handler
+routes/web.php,1739,post,/api/executions,App\Http\Controllers\Audit\AuditController@executionsStore,Executions store (audit),inferred from route and handler
+routes/web.php,1740,get,/api/executions/{id},App\Http\Controllers\Audit\AuditController@executionsShow,Executions show (audit),inferred from route and handler
+routes/web.php,1741,put,/api/executions/{id},App\Http\Controllers\Audit\AuditController@executionsUpdate,Executions update (audit),inferred from route and handler
+routes/web.php,1742,post,/api/executions/{id}/close,App\Http\Controllers\Audit\AuditController@executionsClose,Executions close (audit),inferred from route and handler
+routes/web.php,1745,post,/api/findings,App\Http\Controllers\Audit\AuditController@findingsStore,Findings store (audit),inferred from route and handler
+routes/web.php,1746,put,/api/findings/{id},App\Http\Controllers\Audit\AuditController@findingsUpdate,Findings update (audit),inferred from route and handler
+routes/web.php,1747,delete,/api/findings/{id},App\Http\Controllers\Audit\AuditController@findingsDestroy,Findings destroy (audit),inferred from route and handler
+routes/web.php,1750,get,/api/dashboard,App\Http\Controllers\Audit\AuditController@apiDashboard,Api dashboard (audit),inferred from route and handler
+routes/web.php,1754,get,/stock/{reference},SpreadsheetDataController::stock,Stock (spreadsheet data),inferred from route and handler
+routes/web.php,1755,get,/orders,SpreadsheetDataController::orders,Orders (spreadsheet data),inferred from route and handler
+routes/web.php,1756,get,/revenue,SpreadsheetDataController::revenue,Revenue (spreadsheet data),inferred from route and handler
+routes/web.php,1757,get,/production/kpis,SpreadsheetDataController::productionKpis,Production kpis (spreadsheet data),inferred from route and handler
+routes/web.php,1758,get,/orders/late,SpreadsheetDataController::lateOrders,Late orders (spreadsheet data),inferred from route and handler
+routes/web.php,1759,get,/orders/summary,SpreadsheetDataController::ordersSummary,Orders summary (spreadsheet data),inferred from route and handler
+routes/web.php,1760,get,/context,SpreadsheetDataController::context,Context (spreadsheet data),inferred from route and handler
+routes/web.php,1761,get,/customers,SpreadsheetDataController::customers,Customers (spreadsheet data),inferred from route and handler
+routes/web.php,1762,get,/products,SpreadsheetDataController::products,Products (spreadsheet data),inferred from route and handler
+routes/web.php,1781,get,/images/products/{filename},,get · /images/products/{filename},inferred from route and handler
+routes/web.php,1785,get,/{folder}/{filename},LegacyFileController::serve,Serve (legacy file),inferred from route and handler

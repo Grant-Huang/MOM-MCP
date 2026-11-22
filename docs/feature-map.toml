@@ -366,7 +366,7 @@ tests = { rust-integration = "p8_02_public_mcp_contract_excludes_evaluation_inte
 id = "P8B-01"
 phase = "P8B"
 spec = "acceptance/P8B.md"
-features = ["F02"]
+features = ["F02", "F09", "F10"]
 layers = ["rust-integration"]
 tests = { rust-integration = "p8b_01_public_order_reads" }
 
@@ -374,7 +374,7 @@ tests = { rust-integration = "p8b_01_public_order_reads" }
 id = "P8B-UI"
 phase = "P8B"
 spec = "acceptance/P8B.md"
-features = ["F02", "F15"]
+features = ["F02", "F09", "F15"]
 layers = ["playwright"]
 tests = { playwright = "P8B-UI Public order discovery and readiness" }
 
@@ -382,6 +382,6 @@ tests = { playwright = "P8B-UI Public order discovery and readiness" }
 id = "P8B-02"
 phase = "P8B"
 spec = "acceptance/P8B.md"
-features = ["F02"]
+features = ["F02", "F09", "F10"]
 layers = ["rust-integration"]
 tests = { rust-integration = "p8b_02_assembly_release_readiness" }
