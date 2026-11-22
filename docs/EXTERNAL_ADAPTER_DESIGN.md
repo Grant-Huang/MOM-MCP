@@ -162,3 +162,20 @@ MOM-MCP 提供 `ExternalObserve` 供受信宿主集成。宿主从站点配置�
 Observe 候选结果保留不透明引用、来源别名、观测时点、显示号、源状态及映射信息。宿主再构建公开响应包络。内部记录 ID、租户键、端点、凭据及上游错误正文不会序列化进候选结果。Carbon 权益或无法归类的工具拒绝暂归入来源不可用；待真实取证后评审公开分类。
 
 运行 `cargo test --locked --test external_observe`。回环测试覆盖每次调用重新授权、撤权、未配置及故障来源不向其他来源发送请求、重复配置拒绝，以及输出中省略内部绑定字段。AgentNexus M3 的认证世界绑定、引用签发、公开 DTO 和真实来源联调仍待接线；当前组件不提供公开 HTTP 入口。
+
+### AgentNexus M3 接线提案
+
+核对 AgentNexus `8debd3e`。当前 World Adapter 路由挂在 MOM 模拟路径，生产世界尚无真实身份入口。已有 DES Observe 接收 `world_id` 并读取模拟快照。身份契约明确真实登录仍待决定。 [宿主路由](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/main.rs#L135) · [身份契约](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/docs/contracts/identity-and-approval.md#5-待决定)
+
+候选接线先采用已认证的受信服务身份做 M3 只读联调。联审须确认哪一服务签发凭证、AgentNexus 如何校验签发方、受众与时效、绑定存储与撤权来源，以及后续如何接企业会话。生产 Observe 入口仅在上述事项获批并有可用配置后开放。模拟角色头和客户端提交的租户、站点或来源地址均不构成生产授权。
+
+| 接线位置 | 职责 |
+|---|---|
+| AgentNexus 认证入口 | 验证服务身份，从可信凭证取得主体。身份校验失败即拒绝，来源调用数应为零。 |
+| AgentNexus 生产绑定解析 | 逐请求按主体、世界、工单引用和读取权限查询当前授权。配置从受信站点取得。返回受权源位置和记录 ID 至 MOM-MCP 内部组件。 |
+| MOM-MCP 读取与投影 | 只调用已选择的来源。源故障返回来源不可用，禁止切换到模拟或其他来源。 |
+| AgentNexus 响应映射 | 将内部观测组装为 M3 公共 DTO。联审冻结对象引用、只读快照标识、无游标表示及错误码。 |
+
+首个跨仓验收应使用真实宿主身份入口检查合法读取、未认证、跨世界、撤权及已绑定来源失败。通过计数和脱敏报告证明拒绝请求对来源零访问，断言失效来源零回退。对 Odoo、OpenMES、Carbon 重复相同读取意图。跨仓改动进入 AgentNexus 的公开接口及权限评审流程后再实施。
+
+MOM-MCP 侧已用 `cargo test --locked --test external_observe one_observe_entry_reads_three_authorized_worlds` 验证同一宿主 API 经受权解析回调调通三种回环协议。三个世界使用相同不透明引用和显示号，各自读回正确来源与原始状态。测试身份和数据均为夹具。这组证据覆盖宿主 API 串联，实际 AgentNexus 入口、授权实例和站点验收单独取证。

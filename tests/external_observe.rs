@@ -131,3 +131,100 @@ fn rejects_duplicate_configuration() {
         Err(ConfigurationError::DuplicateSource)
     ));
 }
+
+#[tokio::test]
+async fn one_observe_entry_reads_three_authorized_worlds() {
+    use axum::routing::post;
+
+    async fn odoo(Json(request): Json<serde_json::Value>) -> Json<serde_json::Value> {
+        assert_eq!(request["domain"][0][2], 4242);
+        Json(json!([{"id":4242,"name":"WO-42","state":"confirmed"}]))
+    }
+
+    async fn carbon(Json(request): Json<serde_json::Value>) -> impl IntoResponse {
+        let id = &request["id"];
+        let result = match request["method"].as_str().unwrap() {
+            "initialize" => json!({"protocolVersion":"2025-11-25"}),
+            "notifications/initialized" => return StatusCode::ACCEPTED.into_response(),
+            "tools/call" => {
+                assert_eq!(request["params"]["arguments"]["name"], "production_getJob");
+                assert_eq!(
+                    request["params"]["arguments"]["arguments"]["id"],
+                    "job-4242"
+                );
+                json!({"content":[{"type":"text","text":json!({
+                    "id":"job-4242","jobId":"WO-42","status":"Ready"
+                }).to_string()}]})
+            }
+            _ => panic!("unexpected method"),
+        };
+        Json(json!({"jsonrpc":"2.0","id":id,"result":result})).into_response()
+    }
+
+    let router = Router::new()
+        .route("/json/2/mrp.production/search_read", post(odoo))
+        .route(
+            "/api/v1/work-orders/4242",
+            get(|| async {
+                Json(json!({"data":{"id":4242,"order_no":"WO-42","status":"PENDING"}}))
+            }),
+        )
+        .route("/api/mcp", post(carbon));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let connectors = [
+        (
+            "odoo",
+            HttpSourceKind::Odoo {
+                database: "fixture",
+            },
+        ),
+        ("openmes", HttpSourceKind::OpenMes),
+        ("carbon", HttpSourceKind::Carbon),
+    ];
+    let service = ExternalObserve::new(connectors.map(|(instance, kind)| HttpSource {
+        instance,
+        kind,
+        ..source(&origin, "site-a", "local-fixture")
+    }))
+    .unwrap();
+
+    for (world, expected_instance, expected_state) in [
+        ("world-a", "odoo", "confirmed"),
+        ("world-b", "openmes", "PENDING"),
+        ("world-c", "carbon", "Ready"),
+    ] {
+        let observation = service
+            .observe(
+                WorkOrderSelection {
+                    world_id: world,
+                    object_ref: "opaque-42",
+                },
+                |selection| async move {
+                    let (instance, source_id) = match (selection.world_id, selection.object_ref) {
+                        ("world-a", "opaque-42") => ("odoo", "4242"),
+                        ("world-b", "opaque-42") => ("openmes", "4242"),
+                        ("world-c", "opaque-42") => ("carbon", "job-4242"),
+                        _ => return None,
+                    };
+                    Some(AuthorizedWorkOrder {
+                        scope: SourceScope {
+                            tenant: "tenant-a",
+                            site: "site-a",
+                            instance,
+                        },
+                        source_id,
+                    })
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(observation.object_ref, "opaque-42");
+        assert_eq!(observation.display_number, "WO-42");
+        assert_eq!(observation.source_instance, expected_instance);
+        assert_eq!(observation.source_status.as_deref(), Some(expected_state));
+        assert_eq!(observation.normalized_status, None);
+    }
+    task.abort();
+}
