@@ -409,3 +409,11 @@ spec = "acceptance/P8B.md"
 features = ["F08", "F09", "F10"]
 layers = ["rust-integration"]
 tests = { rust-integration = "p8b_05_batch_release_partial_success" }
+
+[[case]]
+id = "P8B-06"
+phase = "P8B"
+spec = "acceptance/P8B.md"
+features = ["F09", "F10"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p8b_06_hold_and_resume_orders" }

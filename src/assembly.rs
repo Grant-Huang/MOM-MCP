@@ -231,6 +231,8 @@ impl Setup {
 
 #[derive(Serialize, Deserialize, Default)]
 struct Order {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hold_reason: Option<String>,
     phase: Phase,
     substitute: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -360,7 +362,7 @@ fn queue<'a>(state: &'a State, setup: &Setup) -> Vec<&'a String> {
     let mut queued: Vec<_> = state
         .orders
         .iter()
-        .filter(|(_, order)| order.phase == Phase::Queued)
+        .filter(|(_, order)| order.phase == Phase::Queued && order.hold_reason.is_none())
         .map(|(id, _)| id)
         .collect();
     queued.sort_by_key(|id| {
@@ -380,10 +382,14 @@ pub fn status(
     id: &str,
 ) -> anyhow::Result<Option<Value>> {
     let state = load(tx, run, setup)?;
-    Ok(state
-        .orders
-        .get(id)
-        .map(|order| json!({"ok":true,"run_id":run,"work_order":id,"status":order.phase})))
+    Ok(state.orders.get(id).map(|order| {
+        let mut result = json!({"ok":true,"run_id":run,"work_order":id,"status":order.phase});
+        if let Some(reason) = &order.hold_reason {
+            result["status"] = json!("held");
+            result["hold_reason"] = json!(reason);
+        }
+        result
+    }))
 }
 
 pub fn release_readiness(
@@ -488,7 +494,11 @@ pub fn invoke(
             false,
         ));
     }
-    if action == Action::ReleaseWorkOrder && args["expected_cursor"].as_i64() != Some(cursor) {
+    if matches!(
+        action,
+        Action::ReleaseWorkOrder | Action::HoldWorkOrder | Action::ResumeWorkOrder
+    ) && args["expected_cursor"].as_i64() != Some(cursor)
+    {
         return Ok((
             json!({"ok":false,"code":"VERSION_CONFLICT","cursor":cursor}),
             false,
@@ -539,6 +549,9 @@ fn apply(
     rules: &[mom_des::Rule],
     model: &dyn mom_des::Model,
 ) -> Value {
+    if state.orders[id].hold_reason.is_some() && action != Action::ResumeWorkOrder {
+        return failure("WORK_ORDER_HELD");
+    }
     if action == Action::AssemblyStartTest {
         if state.bench.is_some() {
             return failure("TEST_BENCH_BUSY");
@@ -552,6 +565,26 @@ fn apply(
     }
     let order = state.orders.get_mut(id).unwrap();
     match action {
+        Action::HoldWorkOrder
+            if matches!(
+                order.phase,
+                Phase::Released | Phase::Dispatched | Phase::Queued
+            ) =>
+        {
+            let reason = args["reason"].as_str().unwrap();
+            order.hold_reason = Some(reason.into());
+            return json!({"ok":true,"work_order":id,"status":"held","hold_reason":reason});
+        }
+        Action::ResumeWorkOrder if order.hold_reason.is_some() => {
+            if matches!(order.phase, Phase::Released | Phase::Dispatched) {
+                let shortages = missing(&required(setup, order), &state.stock);
+                if !shortages.is_empty() {
+                    return json!({"ok":false,"code":"MATERIAL_SHORTAGE","missing":shortages});
+                }
+            }
+            order.hold_reason = None;
+            return json!({"ok":true,"work_order":id,"status":order.phase});
+        }
         Action::ReleaseWorkOrder => {
             let configuration = &setup.orders[id].configuration;
             let capable = setup

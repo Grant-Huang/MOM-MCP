@@ -1,6 +1,6 @@
 # P8–P9 公共 MES 验收设计
 
-历史 P8A 与 P8B 查询、下达预检、单笔与批量下达及草稿写入已执行。P8B 其余写入门槛和 P8C–P9D 仍待签收，在各批实施前接入 feature map、Rust 集成与对应 Playwright 流程。已有证据见 [P8B 验收](P8B.md)。使用真实 MCP 链路调用契约兼容的 mock，实现及验收均以 mock 范围为准。
+历史 P8A 与 P8B 查询、下达预检、单笔与批量下达、草稿写入及暂停恢复已执行。P8B 其余写入门槛和 P8C–P9D 仍待签收，在各批实施前接入 feature map、Rust 集成与对应 Playwright 流程。已有证据见 [P8B 验收](P8B.md)。使用真实 MCP 链路调用契约兼容的 mock，实现及验收均以 mock 范围为准。
 
 ## 目录规范签收
 

@@ -14,6 +14,8 @@ pub enum Action {
     GetReleaseReadiness,
     ReleaseWorkOrder,
     ReleaseWorkOrders,
+    HoldWorkOrder,
+    ResumeWorkOrder,
     GetMaterial,
     HoldMaterial,
     MesStatus,
@@ -163,6 +165,8 @@ impl Action {
             | Self::CreateWorkOrder
             | Self::UpdateDraftOrder
             | Self::GetReleaseReadiness
+            | Self::HoldWorkOrder
+            | Self::ResumeWorkOrder
             | Self::ReleaseWorkOrders
             | Self::ReleaseWorkOrder => &["工单", "work order", "order"],
             Self::GetMaterial => &["物料", "material", "batch", "批次", "inventory"],
@@ -320,6 +324,7 @@ impl Action {
         fields.insert("run_id".into(), text());
         let mut output_fields = fields.clone();
         if self == Self::GetWorkOrder {
+            output_fields.insert("hold_reason".into(), text());
             output_fields.insert("source_demand".into(), text());
             output_fields.insert("template_work_order".into(), text());
         }

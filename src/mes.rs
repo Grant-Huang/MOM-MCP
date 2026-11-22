@@ -30,6 +30,18 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "production",
     ),
     (
+        Action::HoldWorkOrder,
+        "hold_work_order",
+        "暂停工单执行并记录原因",
+        "production",
+    ),
+    (
+        Action::ResumeWorkOrder,
+        "resume_work_order",
+        "复查阻塞并恢复工单执行",
+        "production",
+    ),
+    (
         Action::ReleaseOrder,
         "release_order",
         "下达工单并冻结工艺版本",
@@ -105,7 +117,10 @@ pub fn spec(action: Action) -> Spec {
         Action::Trace => &["subject"],
         Action::ReviseRoute => &["route_version", "idempotency_key"],
         Action::SetEquipment => &["equipment_state", "idempotency_key"],
-        Action::ReleaseWorkOrder => &["work_order", "idempotency_key", "expected_cursor"],
+        Action::ReleaseWorkOrder | Action::ResumeWorkOrder => {
+            &["work_order", "idempotency_key", "expected_cursor"]
+        }
+        Action::HoldWorkOrder => &["work_order", "idempotency_key", "expected_cursor", "reason"],
         Action::ReleaseOrder | Action::CloseOrder => &["work_order", "idempotency_key"],
         Action::IssueMaterial => &["work_order", "batch", "idempotency_key"],
         Action::DispatchOperation | Action::StartOperation | Action::ReportOperation => {
@@ -153,6 +168,33 @@ pub fn spec(action: Action) -> Spec {
             "expected_cursor".into(),
             json!({"type":"integer","minimum":0,"maximum":i64::MAX}),
         );
+    }
+    if matches!(action, Action::HoldWorkOrder | Action::ResumeWorkOrder) {
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: "write",
+            input: object(required, Value::Object(fields)),
+            output: json!({"type":"object","required":["ok"],"properties":{
+                "ok":{"type":"boolean"},"work_order":text(),"status":text(),"hold_reason":text(),
+                "cursor":{"type":"integer","minimum":0},"code":text()
+            }}),
+            preconditions: &["run_open", "work_order_released"],
+            side_effect: "update_work_order_execution_hold",
+            errors: &[
+                "INVALID_ARGUMENT",
+                "WORK_ORDER_NOT_FOUND",
+                "INVALID_STATE",
+                "WORK_ORDER_HELD",
+                "QUALITY_HOLD",
+                "EQUIPMENT_UNAVAILABLE",
+                "MATERIAL_SHORTAGE",
+                "VERSION_CONFLICT",
+                "IDEMPOTENCY_CONFLICT",
+            ],
+            visibility: "run",
+        };
     }
     if action == Action::ReleaseWorkOrder {
         return Spec {
@@ -238,6 +280,8 @@ pub struct Setup {
 
 #[derive(Default, Deserialize, Serialize)]
 struct Order {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hold_reason: Option<String>,
     route_version: Option<String>,
     step: usize,
     phase: Phase,
@@ -366,10 +410,14 @@ pub fn order_status(
     id: &str,
 ) -> anyhow::Result<Option<Value>> {
     let state = load(tx, run, setup, orders)?;
-    Ok(state
-        .orders
-        .get(id)
-        .map(|order| json!({"ok":true,"run_id":run,"work_order":id,"status":order.phase})))
+    Ok(state.orders.get(id).map(|order| {
+        let mut result = json!({"ok":true,"run_id":run,"work_order":id,"status":order.phase});
+        if let Some(reason) = &order.hold_reason {
+            result["status"] = json!("held");
+            result["hold_reason"] = json!(reason);
+        }
+        result
+    }))
 }
 
 pub fn invoke(
@@ -422,7 +470,9 @@ pub fn invoke(
         let Some(order) = state.orders.get(id) else {
             return Ok((error("WORK_ORDER_NOT_FOUND"), false));
         };
-        let blocking = if held || order.inspection.as_deref() == Some("fail") {
+        let blocking = if order.hold_reason.is_some() {
+            Some("WORK_ORDER_HELD")
+        } else if held || order.inspection.as_deref() == Some("fail") {
             Some("QUALITY_HOLD")
         } else if order.phase == Phase::Planned && state.stock < QUANTITY {
             Some("MATERIAL_SHORTAGE")
@@ -431,35 +481,41 @@ pub fn invoke(
         } else {
             None
         };
-        let available = match order.phase {
-            Phase::Planned if !held && state.stock >= QUANTITY => vec!["release_order"],
-            Phase::Ready => {
-                let mut actions = vec!["dispatch_operation"];
-                if order.step > 0 {
-                    actions.push("reverse_report");
+        let available = if order.hold_reason.is_some() {
+            vec!["resume_work_order"]
+        } else {
+            match order.phase {
+                Phase::Planned if !held && state.stock >= QUANTITY => vec!["release_order"],
+                Phase::Ready => {
+                    let mut actions = vec!["dispatch_operation"];
+                    if order.step > 0 {
+                        actions.push("reverse_report");
+                    }
+                    actions
                 }
-                actions
-            }
-            Phase::Dispatched if order.step == 2 && !held => vec!["inspect_units"],
-            Phase::Dispatched if !held => {
-                let mut actions = Vec::new();
-                if order.step == 0 && state.stock >= QUANTITY {
-                    actions.push("issue_material");
+                Phase::Dispatched if order.step == 2 && !held => vec!["inspect_units"],
+                Phase::Dispatched if !held => {
+                    let mut actions = Vec::new();
+                    if order.step == 0 && state.stock >= QUANTITY {
+                        actions.push("issue_material");
+                    }
+                    if !state.equipment_down && order.batch.is_some() {
+                        actions.push("start_operation");
+                    }
+                    actions
                 }
-                if !state.equipment_down && order.batch.is_some() {
-                    actions.push("start_operation");
+                Phase::Running if !held && (order.step != 0 || state.stock > 0) => {
+                    vec!["report_operation"]
                 }
-                actions
+                Phase::Complete if order.inspection.as_deref() == Some("fail") => {
+                    vec!["disposition"]
+                }
+                Phase::Complete if !held || order.inspection.as_deref() == Some("scrap") => {
+                    vec!["close_order"]
+                }
+                Phase::Complete => vec!["disposition"],
+                _ => Vec::new(),
             }
-            Phase::Running if !held && (order.step != 0 || state.stock > 0) => {
-                vec!["report_operation"]
-            }
-            Phase::Complete if order.inspection.as_deref() == Some("fail") => vec!["disposition"],
-            Phase::Complete if !held || order.inspection.as_deref() == Some("scrap") => {
-                vec!["close_order"]
-            }
-            Phase::Complete => vec!["disposition"],
-            _ => Vec::new(),
         };
         let reports: Vec<_> = state
             .reports
@@ -559,6 +615,9 @@ fn apply(
     let Some(order) = state.orders.get_mut(id) else {
         return error("WORK_ORDER_NOT_FOUND");
     };
+    if order.hold_reason.is_some() && action != Action::ResumeWorkOrder {
+        return error("WORK_ORDER_HELD");
+    }
     if matches!(
         action,
         Action::DispatchOperation | Action::StartOperation | Action::ReportOperation
@@ -567,6 +626,30 @@ fn apply(
         return error("OPERATION_OUT_OF_SEQUENCE");
     }
     match action {
+        Action::HoldWorkOrder
+            if matches!(
+                order.phase,
+                Phase::Ready | Phase::Dispatched | Phase::Running
+            ) =>
+        {
+            let reason = args["reason"].as_str().unwrap();
+            order.hold_reason = Some(reason.into());
+            return json!({"ok":true,"work_order":id,"status":"held","hold_reason":reason});
+        }
+        Action::ResumeWorkOrder if order.hold_reason.is_some() => {
+            if held {
+                return error("QUALITY_HOLD");
+            }
+            if state.equipment_down && matches!(order.phase, Phase::Dispatched | Phase::Running) {
+                return error("EQUIPMENT_UNAVAILABLE");
+            }
+            if order.step == 0 && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
+            {
+                return error("MATERIAL_SHORTAGE");
+            }
+            order.hold_reason = None;
+            return json!({"ok":true,"work_order":id,"status":order.phase});
+        }
         Action::ReleaseOrder | Action::ReleaseWorkOrder => {
             if let Some(code) = release_blocker(&order.phase, state.stock, held) {
                 return if code == "MATERIAL_SHORTAGE" {
