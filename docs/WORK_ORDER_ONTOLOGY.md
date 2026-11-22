@@ -29,3 +29,9 @@
 ## 三系统最低验收
 
 同一个生产 Observe 工单意图须在 Odoo JSON-2、OpenMES HTTP 和 Carbon MCP 上各执行一次成功读取，并验证来源追溯和源状态、来源内不可见、绑定或凭据失败，以及明确配置来源失败时零模拟调用。保留各来源版本、授权身份的范围和脱敏结果。接口夹具用于离线回归，运行时签收要求各自的实际接口和一次 AgentNexus 串联调用。
+
+### 离线契约回归
+
+运行 `node --test docs/references/mcp/work-order-ontology.test.mjs`。七项用例覆盖三种来源字段、同号及跨作用域身份、请求与记录不匹配、不能无损表示的数值 ID、缺失或畸形状态，以及单对象查询的多记录响应。样本保留源状态，OpenMES 的 UTC 时间可规范化，时区未确认的 Odoo 样本时间省略。
+
+[执行示例](references/mcp/work-order-ontology.test.mjs) 从已分类的成功响应开始，用测试内投影说明预期结果。身份元组只用于断言，产品对外仍使用不透明引用。Carbon 使用合成记录。来源权限、传输错误、故障回退以及 Observe 接线应由运行时验收验证。
