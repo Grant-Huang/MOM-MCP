@@ -3109,3 +3109,47 @@ async fn p8c_04_operation_start_pause_resume() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8c_05_explicit_completion_and_report_reversal() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let opened=call(&client,"open_scenario",json!({"scenario_id":"cnc","version":14})).await;
+        assert_eq!(opened["ok"],true,"{opened}");
+        let run=&opened["run_id"];
+        let invoke=async |name:&str,args| business(&client,run,name,args).await;
+        let op=async |name:&str,key:&str,args| mes(&client,run,name,"WO-1",key,args).await;
+        assert_eq!(op("release_work_order","release",json!({"expected_cursor":0})).await["ok"],true);
+        assert_eq!(op("dispatch_operation","dispatch",json!({"operation":"machining","work_center":"MACH-01","expected_cursor":1})).await["ok"],true);
+        assert_eq!(op("issue_material","issue",json!({"batch":"LOT-1"})).await["ok"],true);
+        assert_eq!(op("start_operation","start",json!({"operation":"machining","expected_cursor":3})).await["ok"],true);
+        let complete=|cursor|json!({"operation":"machining","expected_cursor":cursor});
+        assert_eq!(op("complete_operation","complete",complete(4)).await["code"],"OPERATION_QUANTITY_INCOMPLETE");
+        let first=op("post_operation_report","first",json!({"operation":"machining","quantity":4,"expected_cursor":4})).await;
+        assert_eq!(first["remaining"],6,"{first}");
+        let second=op("post_operation_report","second",json!({"operation":"machining","quantity":6,"expected_cursor":5})).await;
+        assert_eq!(second["remaining"],0,"{second}");
+        let status=mes_status(&client,run).await;
+        assert_eq!(status["available_actions"],json!(["complete_operation"]));
+        assert_eq!(invoke("get_resource_capability",json!({"work_center":"MACH-01"})).await["resource"]["occupied_by"],"WO-1");
+        assert_eq!(op("dispatch_operation","downstream",json!({"operation":"assembly","work_center":"ASM-01","expected_cursor":6})).await["code"],"OPERATION_OUT_OF_SEQUENCE");
+        let reverse=|id: &Value,cursor|json!({"report_id":id,"reason":"correction","expected_cursor":cursor});
+        assert_eq!(op("reverse_operation_report","old",reverse(&first["report"]["id"],6)).await["code"],"REPORT_HAS_DEPENDENCIES");
+        let reversed=op("reverse_operation_report","reverse",reverse(&second["report"]["id"],6)).await;
+        assert_eq!(reversed["reversed"],true,"{reversed}");
+        assert_eq!(mes_status(&client,run).await["on_hand"],6);
+        let reports=invoke("list_operation_reports",json!({"work_order":"WO-1","operation":"machining"})).await;
+        assert_eq!(reports["reports"][1]["reversed"],true);
+        assert_eq!(invoke("get_command_result",json!({"idempotency_key":"reverse"})).await["receipt"],reversed);
+        assert_eq!(invoke("get_command_result",json!({"idempotency_key":"old"})).await["code"],"COMMAND_RESULT_NOT_FOUND");
+        let replacement=op("post_operation_report","replacement",json!({"operation":"machining","quantity":6,"expected_cursor":7})).await;
+        assert_eq!(replacement["report"]["serial_numbers"][0],"WO-1-11");
+        let completed=op("complete_operation","complete",complete(8)).await;
+        assert_eq!(completed["status"],"completed","{completed}");
+        assert_eq!(op("complete_operation","complete",complete(8)).await,completed);
+        assert_eq!(invoke("get_resource_capability",json!({"work_center":"MACH-01"})).await["resource"]["available"],true);
+        assert_eq!(op("dispatch_operation","downstream",json!({"operation":"assembly","work_center":"ASM-01","expected_cursor":9})).await["ok"],true);
+        assert_eq!(op("reverse_operation_report","late",reverse(&replacement["report"]["id"],10)).await["code"],"REPORT_HAS_DEPENDENCIES");
+    }).await.unwrap();
+}

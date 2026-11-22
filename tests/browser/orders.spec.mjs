@@ -70,7 +70,7 @@ test("P8C-UI Operation detail and dispatch queue", async ({ page }) => {
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
   await button("加载场景").click();
-  await page.getByLabel("已发布场景").selectOption("cnc@13");
+  await page.getByLabel("已发布场景").selectOption("cnc@14");
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   await button("搜索工具").click();
@@ -106,7 +106,11 @@ test("P8C-UI Operation detail and dispatch queue", async ({ page }) => {
   const op = { ...order, operation: "machining" };
   const started = await invoke("start_operation", { ...op, idempotency_key: "start", expected_cursor: issued.cursor }, '"phase": "running"');
   const paused = await invoke("pause_operation", { ...op, reason: "inspection", idempotency_key: "pause", expected_cursor: started.cursor }, '"phase": "paused"');
-  await invoke("report_operation", { ...op, quantity: 1, idempotency_key: "report" }, "INVALID_STATE");
-  await invoke("resume_operation", { ...op, idempotency_key: "resume-op", expected_cursor: paused.cursor }, '"phase": "running"');
+  await invoke("post_operation_report", { ...op, quantity: 1, expected_cursor: paused.cursor, idempotency_key: "report" }, "INVALID_STATE");
+  const resumed = await invoke("resume_operation", { ...op, idempotency_key: "resume-op", expected_cursor: paused.cursor }, '"phase": "running"');
+  const reported = await invoke("post_operation_report", { ...op, quantity: 10, idempotency_key: "report", expected_cursor: resumed.cursor }, '"remaining": 0');
+  await invoke("list_operation_reports", op, '"quantity": 10');
+  await invoke("get_command_result", { idempotency_key: "report" }, '"remaining": 0');
+  await invoke("complete_operation", { ...op, idempotency_key: "complete", expected_cursor: reported.cursor }, '"status": "completed"');
   await invoke("list_dispatch_queue", { work_center: "MACH-01" }, '"operations": []');
 });
