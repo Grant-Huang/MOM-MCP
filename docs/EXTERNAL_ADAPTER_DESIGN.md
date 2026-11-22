@@ -136,3 +136,9 @@ Odoo JSON-2 和 OpenMES HTTP 已接入 Rust 工单投影。调用方从可信配
 端点配置为 HTTPS 来源根地址，回环 HTTP 仅用于本地联调。读取器不跟随重定向，单次请求设有时限及响应大小上限。Odoo 成功空数组与 OpenMES 403／404 返回不可见；OpenMES 401、上游故障和异常传输返回来源不可用。源响应正文和凭据不进入错误结果。
 
 运行 `cargo test --locked --test external_http` 复跑。测试使用本地回环 HTTP 服务验证请求方式、标头、查询条件、成功投影和失败分类。此前 Odoo 与 OpenMES 的真实应用样本用于确定接口形状。本切片的 Rust 客户端仍待两套实际应用联调，Carbon MCP 传输及 AgentNexus Observe 另行验收。
+
+### Rust Carbon MCP 读取试实现
+
+Carbon 使用同一个绑定读取器和工单投影。候选实现对站点配置的来源根地址固定调用 `/api/mcp`，协商 `2025-11-25` 的无会话 JSON 传输，随后只通过 `call_tool` 执行 `production_getJob`。客户端只请求已声明的工单字段，检查 RPC 关联 ID，解码单条文本 JSON，再校验源工单身份。沿用 HTTP 读取器的 HTTPS、无重定向、时限及响应大小限制。
+
+HTTP 402 保留为权益未开通。Carbon 工具级拒绝单独返回且不附上游正文，调用方仍需获授权实例和受信侧证据，才能区分记录不可见与上游故障。读取器无模拟回退路径。运行 `cargo test --locked --test external_http` 验证回环协议夹具。本切片尚未对获授权的 Carbon 实例运行，也尚未接入 AgentNexus Observe。

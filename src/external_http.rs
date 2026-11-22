@@ -2,8 +2,10 @@
 
 use std::{net::IpAddr, time::Duration};
 
-use reqwest::{Client, StatusCode, Url, header::HeaderValue, redirect::Policy};
-use serde_json::json;
+use reqwest::{Client, Response, StatusCode, Url, header::HeaderValue, redirect::Policy};
+use serde_json::{Value, json};
+
+mod carbon;
 
 use crate::external_order::{BoundOrder, OrderObservation, ProjectionError, Source, project_order};
 
@@ -12,6 +14,7 @@ const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 pub enum HttpSourceKind<'a> {
     Odoo { database: &'a str },
     OpenMes,
+    Carbon,
 }
 
 pub struct HttpSource<'a> {
@@ -27,6 +30,8 @@ pub struct HttpSource<'a> {
 pub enum ReadError {
     InvalidBinding,
     SourceUnavailable,
+    EntitlementRequired,
+    UpstreamToolRefused,
     NotVisible,
     InvalidResponse,
     UnexpectedRecord,
@@ -82,6 +87,37 @@ impl<'a> HttpOrderReader<'a> {
         source_id: &'request str,
     ) -> Result<OrderObservation<'request>, ReadError> {
         use ReadError::*;
+        let (source, payload) = match self.source.kind {
+            HttpSourceKind::Carbon => {
+                if source_id.trim().is_empty() {
+                    return Err(InvalidBinding);
+                }
+                (Source::Carbon, self.read_carbon(source_id).await?)
+            }
+            HttpSourceKind::Odoo { .. } | HttpSourceKind::OpenMes => {
+                self.read_http(source_id).await?
+            }
+        };
+        project_order(
+            &BoundOrder {
+                source,
+                tenant: self.source.tenant,
+                site: self.source.site,
+                instance: self.source.instance,
+                source_id,
+            },
+            payload,
+        )
+        .map_err(|error| match error {
+            ProjectionError::InvalidBinding => InvalidBinding,
+            ProjectionError::InvalidResponse => InvalidResponse,
+            ProjectionError::UnexpectedRecord => UnexpectedRecord,
+            ProjectionError::NotVisible => NotVisible,
+        })
+    }
+
+    async fn read_http(&self, source_id: &str) -> Result<(Source, Value), ReadError> {
+        use ReadError::*;
         let numeric_id = source_id
             .parse::<i64>()
             .ok()
@@ -111,8 +147,9 @@ impl<'a> HttpOrderReader<'a> {
                         .map_err(|_| InvalidBinding)?,
                 ),
             ),
+            HttpSourceKind::Carbon => return Err(InvalidBinding),
         };
-        let mut response = request
+        let response = request
             .bearer_auth(self.source.token)
             .header(reqwest::header::ACCEPT, "application/json")
             .send()
@@ -125,29 +162,18 @@ impl<'a> HttpOrderReader<'a> {
             (_, StatusCode::OK) => {}
             _ => return Err(SourceUnavailable),
         }
-        let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| SourceUnavailable)? {
-            if chunk.len() > MAX_RESPONSE_BYTES - body.len() {
-                return Err(InvalidResponse);
-            }
-            body.extend_from_slice(&chunk);
-        }
-        let payload = serde_json::from_slice(&body).map_err(|_| InvalidResponse)?;
-        project_order(
-            &BoundOrder {
-                source,
-                tenant: self.source.tenant,
-                site: self.source.site,
-                instance: self.source.instance,
-                source_id,
-            },
-            payload,
-        )
-        .map_err(|error| match error {
-            ProjectionError::InvalidBinding => InvalidBinding,
-            ProjectionError::InvalidResponse => InvalidResponse,
-            ProjectionError::UnexpectedRecord => UnexpectedRecord,
-            ProjectionError::NotVisible => NotVisible,
-        })
+        Ok((source, read_json(response).await?))
     }
+}
+
+async fn read_json(mut response: Response) -> Result<Value, ReadError> {
+    use ReadError::*;
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| SourceUnavailable)? {
+        if chunk.len() > MAX_RESPONSE_BYTES - body.len() {
+            return Err(InvalidResponse);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body).map_err(|_| InvalidResponse)
 }
