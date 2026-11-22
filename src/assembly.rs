@@ -149,6 +149,27 @@ struct OrderDefinition {
 }
 
 impl Setup {
+    pub fn add_order(
+        &mut self,
+        id: &str,
+        template: &str,
+        serial: &str,
+    ) -> Result<(), &'static str> {
+        let source = self.orders.get(template).ok_or("TEMPLATE_NOT_FOUND")?;
+        if self.orders.values().any(|order| order.serial == serial) {
+            return Err("SERIAL_IN_USE");
+        }
+        self.orders.insert(
+            id.into(),
+            OrderDefinition {
+                configuration: source.configuration.clone(),
+                due_in_minutes: source.due_in_minutes,
+                serial: serial.into(),
+            },
+        );
+        Ok(())
+    }
+
     pub fn validate(
         &self,
         orders: &[String],
@@ -260,21 +281,19 @@ fn load(tx: &Transaction<'_>, run: &str, setup: &Setup) -> anyhow::Result<State>
             |row| row.get(0),
         )
         .optional()?;
-    Ok(stored.map_or_else(
-        || {
-            Ok(State {
-                stock: setup.stock.clone(),
-                orders: setup
-                    .orders
-                    .keys()
-                    .map(|id| (id.clone(), Order::default()))
-                    .collect(),
-                bench: None,
-                received: false,
-            })
+    let mut state: State = match stored {
+        Some(value) => serde_json::from_str(&value)?,
+        None => State {
+            stock: setup.stock.clone(),
+            orders: BTreeMap::new(),
+            bench: None,
+            received: false,
         },
-        |value| serde_json::from_str(&value),
-    )?)
+    };
+    for id in setup.orders.keys() {
+        state.orders.entry(id.clone()).or_default();
+    }
+    Ok(state)
 }
 
 fn save(tx: &Transaction<'_>, run: &str, state: &State) -> anyhow::Result<()> {

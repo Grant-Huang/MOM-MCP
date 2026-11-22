@@ -75,7 +75,7 @@ P0 起交付可运行的浏览器验收环境。所有里程碑均需交付当�
 
 各阶段的输入、操作、断言和证据要求见 [分阶段验收规范](acceptance/README.md)。
 
-P8A 及 P8B 查询、预检和单笔下达已有阶段证据。P8B 其余写入生命周期及 P8C–P9D 公共闭环仍待完成。后续阶段以 [MES 工具链扩展计划](MES_EXPANSION_PLAN.md) 为进度来源，以 [公共验收门槛](acceptance/COMMON_MES_GATE.md) 决定何时进入 P10。
+P8A 及 P8B 查询、预检、单笔下达和草稿写入已有阶段证据。P8B 其余写入生命周期及 P8C–P9D 公共闭环仍待完成。后续阶段以 [MES 工具链扩展计划](MES_EXPANSION_PLAN.md) 为进度来源，以 [公共验收门槛](acceptance/COMMON_MES_GATE.md) 决定何时进入 P10。
 
 ## 双主轴架构待办
 

@@ -2629,3 +2629,62 @@ async fn p8b_03_shared_release_command() {
         assert_eq!(contracts[0], contracts[1]);
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8b_04_create_and_update_draft() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        for (scenario, version, template, serial) in [
+            ("cnc", 5, "WO-1", None),
+            ("assembly", 6, "WO-E", Some("UNIT-NEW")),
+        ] {
+            let opened = call(&client, "open_scenario", json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(opened["ok"], true, "{opened}");
+            let run = &opened["run_id"];
+            let invoke = |name: &str, arguments| call(&client, "call_tool",
+                json!({"run_id":run,"name":name,"arguments":arguments}));
+            let tools = call(&client, "search_tools", json!({"run_id":run})).await;
+            assert!(tools["tools"].as_array().unwrap().iter().any(|entry| entry["name"] == "create_work_order"));
+            let initial = invoke("release_work_order", json!({"work_order":template,"idempotency_key":"initial","expected_cursor":0})).await;
+            assert_eq!(initial["status"], "released", "{initial}");
+            let mut args = json!({"work_order":"WO-NEW","template_work_order":template,
+                "source_demand":"Demand-1","expected_cursor":1,"idempotency_key":"create"});
+            if let Some(serial) = serial {
+                let mut duplicate = args.clone();
+                duplicate["serial"] = json!("UNIT-E-01");
+                assert_eq!(invoke("create_work_order",duplicate).await["code"],"SERIAL_IN_USE");
+                args["serial"] = json!(serial);
+            }
+            let created = invoke("create_work_order",args.clone()).await;
+            assert_eq!(created["cursor"],2, "{created}");
+            assert_eq!(invoke("create_work_order",args.clone()).await,created);
+            args["idempotency_key"] = json!("duplicate");
+            args["expected_cursor"] = json!(2);
+            assert_eq!(invoke("create_work_order",args).await["code"],"WORK_ORDER_EXISTS");
+            let detail = invoke("get_work_order",json!({"work_order":"WO-NEW"})).await;
+            assert_eq!(detail["source_demand"],"Demand-1");
+            let listed = invoke("list_work_orders",json!({"status":"planned"})).await;
+            assert!(listed["orders"].as_array().unwrap().iter().any(|order| order["work_order"]=="WO-NEW"));
+            let mut update = json!({"work_order":"WO-NEW","source_demand":"Demand-2","expected_cursor":1,"idempotency_key":"update"});
+            assert_eq!(invoke("update_draft_order",update.clone()).await["code"],"VERSION_CONFLICT");
+            update["expected_cursor"] = json!(2);
+            let updated = invoke("update_draft_order",update.clone()).await;
+            assert_eq!(updated["cursor"],3,"{updated}");
+            let release = invoke("release_work_order",json!({"work_order":"WO-NEW","expected_cursor":3,"idempotency_key":"release"})).await;
+            assert_eq!(release["status"],"released","{release}");
+            assert_eq!(invoke("update_draft_order",update.clone()).await,updated);
+            update["expected_cursor"] = json!(4);
+            update["idempotency_key"] = json!("late-update");
+            assert_eq!(invoke("update_draft_order",update).await["code"],"INVALID_STATE");
+            let (second, _other) = connect_mode(&db, "0", true).await;
+            let persisted = call(&second,"call_tool",json!({"run_id":run,"name":"get_work_order","arguments":{"work_order":"WO-NEW"}})).await;
+            assert_eq!(persisted["source_demand"],"Demand-2");
+            assert_ne!(persisted["status"],"planned");
+            let isolated = call(&second,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
+            let absent = call(&second,"call_tool",json!({"run_id":isolated["run_id"],"name":"get_work_order","arguments":{"work_order":"WO-NEW"}})).await;
+            assert_eq!(absent["code"],"WORK_ORDER_NOT_FOUND");
+        }
+    }).await.unwrap();
+}
