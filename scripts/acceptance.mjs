@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "smol-toml";
+import { validateTrace, requireBrowserEvidence } from "./acceptance-trace.mjs";
 
 const args = process.argv.slice(2);
 const stages = [...Array.from({ length: 9 }, (_, number) => `P${number}`), "P8B"];
@@ -13,35 +14,17 @@ if (args.some((arg) => arg !== phase && arg !== "--gate")) {
 }
 const read = (path) => readFileSync(path, "utf8");
 const map = parse(read("docs/feature-map.toml")).case;
-const features = [...read("docs/FEATURES.md").matchAll(/^\| (F\d+) \|/gm)].map((match) => match[1]);
-const expected = stages.map((stage) => {
-  const cases = [...read(`docs/acceptance/${stage}.md`).matchAll(/^\| (P\d[A-Z]?-\d+) \|/gm)];
-  return [`${stage}-UI`, ...cases.map((match) => match[1])];
-}).flat();
-if (
-  map.length !== expected.length ||
-  new Set(map.map(({ id }) => id)).size !== expected.length ||
-  map.some(({ id, phase, features: covered, spec }) =>
-    !expected.includes(id) || !stages.includes(phase) || !id.startsWith(`${phase}-`) ||
-    !covered.length || covered.some((name) => !features.includes(name)) ||
-    !read(`docs/${spec}`).includes(id)
-  ) ||
-  features.some((feature) => !map.some((entry) => entry.features.includes(feature)))
-) {
-  throw new Error("Feature map and acceptance specifications disagree");
-}
+validateTrace({ map, stages, read });
 
 const selected = map.filter((entry) => stages.indexOf(entry.phase) <= stages.indexOf(phase));
 const external = [];
-const missing = [];
 const cargo = [];
 const browser = [];
 const upstream = [];
 for (const entry of selected) {
   for (const layer of entry.layers) {
-    const test = entry.tests?.[layer];
-    if (!test) missing.push(`${entry.id}/${layer}`);
-    else if (layer === "rust-integration") cargo.push([entry.id, test]);
+    const test = entry.tests[layer];
+    if (layer === "rust-integration") cargo.push([entry.id, test]);
     else if (layer === "playwright") browser.push([entry.id, test]);
     else if (layer === "agentnexus" || layer === "des-baseline") {
       if (process.env.MOM_AGENTNEXUS) upstream.push([entry.id, test]);
@@ -80,17 +63,7 @@ try {
     MOM_TEST_DB: join(directory, "probe.sqlite3"),
   });
   const report = JSON.parse(read("test-results/browser.json"));
-  function specs(suite) {
-    return [...(suite.specs ?? []), ...(suite.suites ?? []).flatMap(specs)];
-  }
-  const results = report.suites.flatMap(specs);
-  for (const [id, title] of browser) {
-    const matches = results.filter((spec) => spec.title === title);
-    if (matches.length !== 1 || !matches[0].ok ||
-        matches[0].tests.some((test) => test.status !== "expected" || test.results.at(-1)?.status !== "passed")) {
-      throw new Error(`Missing successful browser evidence for ${id}`);
-    }
-  }
+  requireBrowserEvidence(report, browser);
 } finally {
   rmSync(directory, { recursive: true, force: true });
 }
@@ -101,10 +74,6 @@ if (upstream.length) {
   for (const [id, test] of upstream) {
     if (!stdout.includes(`test ${test} ... ok`)) throw new Error(`Missing successful upstream evidence for ${id}`);
   }
-}
-if (missing.length) {
-  console.error(`Missing project tests: ${missing.join(", ")}`);
-  process.exitCode = 1;
 }
 if (external.length) {
   console.error(`No automated evidence registered: ${external.join(", ")}`);

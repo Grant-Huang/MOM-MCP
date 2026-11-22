@@ -63,18 +63,18 @@ id = "MOM-L4-001"
 layer = "L4"
 objective = "可复验的 feature map 门槛"
 risk_trigger = ["代码、映射或验证器变更"]
-enforcement = "拟试点，按计划核验后再登记强制证据"
+enforcement = "验收执行器校验结构和浏览器证据。独立 CI 试点报告正反例结果，平台强制状态待核验"
 schedule = ["pr", "milestone"]
 owner_role = "QA 与 CI 维护人"
 owner_assignment = "pending"
-status = "proposed"
-evidence_level = "IMPLEMENTED"
-evidence_refs = ["feature-map.toml"]
-last_verified = "not_recorded"
+status = "pilot-warning"
+evidence_level = "VERIFIED"
+evidence_refs = ["feature-map.toml", "../scripts/acceptance-trace.test.mjs", "governance/GUARDRAIL_ADOPTION_PLAN.md"]
+last_verified = "2026-11-22 本地正反例通过，CI 待观察"
 positive_test = "有效映射与真实通过结果"
 negative_test = "坏引用、未运行或跳过的必检用例"
 exception_policy = "记录关联事项、原因、责任人、批准人、缓解措施和到期日；关键失败即时升级"
-review_due = "G1 结束时复核；完成责任分配后填日期"
+review_due = "G2 首次周审复核试点 CI 结果与误报"
 
 [[guardrail]]
 id = "MOM-L5-001"
