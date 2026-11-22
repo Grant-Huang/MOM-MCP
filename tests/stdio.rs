@@ -3072,3 +3072,40 @@ async fn p8c_03_exclusive_resource_and_reassignment() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8c_04_operation_start_pause_resume() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        for (scenario,id,operation,center) in [("cnc","WO-1","machining","MACH-01"),("assembly","WO-E","build","CELL-A")] {
+            let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":13})).await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            assert_eq!(invoke("release_work_order",json!({"work_order":id,"expected_cursor":0,"idempotency_key":"release"})).await["ok"],true);
+            assert_eq!(invoke("dispatch_operation",json!({"work_order":id,"operation":operation,"work_center":center,"expected_cursor":1,"idempotency_key":"dispatch"})).await["ok"],true);
+            let cursor=if scenario=="cnc" {
+                assert_eq!(mes(&client,run,"issue_material",id,"issue",json!({"batch":"LOT-1"})).await["ok"],true);3
+            } else {2};
+            let write=|cursor,key|json!({"work_order":id,"operation":operation,"expected_cursor":cursor,"idempotency_key":key});
+            assert_eq!(invoke("start_operation",write(cursor,"start")).await["ok"],true);
+            let mut pause=write(cursor+1,"pause");
+            pause["reason"]=json!("work review");
+            let paused=invoke("pause_operation",pause.clone()).await;
+            assert_eq!(paused["ok"],true,"{paused}");
+            assert_eq!(invoke("pause_operation",pause).await,paused);
+            let row=invoke("get_operation",json!({"work_order":id,"operation":operation})).await;
+            assert_eq!(row["operation"]["status"],"paused");
+            assert_eq!(invoke("get_resource_capability",json!({"work_center":center})).await["resource"]["occupied_by"],id);
+            let finish=if scenario=="cnc" {"report_operation"} else {"assembly_build"};
+            let mut actual=json!({"work_order":id,"idempotency_key":"finish"});
+            if scenario=="cnc" { actual["operation"]=json!(operation); }
+            assert_eq!(invoke(finish,actual.clone()).await["code"],"INVALID_STATE");
+            assert_eq!(invoke("resume_operation",write(cursor+1,"resume")).await["code"],"VERSION_CONFLICT");
+            assert_eq!(invoke("resume_operation",write(cursor+2,"resume")).await["ok"],true);
+            assert_eq!(invoke(finish,actual).await["ok"],true);
+            assert_eq!(invoke("get_resource_capability",json!({"work_center":center})).await["resource"]["available"],true);
+        }
+    }).await.unwrap();
+}

@@ -34,6 +34,8 @@ pub enum Action {
     ReassignOperation,
     IssueMaterial,
     StartOperation,
+    PauseOperation,
+    ResumeOperation,
     ReportOperation,
     InspectUnits,
     Disposition,
@@ -243,7 +245,7 @@ impl Action {
                         "priority",
                     ],
                     json!({"work_order":text(),"operation":text(),"sequence":{"type":"integer","minimum":1},
-                    "status":{"enum":["pending","ready","dispatched","running","blocked","held","completed","cancelled"]},
+                    "status":{"enum":["pending","ready","dispatched","running","paused","blocked","held","completed","cancelled"]},
                     "work_center":{"type":["null","string"]},"blocking":{"type":["null","string"]},
                     "priority":{"type":"integer","minimum":0}}),
                 );

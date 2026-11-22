@@ -102,6 +102,18 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "inventory",
     ),
     (
+        Action::PauseOperation,
+        "pause_operation",
+        "暂停正在执行的工序",
+        "production",
+    ),
+    (
+        Action::ResumeOperation,
+        "resume_operation",
+        "复查执行条件并恢复工序",
+        "production",
+    ),
+    (
         Action::StartOperation,
         "start_operation",
         "开工",
@@ -163,6 +175,19 @@ pub fn spec(action: Action) -> Spec {
         Action::HoldWorkOrder => &["work_order", "idempotency_key", "expected_cursor", "reason"],
         Action::ReleaseOrder | Action::CloseOrder => &["work_order", "idempotency_key"],
         Action::IssueMaterial => &["work_order", "batch", "idempotency_key"],
+        Action::PauseOperation => &[
+            "work_order",
+            "operation",
+            "reason",
+            "expected_cursor",
+            "idempotency_key",
+        ],
+        Action::ResumeOperation => &[
+            "work_order",
+            "operation",
+            "expected_cursor",
+            "idempotency_key",
+        ],
         Action::ReassignOperation => &[
             "work_order",
             "operation",
@@ -222,6 +247,12 @@ pub fn spec(action: Action) -> Spec {
             "work_centers".into(),
             json!({"type":"array","minItems":3,"maxItems":3,"items":text()}),
         );
+    }
+    if matches!(
+        action,
+        Action::StartOperation | Action::PauseOperation | Action::ResumeOperation
+    ) {
+        fields.insert("operation".into(), text());
     }
     if action == Action::ReportOperation {
         fields.insert(
@@ -423,6 +454,7 @@ enum Phase {
     Ready,
     Dispatched,
     Running,
+    Paused,
     Complete,
     Closed,
     Cancelled,
@@ -567,7 +599,10 @@ fn occupant<'a>(state: &'a State, center: &str, except: &str) -> Option<&'a str>
         .iter()
         .find(|(id, order)| {
             id.as_str() != except
-                && matches!(order.phase, Phase::Dispatched | Phase::Running)
+                && matches!(
+                    order.phase,
+                    Phase::Dispatched | Phase::Running | Phase::Paused
+                )
                 && order
                     .assigned_centers
                     .get(&order.step)
@@ -623,6 +658,7 @@ pub fn operations(
                         Phase::Ready => "ready",
                         Phase::Dispatched => "dispatched",
                         Phase::Running => "running",
+                        Phase::Paused => "paused",
                         _ => unreachable!("operation phase handled above"),
                     };
                     let blocking = if quality_hold {
@@ -788,6 +824,7 @@ pub fn invoke(
                     }
                     actions
                 }
+                Phase::Paused => vec!["resume_operation"],
                 Phase::Running if !held && (order.step != 0 || state.stock > 0) => {
                     vec!["report_operation"]
                 }
@@ -947,6 +984,8 @@ fn apply(
         Action::DispatchOperation
             | Action::ReassignOperation
             | Action::StartOperation
+            | Action::PauseOperation
+            | Action::ResumeOperation
             | Action::ReportOperation
     ) && ROUTE.get(order.step).copied() != args["operation"].as_str()
     {
@@ -967,7 +1006,12 @@ fn apply(
             if held {
                 return error("QUALITY_HOLD");
             }
-            if state.equipment_down && matches!(order.phase, Phase::Dispatched | Phase::Running) {
+            if state.equipment_down
+                && matches!(
+                    order.phase,
+                    Phase::Dispatched | Phase::Running | Phase::Paused
+                )
+            {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
             if order.step == 0 && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
@@ -1106,6 +1150,27 @@ fn apply(
                 return shortage(state.stock);
             }
             order.batch = Some(LOT.into());
+        }
+        Action::PauseOperation if order.phase == Phase::Running => {
+            order.phase = Phase::Paused;
+            state.ledger.push(
+                json!({"kind":"operation_pause","work_order":id,"operation":ROUTE[order.step],
+                "reason":args["reason"],"cursor":revision}),
+            );
+        }
+        Action::ResumeOperation if order.phase == Phase::Paused => {
+            if held {
+                return error("QUALITY_HOLD");
+            }
+            if state.equipment_down {
+                return error("EQUIPMENT_UNAVAILABLE");
+            }
+            if order.step == 0 && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
+            {
+                return error("MATERIAL_SHORTAGE");
+            }
+            order.phase = Phase::Running;
+            state.ledger.push(json!({"kind":"operation_resume","work_order":id,"operation":ROUTE[order.step],"cursor":revision}));
         }
         Action::StartOperation if order.phase == Phase::Dispatched => {
             if state.equipment_down {
