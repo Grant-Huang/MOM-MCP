@@ -214,6 +214,12 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             "fabrication setup requires its registered model"
         );
     }
+    anyhow::ensure!(
+        !definition.capabilities.contains(&Action::ReleaseWorkOrder)
+            || definition.assembly.is_some()
+            || definition.manufacturing.is_some(),
+        "work order release requires assembly or manufacturing setup"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -284,6 +290,9 @@ impl Scenarios {
             include_str!("../fixtures/cnc.json"),
             include_str!("../fixtures/cnc-manufacturing.json"),
             include_str!("../fixtures/cnc-public-orders.json"),
+            include_str!("../fixtures/cnc-order-release.json"),
+            include_str!("../fixtures/assembly-order-release.json"),
+            include_str!("../fixtures/assembly-shortage-order-release.json"),
             include_str!("../fixtures/cnc-shortage.json"),
             include_str!("../fixtures/cnc-lot.json"),
             include_str!("../fixtures/smt.json"),
@@ -600,7 +609,9 @@ impl Scenarios {
             }
             return Ok(Ok(response));
         }
-        if crate::assembly::TOOLS.iter().any(|tool| tool.0 == action) {
+        if crate::assembly::TOOLS.iter().any(|tool| tool.0 == action)
+            || (action == Action::ReleaseWorkOrder && definition.assembly.is_some())
+        {
             let Some(setup) = &definition.assembly else {
                 return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
             };
@@ -624,6 +635,7 @@ impl Scenarios {
                 action,
                 parameters,
                 cursor,
+                definition.capabilities.contains(&Action::ReleaseWorkOrder),
                 &mut simulation,
                 &definition.event_rules,
                 model.as_ref(),

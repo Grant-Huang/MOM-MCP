@@ -2577,3 +2577,55 @@ async fn p8b_02_assembly_release_readiness() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn p8b_03_shared_release_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let mut contracts = Vec::new();
+        for (scenario, version, order) in [("cnc", 4, "WO-1"), ("assembly-shortage", 3, "WO-E")] {
+            let opened = call(&client, "open_scenario", json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(opened["ok"], true, "{opened}");
+            let run = &opened["run_id"];
+            let invoke = |name: &str, arguments| call(&client, "call_tool",
+                json!({"run_id":run,"name":name,"arguments":arguments}));
+            contracts.push(call(&client, "describe_tool", json!({"run_id":run,"name":"release_work_order"})).await);
+            let readiness = || invoke("get_release_readiness", json!({"work_order":order}));
+            let submit = |cursor: Value| json!({"work_order":order,"idempotency_key":"release","expected_cursor":cursor});
+            let before = readiness().await;
+            if scenario == "assembly-shortage" {
+                let rejected = invoke("release_work_order", submit(before["cursor"].clone())).await;
+                assert_eq!(rejected["code"], "MATERIAL_SHORTAGE");
+                assert_eq!(readiness().await, before);
+                let early = invoke("assembly_dispatch", json!({"work_order":order,"cell":"CELL-A","idempotency_key":"dispatch"})).await;
+                assert_eq!(early["code"], "INVALID_STATE");
+                assert_eq!(invoke("assembly_substitute", json!({"work_order":order,"part":"DRIVE-ALT","idempotency_key":"substitute"})).await["ok"], true);
+            }
+            let ready = readiness().await;
+            assert_eq!(ready["ready"], true);
+            let cursor = ready["cursor"].as_i64().unwrap();
+            let stale = invoke("release_work_order", submit(json!(cursor + 1))).await;
+            assert_eq!(stale["code"], "VERSION_CONFLICT");
+            assert_eq!(readiness().await, ready);
+            let request = submit(json!(cursor));
+            let released = invoke("release_work_order", request.clone()).await;
+            assert_eq!(released["status"], "released", "{released}");
+            assert_eq!(released["cursor"], cursor + 1);
+            assert_eq!(invoke("release_work_order", request).await, released);
+            assert_eq!(invoke("release_work_order", submit(json!(cursor + 1))).await["code"], "IDEMPOTENCY_CONFLICT");
+            assert_eq!(readiness().await["blocking"], "INVALID_STATE");
+            if scenario == "cnc" {
+                assert_eq!(released["snapshot"]["route_version"], ready["route_version"]);
+            } else {
+                assert_eq!(released["snapshot"]["parts"]["DRIVE-ALT"], 1);
+                assert_eq!(invoke("assembly_dispatch", json!({"work_order":order,"cell":"CELL-A","idempotency_key":"dispatch"})).await["ok"], true);
+                assert_eq!(invoke("assembly_substitute", json!({"work_order":order,"part":"DRIVE-ALT","idempotency_key":"late"})).await["code"], "INVALID_STATE");
+                let built = invoke("assembly_build", json!({"work_order":order,"idempotency_key":"build"})).await;
+                assert_eq!(built["state"]["installed"], released["snapshot"]["parts"]);
+            }
+        }
+        assert_eq!(contracts[0]["ok"], true);
+        assert_eq!(contracts[0], contracts[1]);
+    }).await.unwrap();
+}

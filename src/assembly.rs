@@ -212,6 +212,8 @@ impl Setup {
 struct Order {
     phase: Phase,
     substitute: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    released_parts: Option<BTreeMap<String, usize>>,
     cell: Option<String>,
     priority: u64,
     installed: BTreeMap<String, usize>,
@@ -225,6 +227,7 @@ struct Order {
 enum Phase {
     #[default]
     Planned,
+    Released,
     Dispatched,
     Queued,
     Testing,
@@ -310,6 +313,9 @@ fn failure(code: &str) -> Value {
 }
 
 fn required(setup: &Setup, order: &Order) -> BTreeMap<String, usize> {
+    if let Some(parts) = &order.released_parts {
+        return parts.clone();
+    }
     let mut required = setup.bom.clone();
     if let Some(part) = &order.substitute {
         let quantity = required.remove("DRIVE-STD").unwrap();
@@ -379,17 +385,17 @@ pub fn release_readiness(
         .map(|(cell, _)| cell)
         .collect();
     let shortages = missing(&required(setup, order), &state.stock);
-    let result = dispatch_blocker(order, !cells.is_empty(), &shortages);
+    let result = dispatch_blocker(order.phase == Phase::Planned, !cells.is_empty(), &shortages);
     Ok(json!({"ok":true,"work_order":id,"ready":result.is_none(),
         "blocking":result,"cursor":cursor,"eligible_cells":cells,"missing":shortages}))
 }
 
 fn dispatch_blocker(
-    order: &Order,
+    valid_phase: bool,
     capable: bool,
     shortages: &BTreeMap<String, usize>,
 ) -> Option<&'static str> {
-    if order.phase != Phase::Planned {
+    if !valid_phase {
         Some("INVALID_STATE")
     } else if !capable {
         Some("CELL_NOT_CAPABLE")
@@ -407,6 +413,7 @@ pub fn invoke(
     action: Action,
     args: &Map<String, Value>,
     cursor: i64,
+    require_release: bool,
     simulation: &mut Simulation,
     rules: &[mom_des::Rule],
     model: &dyn mom_des::Model,
@@ -461,6 +468,15 @@ pub fn invoke(
             },
             false,
         ));
+    }
+    if action == Action::ReleaseWorkOrder && args["expected_cursor"].as_i64() != Some(cursor) {
+        return Ok((
+            json!({"ok":false,"code":"VERSION_CONFLICT","cursor":cursor}),
+            false,
+        ));
+    }
+    if require_release && action == Action::AssemblyDispatch && order.phase == Phase::Planned {
+        return Ok((failure("INVALID_STATE"), false));
     }
     let mut response = apply(
         &mut state,
@@ -517,7 +533,32 @@ fn apply(
     }
     let order = state.orders.get_mut(id).unwrap();
     match action {
-        Action::AssemblySubstitute if matches!(order.phase, Phase::Planned | Phase::Dispatched) => {
+        Action::ReleaseWorkOrder => {
+            let configuration = &setup.orders[id].configuration;
+            let capable = setup
+                .cells
+                .values()
+                .any(|configs| configs.contains(configuration));
+            let parts = required(setup, order);
+            let shortages = missing(&parts, &state.stock);
+            if let Some(code) = dispatch_blocker(order.phase == Phase::Planned, capable, &shortages)
+            {
+                return if code == "MATERIAL_SHORTAGE" {
+                    json!({"ok":false,"code":code,"missing":shortages})
+                } else {
+                    failure(code)
+                };
+            }
+            order.released_parts = Some(parts.clone());
+            order.phase = Phase::Released;
+            return json!({"ok":true,"work_order":id,"status":"released",
+                "snapshot":{"configuration":configuration,"parts":parts,
+                "substitution_qualification":order.substitute.as_ref().map(|part|&setup.substitutes[part])}});
+        }
+        Action::AssemblySubstitute
+            if order.released_parts.is_none()
+                && matches!(order.phase, Phase::Planned | Phase::Dispatched) =>
+        {
             let part = args["part"].as_str().unwrap();
             let Some(qualification) = setup.substitutes.get(part) else {
                 return failure("SUBSTITUTE_NOT_QUALIFIED");
@@ -531,7 +572,11 @@ fn apply(
                 configurations.contains(&setup.orders[id].configuration)
             });
             let shortages = missing(&required(setup, order), &state.stock);
-            if let Some(code) = dispatch_blocker(order, capable, &shortages) {
+            if let Some(code) = dispatch_blocker(
+                matches!(order.phase, Phase::Planned | Phase::Released),
+                capable,
+                &shortages,
+            ) {
                 return if code == "MATERIAL_SHORTAGE" {
                     json!({"ok":false,"code":code,"missing":shortages})
                 } else {
@@ -556,7 +601,7 @@ fn apply(
         Action::AssemblyPriority
             if matches!(
                 order.phase,
-                Phase::Planned | Phase::Dispatched | Phase::Queued
+                Phase::Planned | Phase::Released | Phase::Dispatched | Phase::Queued
             ) =>
         {
             order.priority = args["priority"].as_u64().unwrap();
