@@ -390,6 +390,13 @@ impl Scenarios {
                  demand TEXT NOT NULL, serial TEXT,
                  PRIMARY KEY (run, id)
              );
+             CREATE TABLE IF NOT EXISTS quality_inspection_plans (
+                 run TEXT NOT NULL, plan TEXT NOT NULL, revision INTEGER NOT NULL,
+                 specification TEXT NOT NULL, characteristics TEXT NOT NULL, status TEXT NOT NULL,
+                 PRIMARY KEY (run, plan, revision), UNIQUE (run, specification)
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS quality_active_plan
+                 ON quality_inspection_plans (run,plan) WHERE status='active';
              CREATE TABLE IF NOT EXISTS quality_inspections (
                  run TEXT NOT NULL, id TEXT NOT NULL, work_order TEXT NOT NULL,
                  specification_version TEXT NOT NULL,
@@ -436,6 +443,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-inspection-results.json"),
             include_str!("../fixtures/cnc-quality-gates.json"),
             include_str!("../fixtures/assembly-quality-gates.json"),
+            include_str!("../fixtures/cnc-inspection-plans.json"),
+            include_str!("../fixtures/assembly-inspection-plans.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -765,7 +774,9 @@ impl Scenarios {
         }
         if matches!(
             action,
-            Action::CreateInspection
+            Action::CreateInspectionPlanRevision
+                | Action::ActivateInspectionPlanRevision
+                | Action::CreateInspection
                 | Action::ListInspections
                 | Action::GetInspection
                 | Action::RecordMeasurement
@@ -782,6 +793,9 @@ impl Scenarios {
                 action,
                 parameters,
                 cursor,
+                definition
+                    .capabilities
+                    .contains(&Action::ActivateInspectionPlanRevision),
             );
         }
         if definition

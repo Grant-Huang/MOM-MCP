@@ -3648,3 +3648,66 @@ async fn p8d_03_nonconformance_hold_and_release() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p9a_01_inspection_plan_revision_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("quality.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        for (scenario, version, order) in [("cnc", 19, "WO-1"), ("assembly", 18, "WO-E")] {
+            let open = async || call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
+            let opened=open().await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            let create_plan = |revision, lower, upper, cursor| json!({"plan_id":"DIM","revision":revision,
+                "characteristics":{"width":{"unit":"mm","lower_limit":lower,"upper_limit":upper},
+                    "height":{"unit":"mm","lower_limit":1,"upper_limit":2}},
+                "expected_cursor":cursor,"idempotency_key":format!("plan-{revision}")});
+            let activate = |revision,cursor| json!({"plan_id":"DIM","revision":revision,"expected_cursor":cursor,
+                "idempotency_key":format!("activate-{revision}")});
+            let create = |id:&str,reference:&str,cursor| json!({"inspection_id":id,"work_order":order,
+                "specification_version":reference,"expected_cursor":cursor,"idempotency_key":format!("inspection-{id}")});
+            let measure = |id:&str,item:&str,value,unit:&str,lower,upper,cursor| json!({
+                "inspection_id":id,"characteristic":item,"value":value,"unit":unit,
+                "lower_limit":lower,"upper_limit":upper,"expected_cursor":cursor,"idempotency_key":format!("{id}-{item}")});
+            let finish = |id:&str,cursor| json!({"inspection_id":id,"expected_cursor":cursor,"idempotency_key":format!("finish-{id}")});
+            assert_eq!(invoke("create_inspection_plan_revision",create_plan(1,6,5,0)).await["code"],"INVALID_ARGUMENT");
+            assert_eq!(invoke("create_inspection_plan_revision",create_plan(1,4,5,0)).await["plan"]["status"],"draft");
+            assert_eq!(invoke("create_inspection",create("old","DIM@1",1)).await["code"],"PLAN_REVISION_NOT_ACTIVE");
+            let active=invoke("activate_inspection_plan_revision",activate(1,1)).await;
+            assert_eq!(active["plan"]["status"],"active","{active}");
+            assert_eq!(invoke("activate_inspection_plan_revision",activate(1,1)).await,active);
+            assert_eq!(invoke("create_inspection",create("old","DIM@1",2)).await["cursor"],3);
+            assert_eq!(invoke("create_inspection_plan_revision",create_plan(2,6,7,3)).await["cursor"],4);
+            assert_eq!(invoke("activate_inspection_plan_revision",activate(2,4)).await["cursor"],5);
+            let mut obsolete=activate(1,5);
+            obsolete["idempotency_key"]=json!("reactivate-old");
+            assert_eq!(invoke("activate_inspection_plan_revision",obsolete).await["code"],"PLAN_REVISION_NOT_ACTIVATABLE");
+            assert_eq!(invoke("create_inspection",create("new","DIM@1",5)).await["code"],"PLAN_REVISION_NOT_ACTIVE");
+            assert_eq!(invoke("create_inspection",create("new","DIM@2",5)).await["cursor"],6);
+
+            assert_eq!(invoke("record_measurement",measure("old","width",6,"mm",6,7,6)).await["code"],"MEASUREMENT_SPECIFICATION_MISMATCH");
+            assert_eq!(invoke("record_measurement",measure("old","width",6,"cm",4,5,6)).await["field"],"unit");
+            assert_eq!(invoke("record_measurement",measure("old","length",6,"mm",4,5,6)).await["code"],"CHARACTERISTIC_NOT_IN_PLAN");
+            assert_eq!(invoke("record_measurement",measure("old","width",6,"mm",4,5,6)).await["measurement"]["passed"],false);
+            assert_eq!(invoke("complete_inspection",finish("old",7)).await["code"],"PLAN_MEASUREMENTS_INCOMPLETE");
+            assert_eq!(invoke("record_measurement",measure("old","height",1,"mm",1,2,7)).await["measurement"]["passed"],true);
+            assert_eq!(invoke("complete_inspection",finish("old",8)).await["inspection"]["status"],"failed");
+            let (peer,_child)=connect_mode(&db,"0",true).await;
+            let old=business(&peer,run,"get_inspection",json!({"inspection_id":"old"})).await;
+            assert_eq!(old["inspection_plan"]["status"],"superseded");
+            assert_eq!(old["inspection_plan"]["characteristics"]["width"]["upper_limit"].as_f64(),Some(5.0));
+            let new=invoke("get_inspection",json!({"inspection_id":"new"})).await;
+            assert_eq!(new["inspection_plan"]["characteristics"]["width"]["upper_limit"].as_f64(),Some(7.0));
+            let mut retry=create("retest","DIM@1",9);
+            retry["reinspection_of"]=json!("new");
+            assert_eq!(invoke("create_inspection",retry.clone()).await["code"],"REINSPECTION_NOT_ACCEPTABLE");
+            retry["reinspection_of"]=json!("old");
+            assert_eq!(invoke("create_inspection",retry).await["cursor"],10);
+            let other=open().await;
+            assert_eq!(business(&client,&other["run_id"],"create_inspection",create("foreign","DIM@2",0)).await["code"],"PLAN_REVISION_NOT_FOUND");
+        }
+    }).await.unwrap();
+}
