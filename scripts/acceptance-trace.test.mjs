@@ -5,7 +5,7 @@ import { parse } from "smol-toml";
 import { validateTrace, requireBrowserEvidence } from "./acceptance-trace.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-const stages = [...Array.from({ length: 9 }, (_, number) => `P${number}`), "P8B"];
+const stages = [...Array.from({ length: 9 }, (_, number) => `P${number}`), "P8B", "P8C"];
 const map = parse(read("docs/feature-map.toml")).case;
 const check = (map) => validateTrace({ map, stages, read });
 

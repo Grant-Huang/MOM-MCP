@@ -508,6 +508,78 @@ pub fn order_status(
     }))
 }
 
+pub fn operations(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    orders: &[String],
+    filter: Option<&str>,
+) -> anyhow::Result<Vec<crate::operations::Operation>> {
+    let state = load(tx, run, setup, orders)?;
+    let quality_hold: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM scenario_holds WHERE run=?1 AND batch=?2)",
+        params![run, LOT],
+        |row| row.get(0),
+    )?;
+    let mut rows = Vec::new();
+    for (id, order) in &state.orders {
+        if filter.is_some_and(|filter| filter != id) {
+            continue;
+        }
+        for (index, operation) in ROUTE.iter().enumerate() {
+            let (status, blocking) =
+                if index < order.step || matches!(order.phase, Phase::Complete | Phase::Closed) {
+                    if index == 2 && order.inspection.as_deref() == Some("fail") {
+                        ("blocked", Some("QUALITY_HOLD"))
+                    } else {
+                        ("completed", None)
+                    }
+                } else if order.phase == Phase::Cancelled {
+                    ("cancelled", None)
+                } else if index > order.step {
+                    ("pending", Some("PREDECESSOR_INCOMPLETE"))
+                } else if order.hold_reason.is_some() {
+                    ("held", Some("WORK_ORDER_HELD"))
+                } else if order.phase == Phase::Planned {
+                    ("pending", Some("ORDER_NOT_RELEASED"))
+                } else {
+                    let phase = match order.phase {
+                        Phase::Ready => "ready",
+                        Phase::Dispatched => "dispatched",
+                        Phase::Running => "running",
+                        _ => unreachable!("operation phase handled above"),
+                    };
+                    let blocking = if quality_hold {
+                        Some("QUALITY_HOLD")
+                    } else if state.equipment_down && index < 2 {
+                        Some("EQUIPMENT_UNAVAILABLE")
+                    } else if index == 0
+                        && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
+                    {
+                        Some("MATERIAL_SHORTAGE")
+                    } else {
+                        None
+                    };
+                    (phase, blocking)
+                };
+            rows.push(crate::operations::Operation {
+                work_order: id.clone(),
+                operation,
+                sequence: index + 1,
+                status,
+                blocking,
+                work_center: order
+                    .work_centers
+                    .as_ref()
+                    .map(|centers| centers[index].clone()),
+                priority: 0,
+                due: 0,
+            });
+        }
+    }
+    Ok(rows)
+}
+
 pub fn invoke(
     tx: &Transaction<'_>,
     run: &str,

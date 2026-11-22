@@ -404,6 +404,80 @@ pub fn status(
     }))
 }
 
+pub fn operations(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    filter: Option<&str>,
+) -> anyhow::Result<Vec<crate::operations::Operation>> {
+    let state = load(tx, run, setup)?;
+    let test_queue = queue(&state, setup);
+    let mut rows = Vec::new();
+    for (id, order) in &state.orders {
+        if filter.is_some_and(|filter| filter != id) {
+            continue;
+        }
+        let built = !order.installed.is_empty();
+        let (build, test) = if order.phase == Phase::Cancelled {
+            (("cancelled", None), ("cancelled", None))
+        } else {
+            let build = if built {
+                ("completed", None)
+            } else if order.hold_reason.is_some() {
+                ("held", Some("WORK_ORDER_HELD"))
+            } else if order.phase == Phase::Planned {
+                ("pending", Some("ORDER_NOT_RELEASED"))
+            } else {
+                let shortages = missing(&required(setup, order), &state.stock);
+                (
+                    if order.phase == Phase::Dispatched {
+                        "dispatched"
+                    } else {
+                        "ready"
+                    },
+                    (!shortages.is_empty()).then_some("MATERIAL_SHORTAGE"),
+                )
+            };
+            let test = if !built {
+                ("pending", Some("PREDECESSOR_INCOMPLETE"))
+            } else if order.hold_reason.is_some() {
+                ("held", Some("WORK_ORDER_HELD"))
+            } else {
+                match order.phase {
+                    Phase::Queued if state.bench.is_some() => ("ready", Some("TEST_BENCH_BUSY")),
+                    Phase::Queued if test_queue.first().copied() != Some(id) => {
+                        ("ready", Some("TEST_PRIORITY_BLOCKED"))
+                    }
+                    Phase::Queued => ("ready", None),
+                    Phase::Testing => ("running", None),
+                    Phase::Failed => ("blocked", Some("QUALITY_HOLD")),
+                    _ => ("completed", None),
+                }
+            };
+            (build, test)
+        };
+        for (index, (operation, center, (status, blocking))) in [
+            ("build", order.cell.clone(), build),
+            ("final_test", Some("TEST-1".into()), test),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            rows.push(crate::operations::Operation {
+                work_order: id.clone(),
+                operation,
+                sequence: index + 1,
+                status,
+                blocking,
+                work_center: center,
+                priority: order.priority,
+                due: setup.orders[id].due_in_minutes,
+            });
+        }
+    }
+    Ok(rows)
+}
+
 pub fn release_readiness(
     tx: &Transaction<'_>,
     run: &str,

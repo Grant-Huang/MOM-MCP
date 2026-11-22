@@ -261,6 +261,14 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             && !definition.capabilities.contains(&Action::CloseOrder)),
         "terminal actions require work order release and exclude legacy close"
     );
+    anyhow::ensure!(
+        !definition.capabilities.iter().any(|action| matches!(
+            action,
+            Action::ListOperations | Action::GetOperation | Action::ListDispatchQueue
+        )) || definition.assembly.is_some()
+            || definition.manufacturing.is_some(),
+        "operation queries require assembly or manufacturing setup"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -342,6 +350,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-order-hold.json"),
             include_str!("../fixtures/cnc-order-terminal.json"),
             include_str!("../fixtures/cnc-cross-shop.json"),
+            include_str!("../fixtures/cnc-operation-reads.json"),
+            include_str!("../fixtures/assembly-operation-reads.json"),
             include_str!("../fixtures/assembly-order-terminal.json"),
             include_str!("../fixtures/assembly-order-hold.json"),
             include_str!("../fixtures/assembly-batch-release.json"),
@@ -958,6 +968,51 @@ impl Scenarios {
                 tx.commit()?;
             }
             return Ok(Ok(response));
+        }
+        if matches!(
+            action,
+            Action::ListOperations | Action::GetOperation | Action::ListDispatchQueue
+        ) {
+            let filter = parameters.get("work_order").and_then(Value::as_str);
+            if filter.is_some_and(|id| !definition.work_orders.iter().any(|order| order == id)) {
+                return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
+            }
+            let mut rows = if let Some(setup) = &definition.assembly {
+                crate::assembly::operations(&tx, run, setup, filter)?
+            } else if let Some(setup) = &definition.manufacturing {
+                crate::mes::operations(&tx, run, setup, &definition.work_orders, filter)?
+            } else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            if action == Action::GetOperation {
+                return Ok(rows
+                    .into_iter()
+                    .find(|row| Some(row.operation) == parameters["operation"].as_str())
+                    .map(|row| json!({"ok":true,"run_id":run,"operation":row}))
+                    .ok_or_else(|| reject("OPERATION_NOT_FOUND", "operation")));
+            }
+            if action == Action::ListDispatchQueue {
+                let center = parameters.get("work_center").and_then(Value::as_str);
+                rows.retain(|row| {
+                    row.status == "ready"
+                        && center.is_none_or(|center| row.work_center.as_deref() == Some(center))
+                });
+                rows.sort_by(|a, b| {
+                    (
+                        std::cmp::Reverse(a.priority),
+                        a.due,
+                        &a.work_order,
+                        a.sequence,
+                    )
+                        .cmp(&(
+                            std::cmp::Reverse(b.priority),
+                            b.due,
+                            &b.work_order,
+                            b.sequence,
+                        ))
+                });
+            }
+            return Ok(Ok(json!({"ok":true,"run_id":run,"operations":rows})));
         }
         if action == Action::GetWorkOrder {
             let order = parameters["work_order"].as_str().unwrap();

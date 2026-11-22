@@ -38,7 +38,7 @@ jobs:
           if-no-files-found: error
       - run: node --test scripts/acceptance-trace.test.mjs scripts/pr-risk.test.mjs scripts/periodic-audit.test.mjs
       - run: npx playwright install --with-deps chromium
-      - run: npm run acceptance -- P8B
+      - run: npm run acceptance -- P8C
       - uses: actions/upload-artifact@v4
         if: always()
         with:

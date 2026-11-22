@@ -2909,3 +2909,58 @@ async fn p8b_08_cross_shop_snapshot() {
         assert_eq!(ledger[1]["route_version"],"route-1");
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8c_01_operation_queries_and_queue() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let mut contracts = Vec::new();
+        for (scenario, order, first, second) in [
+            ("cnc", "WO-1", "machining", "assembly"),
+            ("assembly", "WO-E", "build", "final_test"),
+        ] {
+            let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":10})).await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            contracts.push(call(&client,"describe_tool",json!({"run_id":run,"name":"get_operation"})).await);
+            assert_eq!(invoke("list_dispatch_queue",json!({})).await["operations"],json!([]));
+            let read=|operation|json!({"work_order":order,"operation":operation});
+            assert_eq!(invoke("get_operation",read(first)).await["operation"]["blocking"],"ORDER_NOT_RELEASED");
+            assert_eq!(invoke("get_operation",read(second)).await["operation"]["blocking"],"PREDECESSOR_INCOMPLETE");
+            assert_eq!(invoke("get_operation",read("unknown")).await["code"],"OPERATION_NOT_FOUND");
+            let release=invoke("release_work_order",json!({"work_order":order,"expected_cursor":0,"idempotency_key":"release"})).await;
+            assert_eq!(release["ok"],true,"{release}");
+            let queue=invoke("list_dispatch_queue",json!({})).await;
+            let detail=invoke("get_operation",read(first)).await;
+            assert_eq!(queue["operations"],json!([detail["operation"]]));
+            let order_ops=invoke("list_operations",json!({"work_order":order})).await;
+            assert_eq!(order_ops["operations"][0],detail["operation"]);
+            assert_eq!(detail["operation"]["status"],"ready");
+            assert_eq!(call(&client,"get_run",json!({"run_id":run})).await["cursor"],1);
+            if scenario=="cnc" {
+                assert_eq!(detail["operation"]["work_center"],"MACH-01");
+                let result=invoke("dispatch_operation",json!({"work_order":order,"operation":first,"work_center":"MACH-01","idempotency_key":"dispatch"})).await;
+                assert_eq!(result["ok"],true);
+                assert_eq!(invoke("list_dispatch_queue",json!({"work_center":"MACH-01"})).await["operations"],json!([]));
+            } else {
+                for (id, cell) in [(order,"CELL-A"),("WO-L","CELL-B")] {
+                    if id != order {
+                        assert_eq!(invoke("release_work_order",json!({"work_order":id,"expected_cursor":3,"idempotency_key":"release-other"})).await["ok"],true);
+                    }
+                    assert_eq!(invoke("assembly_dispatch",json!({"work_order":id,"cell":cell,"idempotency_key":format!("dispatch-{id}")})).await["ok"],true);
+                    assert_eq!(invoke("assembly_build",json!({"work_order":id,"idempotency_key":format!("build-{id}")})).await["ok"],true);
+                }
+                let queue=invoke("list_dispatch_queue",json!({"work_center":"TEST-1"})).await;
+                assert_eq!(queue["operations"][0]["work_order"],order);
+                assert_eq!(queue["operations"][1]["blocking"],"TEST_PRIORITY_BLOCKED");
+                assert_eq!(invoke("assembly_priority",json!({"work_order":"WO-L","priority":5,"idempotency_key":"priority"})).await["ok"],true);
+                let queue=invoke("list_dispatch_queue",json!({"work_center":"TEST-1"})).await;
+                assert_eq!(queue["operations"][0]["work_order"],"WO-L");
+            }
+        }
+        assert_eq!(contracts[0]["ok"],true);
+        assert_eq!(contracts[0],contracts[1]);
+    }).await.unwrap();
+}
