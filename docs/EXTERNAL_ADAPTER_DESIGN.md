@@ -1,6 +1,6 @@
 # 外部系统只读适配设计
 
-状态为待评审。首个切片验证 AgentNexus 对两种异构生产来源执行同一工单读取意图。需求见 [双主轴需求](FEATURES.md#双主轴需求与验收目标)，执行状态见 [外部适配器实施计划](IMPLEMENTATION_PLAN.md#外部适配器实施计划)。
+状态为待评审。首个切片验证 AgentNexus 对三种异构生产来源执行同一工单读取意图。需求见 [双主轴需求](FEATURES.md#双主轴需求与验收目标)，执行状态见 [外部适配器实施计划](IMPLEMENTATION_PLAN.md#外部适配器实施计划)。
 
 ## 职责与调用边界
 
@@ -32,13 +32,13 @@ AgentNexus 的 MOM／World Adapter 负责服务端绑定、租户与站点范围
 
 | 候选样本 | 已核实 | 待补证据 |
 |---|---|---|
-| Carbon MCP 生产工单读取 | 固定源码中的 `production_getJob` 接受字符串 ID，声明生产查看权限。 | 固定部署与授权、脱敏响应、实际状态生命周期。 [源码](https://github.com/crbnos/carbon/blob/2f5b652498539be79372635666f1ccc45f5cb601/apps/erp/app/modules/production/production.server.ts#L6957) |
+| Carbon MCP 生产工单读取 | 可检出版本 `05bd067` 的 `production_getJob` 接受字符串 ID，声明生产查看权限。 | 固定部署与授权、脱敏响应、实际状态生命周期。 [源码](https://github.com/crbnos/carbon/blob/2f5b652498539be79372635666f1ccc45f5cb601/apps/erp/app/modules/production/production.server.ts#L6957) |
 | OpenMES HTTP 工单读取 | 固定源码注册 `work-orders` API resource。详情控制器先执行 `view` 授权，再以 `data` 包装工单和关联。 | 确认部署路由前缀、实际凭据、详情 schema、业务状态和错误响应。 [详情控制器](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Http/Controllers/Api/V1/WorkOrderController.php#L59) · [源码](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/routes/api.php#L653) |
 | Odoo Community 19.0 自托管 JSON-2 | 固定源码定义 `mrp.production` 和使用 Bearer 身份的 JSON-2 路由。候选读取为 `POST /json/2/mrp.production/search_read`，服务账号按授权公司和记录 ID 读取。 | 验证自托管实例的端点、记录规则、脱敏响应与失败行为。按数据库绑定区分源记录，核对跨公司隔离。保留源状态 `to_close` 与 `done` 的区别，待核实后决定规范状态。 [制造订单源码](https://github.com/odoo/odoo/blob/d36b9405fe5d2ede753c6d7eceb778ecef20f67b/addons/mrp/models/mrp_production.py#L177) · [JSON-2 路由源码](https://github.com/odoo/odoo/blob/d36b9405fe5d2ede753c6d7eceb778ecef20f67b/addons/rpc/controllers/json2.py#L49) |
 
-Odoo 作为第三个候选，首期仍选择两种可运行接口。Odoo 制造订单与其工序工单是不同对象，首期对齐制造订单。后续可用同一 Odoo 实例验证销售与制造关联，跨厂商关联另用独立来源验证。
+Odoo、OpenMES 与 Carbon 均纳入首期最低验证范围。Odoo 制造订单与其工序工单是不同对象，首期对齐制造订单。后续可用同一 Odoo 实例验证销售与制造关联，跨厂商关联另用独立来源验证。
 
-两套样本均须有版本、来源和契约证据。验收用同一工单读取意图覆盖等价状态、同号不同源、未映射状态、越权、对象不存在和源不可用。已配置源失败时验证零模拟调用。批准的接口夹具可用于结构与回归验证，已部署系统的调用轨迹作为运行时接入证据。CRM／ERP 销售订单到生产工单的跨系统关系在首期结果基础上另行设计。
+三套样本均须有版本、来源和契约证据。验收用同一工单读取意图覆盖等价状态、同号不同源、未映射状态、越权、对象不存在和源不可用。已配置源失败时验证零模拟调用。批准的接口夹具可用于结构与回归验证，已部署系统的调用轨迹作为运行时接入证据。CRM／ERP 销售订单到生产工单的跨系统关系在首期结果基础上另行设计。
 
 ### Odoo 本地接口验证
 
@@ -61,9 +61,15 @@ Odoo 已观测到的空数组和 OpenMES 的 403／404 须分别解释。适配�
 
 AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收。其 DES Observe 当前按 `world_id` 读取已发布的模拟快照。生产工单读取需要 M3 绑定与对象选择契约，联审需确认生产身份、授权范围、适配调用位置和响应错误归属。 [DES Observe 实现](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/mom_world_des.rs#L680)
 
+## Carbon 样本验证
+
+旧参考提交 `2f5b652` 当前无法从上游取得。Carbon 验证选用可检出的 `05bd067c0a72ca9f0983f6278d2a7c9bb48b716c`。运行 `node docs/references/mcp/carbon-adapter-sample.mjs <Carbon checkout>`，核实 `production_getJob` 注册为只读、要求 `production:view`，并使用调用者的 Supabase 客户端按内部 `id` 查询 `jobs`。夹具通过单记录和无可见记录两条查询断言。静态核对确认 `jobs` 为 security-invoker 视图，工单表定义公司范围行级策略。 [工具注册](https://github.com/crbnos/carbon/blob/05bd067/apps/erp/app/modules/production/production.server.ts#L6957) · [查询函数](https://github.com/crbnos/carbon/blob/05bd067/apps/erp/app/modules/production/production.service.ts#L1436)
+
+Carbon 上游 MCP 路由要求 Business 权益，默认 ERP 镜像下载也返回未授权。Carbon 仍缺获授权实例的 MCP 工单读取及跨公司验证。夹具结果不代表 MCP 载荷、权限执行或 RLS 已实测。 [上游 MCP 权益检查](https://github.com/crbnos/carbon/blob/05bd067/apps/erp/app/routes/api%2B/mcp%2B/_index.ts#L110)
+
 ## M3 Observe 联审契约
 
-候选版本 v1，待 AgentNexus 与 MOM-MCP 联审冻结。首期限定单对象、单已绑定来源的只读工单观测。基线为 MOM-MCP `81513b0` 与 AgentNexus `8debd3e`，分别对应两套本地 HTTP 样本与 M2-5 DES 浏览器验收。现有 DES Observe 按 `world_id` 取模拟快照，生产 Observe 需要对象选择及生产身份绑定。 [World Adapter Observe](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/docs/mom/WORLD_ADAPTER.md#41-observe) · [DES Observe 实现](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/mom_world_des.rs#L680)
+候选版本 v1，待 AgentNexus 与 MOM-MCP 联审冻结。首期限定单对象、单已绑定来源的只读工单观测。三系统类型、来源身份、字段和映射策略见 [工单观测本体约定 v0.1](WORK_ORDER_ONTOLOGY.md)。基线为 MOM-MCP `81513b0` 与 AgentNexus `8debd3e`，分别对应两套本地 HTTP 样本与 M2-5 DES 浏览器验收。现有 DES Observe 按 `world_id` 取模拟快照，生产 Observe 需要对象选择及生产身份绑定。 [World Adapter Observe](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/docs/mom/WORLD_ADAPTER.md#41-observe) · [DES Observe 实现](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/mom_world_des.rs#L680)
 
 ### 请求、授权与返回
 
@@ -93,9 +99,9 @@ AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收。其 DES Observe
 | 来源内不可见 | Odoo 成功空数组及 OpenMES 对象级 403／404 返回统一不可见结果。受信侧保留实际响应分类，普通调用方无法借此区分受限对象是否存在。 |
 | 来源身份或配置故障 | 来源 401 或可确认的连接级拒绝返回连接不可用。不得把来源 401 解释为调用方的会话身份失败。 |
 | 来源暂时故障 | 超时和上游暂时故障仅对读取有界重试。测试断言最终返回不可用，且零模拟调用。 |
-| 观测成功 | 在两种绑定上验证同一读取意图、稳定来源、同号不同对象、时间语义以及待映射状态。 |
+| 观测成功 | 在三种绑定上验证同一读取意图、稳定来源、同号不同对象、时间语义以及待映射状态。 |
 
-联审输出应冻结绑定字段、连接器部署和身份、对象引用签发方式、一致性字段、公开错误表示及兼容策略。冻结后登记 Fxx、执行阶段和验收用例；首先验证两种真实 HTTP 来源，再通过 AgentNexus Observe 运行同一套断言。生产站点、事件订阅、跨系统关联与写入各自保留独立签收条件。
+联审输出应冻结绑定字段、连接器部署和身份、对象引用签发方式、一致性字段、公开错误表示及兼容策略。冻结后登记 Fxx、执行阶段和验收用例；首先验证三种实际来源接口，再通过 AgentNexus Observe 运行同一套断言。生产站点、事件订阅、跨系统关联与写入各自保留独立签收条件。
 
 ### 联审决策与落地顺序
 
@@ -104,7 +110,7 @@ AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收。其 DES Observe
 | 生产绑定 | 适配器只接收由服务端解析的来源、授权范围和对象引用。绑定判定、能力发现及公开错误由 World Adapter 负责。 | 确认绑定与调用身份的事实来源、撤权后的失效机制、部署及凭据边界。 |
 | 快照与游标 | 首期只读一个对象，来源标记为需要重读。不给只读样本签发事件游标或声明订阅能力。 | 确认 `per_source` 水位结构、无游标表示和既有 DTO／客户端兼容口径。 |
 | 语义映射 | 源状态和映射诊断随授权后的观测保留。只有进入条件和业务后果都核实后，才新增可用规范状态。 | 确认映射版本发布责任、诊断公开范围，以及哪些规范状态为首期必需。 |
-| 证据和准出 | 冻结后先登记独立只读验收，再实现两种来源，最后通过真实 Observe 验证同号、权限、来源故障和零模拟调用。 | 确认测试站点身份、集成用例入口和签收责任。 |
+| 证据和准出 | 冻结后先登记独立只读验收，再实现三种来源，最后通过真实 Observe 验证同号、权限、来源故障和零模拟调用。 | 确认测试站点身份、集成用例入口和签收责任。 |
 
 联审前可以继续验证来源生命周期、业务字段与 HTTP 事实。生产路由、公开 DTO 和生产写入须按各自的授权与验收推进。
 
