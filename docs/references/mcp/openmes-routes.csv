@@ -1,0 +1,933 @@
+source,line,declaration,route_fragment,handler,capability,description_basis
+backend/routes/api.php,84,get,/health,,get · /health,inferred from route and handler
+backend/routes/api.php,94,post,/workstations/register,\App\Http\Controllers\Api\V1\WorkstationRegistrationController::register,Register (workstation registration),inferred from route and handler
+backend/routes/api.php,97,post,/workstations/heartbeat,\App\Http\Controllers\Api\V1\WorkstationRegistrationController::heartbeat,Heartbeat (workstation registration),inferred from route and handler
+backend/routes/api.php,107,post,/login,AuthController::login,Login (auth),inferred from route and handler
+backend/routes/api.php,108,post,/logout,AuthController::logout,Logout (auth),inferred from route and handler
+backend/routes/api.php,109,post,/refresh,AuthController::refresh,Refresh (auth),inferred from route and handler
+backend/routes/api.php,110,post,/change-password,AuthController::changePassword,Change password (auth),inferred from route and handler
+backend/routes/api.php,111,get,/me,AuthController::me,Me (auth),inferred from route and handler
+backend/routes/api.php,120,get,/me,ErpKeyIntrospectionController,get · /me,inferred from route and handler
+backend/routes/api.php,125,get,/lines,MasterDataExportController::lines,Lines (master data export),inferred from route and handler
+backend/routes/api.php,127,get,/product-types,MasterDataExportController::productTypes,Product types (master data export),inferred from route and handler
+backend/routes/api.php,129,get,/warehouses,MasterDataExportController::warehouses,Warehouses (master data export),inferred from route and handler
+backend/routes/api.php,133,post,/work-orders/import,ErpWorkOrderImportController::store,Create or submit erp work order import,inferred from route and handler
+backend/routes/api.php,141,post,/work-orders/{workOrder}/cancel,ErpWorkOrderCancelController::store,Create or submit erp work order cancel,inferred from route and handler
+backend/routes/api.php,147,get,/production/completions,ProductionExportController::completions,Completions (production export),inferred from route and handler
+backend/routes/api.php,149,get,/work-orders/{workOrder},ProductionExportController::show,Read detail for production export,inferred from route and handler
+backend/routes/api.php,154,get,/change-requests,ErpChangeRequestExportController::index,List or display erp change request export records,inferred from route and handler
+backend/routes/api.php,158,get,/quality/issues,QualityExportController::issues,Issues (quality export),inferred from route and handler
+backend/routes/api.php,165,post,/products/import,MasterDataImportController::products,Products (master data import),inferred from route and handler
+backend/routes/api.php,166,post,/materials/import,MasterDataImportController::materials,Materials (master data import),inferred from route and handler
+backend/routes/api.php,167,post,/material-lots/import,MasterDataImportController::materialLots,Material lots (master data import),inferred from route and handler
+backend/routes/api.php,168,post,/boms/import,MasterDataImportController::boms,Boms (master data import),inferred from route and handler
+backend/routes/api.php,169,post,/process-templates/import,MasterDataImportController::processTemplates,Process templates (master data import),inferred from route and handler
+backend/routes/api.php,173,post,/stock/import,StockSyncController::import,Import (stock sync),inferred from route and handler
+backend/routes/api.php,175,get,/stock,StockSyncController::index,List or display stock sync records,inferred from route and handler
+backend/routes/api.php,180,get,/stock-documents,StockDocumentExportController::index,List or display stock document export records,inferred from route and handler
+backend/routes/api.php,182,post,/stock-documents/{stockDocument}/ack,StockDocumentExportController::acknowledge,Acknowledge (stock document export),inferred from route and handler
+backend/routes/api.php,189,get,/webhook-event-types,ErpWebhookController::eventTypes,Event types (erp webhook),inferred from route and handler
+backend/routes/api.php,190,get,/webhooks,ErpWebhookController::index,List or display erp webhook records,inferred from route and handler
+backend/routes/api.php,191,get,/webhooks/{webhookId},ErpWebhookController::show,Read detail for erp webhook,inferred from route and handler
+backend/routes/api.php,194,post,/webhooks,ErpWebhookController::store,Create or submit erp webhook,inferred from route and handler
+backend/routes/api.php,195,patch,/webhooks/{webhookId},ErpWebhookController::update,Update erp webhook,inferred from route and handler
+backend/routes/api.php,196,delete,/webhooks/{webhookId},ErpWebhookController::destroy,Remove erp webhook,inferred from route and handler
+backend/routes/api.php,210,get,/gateway-config,config,get · /gateway-config,inferred from route and handler
+backend/routes/api.php,211,post,/signals,ingest,post · /signals,inferred from route and handler
+backend/routes/api.php,212,post,/heartbeat,heartbeat,post · /heartbeat,inferred from route and handler
+backend/routes/api.php,218,get,/lines,LineController::index,List or display line records,inferred from route and handler
+backend/routes/api.php,219,get,/lines/{line},LineController::show,Read detail for line,inferred from route and handler
+backend/routes/api.php,220,get,/lines/{line}/users,LineController::users,Users (line),inferred from route and handler
+backend/routes/api.php,221,get,/lines/{line}/product-types,LineController::productTypes,Product types (line),inferred from route and handler
+backend/routes/api.php,222,get,/lines/{line}/workstations,WorkstationController::index,List or display workstation records,inferred from route and handler
+backend/routes/api.php,223,get,/workstations/{workstation},WorkstationController::show,Read detail for workstation,inferred from route and handler
+backend/routes/api.php,226,get,/product-types,ProductTypeController::index,List or display product type records,inferred from route and handler
+backend/routes/api.php,227,get,/product-types/{product_type},ProductTypeController::show,Read detail for product type,inferred from route and handler
+backend/routes/api.php,228,get,/product-types/{product_type}/process-templates,ProcessTemplateController::index,List or display process template records,inferred from route and handler
+backend/routes/api.php,231,get,/process-templates/{process_template},ProcessTemplateController::show,Read detail for process template,inferred from route and handler
+backend/routes/api.php,234,get,/process-segments,\App\Http\Controllers\Api\V1\ProcessSegmentController::index,List or display process segment records,inferred from route and handler
+backend/routes/api.php,235,get,/process-segments/{process_segment},\App\Http\Controllers\Api\V1\ProcessSegmentController::show,Read detail for process segment,inferred from route and handler
+backend/routes/api.php,238,get,/workstation-types,WorkstationTypeController::index,List or display workstation type records,inferred from route and handler
+backend/routes/api.php,239,get,/workstation-types/{workstation_type},WorkstationTypeController::show,Read detail for workstation type,inferred from route and handler
+backend/routes/api.php,244,get,/employee-activities/types,\App\Http\Controllers\Api\V1\EmployeeActivityController::types,Types (employee activity),inferred from route and handler
+backend/routes/api.php,245,get,/employee-activities/team-day,\App\Http\Controllers\Api\V1\EmployeeActivityController::teamDay,Team day (employee activity),inferred from route and handler
+backend/routes/api.php,246,get,/employee-activities,\App\Http\Controllers\Api\V1\EmployeeActivityController::index,List or display employee activity records,inferred from route and handler
+backend/routes/api.php,247,get,/employee-activities/{employeeActivity},\App\Http\Controllers\Api\V1\EmployeeActivityController::show,Read detail for employee activity,inferred from route and handler
+backend/routes/api.php,248,post,/employee-activities,\App\Http\Controllers\Api\V1\EmployeeActivityController::store,Create or submit employee activity,inferred from route and handler
+backend/routes/api.php,249,patch,/employee-activities/{employeeActivity},\App\Http\Controllers\Api\V1\EmployeeActivityController::update,Update employee activity,inferred from route and handler
+backend/routes/api.php,250,delete,/employee-activities/{employeeActivity},\App\Http\Controllers\Api\V1\EmployeeActivityController::destroy,Remove employee activity,inferred from route and handler
+backend/routes/api.php,251,post,/employee-activity-custom-types,\App\Http\Controllers\Api\V1\EmployeeActivityController::storeCustomType,Store custom type (employee activity),inferred from route and handler
+backend/routes/api.php,252,patch,/employee-activity-custom-types/{employeeActivityCustomType},\App\Http\Controllers\Api\V1\EmployeeActivityController::updateCustomType,Update custom type (employee activity),inferred from route and handler
+backend/routes/api.php,253,delete,/employee-activity-custom-types/{employeeActivityCustomType},\App\Http\Controllers\Api\V1\EmployeeActivityController::destroyCustomType,Destroy custom type (employee activity),inferred from route and handler
+backend/routes/api.php,258,get,/line-statuses,LineStatusController::globalIndex,Global index (line status),inferred from route and handler
+backend/routes/api.php,259,get,/lines/{line}/statuses,LineStatusController::index,List or display line status records,inferred from route and handler
+backend/routes/api.php,265,get,/companies,CompanyController::index,List or display company records,inferred from route and handler
+backend/routes/api.php,266,get,/companies/{company},CompanyController::show,Read detail for company,inferred from route and handler
+backend/routes/api.php,267,get,/cost-sources,CostSourceController::index,List or display cost source records,inferred from route and handler
+backend/routes/api.php,268,get,/cost-sources/{cost_source},CostSourceController::show,Read detail for cost source,inferred from route and handler
+backend/routes/api.php,269,get,/scrap-reasons,ScrapReasonController::index,List or display scrap reason records,inferred from route and handler
+backend/routes/api.php,270,get,/scrap-reasons/{scrapReason},ScrapReasonController::show,Read detail for scrap reason,inferred from route and handler
+backend/routes/api.php,271,get,/subassemblies,SubassemblyController::index,List or display subassembly records,inferred from route and handler
+backend/routes/api.php,272,get,/subassemblies/{subassembly},SubassemblyController::show,Read detail for subassembly,inferred from route and handler
+backend/routes/api.php,273,get,/shifts,ShiftController::index,List or display shift records,inferred from route and handler
+backend/routes/api.php,274,get,/shifts/{shift},ShiftController::show,Read detail for shift,inferred from route and handler
+backend/routes/api.php,277,get,/lot-sequences,LotSequenceController::index,List or display lot sequence records,inferred from route and handler
+backend/routes/api.php,278,get,/lot-sequences/{lotSequence},LotSequenceController::show,Read detail for lot sequence,inferred from route and handler
+backend/routes/api.php,279,get,/lot/preview/{productTypeId?},LotSequenceController::preview,Preview (lot sequence),inferred from route and handler
+backend/routes/api.php,282,get,/material-types,MaterialTypeController::index,List or display material type records,inferred from route and handler
+backend/routes/api.php,283,get,/material-types/{materialType},MaterialTypeController::show,Read detail for material type,inferred from route and handler
+backend/routes/api.php,284,get,/materials,MaterialController::index,List or display material records,inferred from route and handler
+backend/routes/api.php,285,get,/materials/{material},MaterialController::show,Read detail for material,inferred from route and handler
+backend/routes/api.php,286,get,/process-templates/{processTemplate}/bom-items,BomItemController::index,List or display bom item records,inferred from route and handler
+backend/routes/api.php,287,get,/process-templates/{processTemplate}/bom-items/requirements,BomItemController::requirements,Requirements (bom item),inferred from route and handler
+backend/routes/api.php,291,get,/material-lots,MaterialLotController::index,List or display material lot records,inferred from route and handler
+backend/routes/api.php,292,get,/material-lots/{materialLot},MaterialLotController::show,Read detail for material lot,inferred from route and handler
+backend/routes/api.php,293,get,/material-lots/{materialLot}/genealogy/forward,MaterialLotController::forwardGenealogy,Forward genealogy (material lot),inferred from route and handler
+backend/routes/api.php,294,get,/material-lots/{materialLot}/genealogy/backward,MaterialLotController::backwardGenealogy,Backward genealogy (material lot),inferred from route and handler
+backend/routes/api.php,295,get,/material-lots/{materialLot}/where-used,MaterialLotController::whereUsed,Where used (material lot),inferred from route and handler
+backend/routes/api.php,296,post,/material-lots/{materialLot}/consume,MaterialLotController::consume,Consume (material lot),inferred from route and handler
+backend/routes/api.php,301,get,/engineering-documents,\App\Http\Controllers\Api\V1\EngineeringDocumentController::index,List or display engineering document records,inferred from route and handler
+backend/routes/api.php,302,post,/engineering-documents,\App\Http\Controllers\Api\V1\EngineeringDocumentController::store,Create or submit engineering document,inferred from route and handler
+backend/routes/api.php,304,get,/engineering-documents/{engineeringDocument},\App\Http\Controllers\Api\V1\EngineeringDocumentController::show,Read detail for engineering document,inferred from route and handler
+backend/routes/api.php,305,get,/engineering-documents/{engineeringDocument}/download,\App\Http\Controllers\Api\V1\EngineeringDocumentController::download,Download (engineering document),inferred from route and handler
+backend/routes/api.php,306,get,/engineering-documents/{engineeringDocument}/viewer-url,\App\Http\Controllers\Api\V1\EngineeringDocumentController::viewerUrl,Viewer url (engineering document),inferred from route and handler
+backend/routes/api.php,307,post,/engineering-documents/{engineeringDocument}/release,\App\Http\Controllers\Api\V1\EngineeringDocumentController::release,Release (engineering document),inferred from route and handler
+backend/routes/api.php,308,post,/engineering-documents/{engineeringDocument}/obsolete,\App\Http\Controllers\Api\V1\EngineeringDocumentController::obsolete,Obsolete (engineering document),inferred from route and handler
+backend/routes/api.php,309,delete,/engineering-documents/{engineeringDocument},\App\Http\Controllers\Api\V1\EngineeringDocumentController::destroy,Remove engineering document,inferred from route and handler
+backend/routes/api.php,311,get,/work-orders/{workOrder}/engineering-documents,\App\Http\Controllers\Api\V1\EngineeringDocumentController::forWorkOrder,For work order (engineering document),inferred from route and handler
+backend/routes/api.php,314,get,/serial-units,\App\Http\Controllers\Api\V1\SerialUnitController::index,List or display serial unit records,inferred from route and handler
+backend/routes/api.php,315,get,/serial-units/{serialUnit},\App\Http\Controllers\Api\V1\SerialUnitController::show,Read detail for serial unit,inferred from route and handler
+backend/routes/api.php,316,post,/serial-units,\App\Http\Controllers\Api\V1\SerialUnitController::store,Create or submit serial unit,inferred from route and handler
+backend/routes/api.php,317,post,/serial-units/{serialUnit}/steps,\App\Http\Controllers\Api\V1\SerialUnitController::recordStep,Record step (serial unit),inferred from route and handler
+backend/routes/api.php,318,post,/serial-units/{serialUnit}/components,\App\Http\Controllers\Api\V1\SerialUnitController::bindComponent,Bind component (serial unit),inferred from route and handler
+backend/routes/api.php,319,post,/serial-units/{serialUnit}/block,\App\Http\Controllers\Api\V1\SerialUnitController::block,Block (serial unit),inferred from route and handler
+backend/routes/api.php,320,post,/serial-units/{serialUnit}/unblock,\App\Http\Controllers\Api\V1\SerialUnitController::unblock,Unblock (serial unit),inferred from route and handler
+backend/routes/api.php,322,post,/test-runs,\App\Http\Controllers\Api\V1\TestRunController::store,Create or submit test run,inferred from route and handler
+backend/routes/api.php,325,get,/downtime-reasons,ApiOeeController::reasons,Reasons (api oee),inferred from route and handler
+backend/routes/api.php,326,get,/downtimes,ApiOeeController::downtimes,Downtimes (api oee),inferred from route and handler
+backend/routes/api.php,327,post,/downtimes,ApiOeeController::startDowntime,Start downtime (api oee),inferred from route and handler
+backend/routes/api.php,328,patch,/downtimes/{downtime},ApiOeeController::stopDowntime,Stop downtime (api oee),inferred from route and handler
+backend/routes/api.php,329,get,/oee,ApiOeeController::index,List or display api oee records,inferred from route and handler
+backend/routes/api.php,330,get,/oee/{line},ApiOeeController::show,Read detail for api oee,inferred from route and handler
+backend/routes/api.php,333,get,/inspection-plans,InspectionPlanController::index,List or display inspection plan records,inferred from route and handler
+backend/routes/api.php,334,get,/inspection-plans/{inspectionPlan},InspectionPlanController::show,Read detail for inspection plan,inferred from route and handler
+backend/routes/api.php,335,get,/inspections,InspectionController::index,List or display inspection records,inferred from route and handler
+backend/routes/api.php,336,get,/inspections/stats,InspectionController::stats,Stats (inspection),inferred from route and handler
+backend/routes/api.php,337,get,/inspections/{inspection},InspectionController::show,Read detail for inspection,inferred from route and handler
+backend/routes/api.php,338,post,/inspections,InspectionController::store,Create or submit inspection,inferred from route and handler
+backend/routes/api.php,339,patch,/inspections/{inspection}/results/{result},InspectionController::recordResult,Record result (inspection),inferred from route and handler
+backend/routes/api.php,340,post,/inspections/{inspection}/complete,InspectionController::complete,Complete (inspection),inferred from route and handler
+backend/routes/api.php,341,post,/inspections/{inspection}/disposition,InspectionController::disposition,Disposition (inspection),inferred from route and handler
+backend/routes/api.php,344,get,/tools,ToolController::index,List or display tool records,inferred from route and handler
+backend/routes/api.php,345,get,/tools/{tool},ToolController::show,Read detail for tool,inferred from route and handler
+backend/routes/api.php,349,get,/maintenance-events,MaintenanceEventController::index,List or display maintenance event records,inferred from route and handler
+backend/routes/api.php,350,get,/maintenance-events/{maintenance_event},MaintenanceEventController::show,Read detail for maintenance event,inferred from route and handler
+backend/routes/api.php,351,post,/maintenance-events/{maintenance_event}/start,MaintenanceEventController::start,Start (maintenance event),inferred from route and handler
+backend/routes/api.php,352,post,/maintenance-events/{maintenance_event}/complete,MaintenanceEventController::complete,Complete (maintenance event),inferred from route and handler
+backend/routes/api.php,353,post,/maintenance-events/{maintenance_event}/cancel,MaintenanceEventController::cancel,Cancel (maintenance event),inferred from route and handler
+backend/routes/api.php,357,get,/maintenance-schedules,MaintenanceScheduleController::index,List or display maintenance schedule records,inferred from route and handler
+backend/routes/api.php,358,get,/maintenance-schedules/{maintenanceSchedule},MaintenanceScheduleController::show,Read detail for maintenance schedule,inferred from route and handler
+backend/routes/api.php,361,get,/scrap-entries,ScrapEntryController::index,List or display scrap entry records,inferred from route and handler
+backend/routes/api.php,362,get,/scrap-entries/{scrapEntry},ScrapEntryController::show,Read detail for scrap entry,inferred from route and handler
+backend/routes/api.php,364,get,/work-orders/{workOrder}/step-outputs,\App\Http\Controllers\Api\V1\StepOutputController::forWorkOrder,For work order (step output),inferred from route and handler
+backend/routes/api.php,365,get,/batch-step-outputs/{batchStepOutputValue}/file,\App\Http\Controllers\Api\V1\StepOutputController::file,File (step output),inferred from route and handler
+backend/routes/api.php,367,get,/work-orders/{workOrder}/scrap-entries,ScrapEntryController::forWorkOrder,For work order (scrap entry),inferred from route and handler
+backend/routes/api.php,368,post,/work-orders/{workOrder}/scrap-entries,ScrapEntryController::store,Create or submit scrap entry,inferred from route and handler
+backend/routes/api.php,369,patch,/scrap-entries/{scrapEntry},ScrapEntryController::update,Update scrap entry,inferred from route and handler
+backend/routes/api.php,370,delete,/scrap-entries/{scrapEntry},ScrapEntryController::destroy,Remove scrap entry,inferred from route and handler
+backend/routes/api.php,373,get,/work-orders/{workOrder}/additional-costs,AdditionalCostController::index,List or display additional cost records,inferred from route and handler
+backend/routes/api.php,374,post,/work-orders/{workOrder}/additional-costs,AdditionalCostController::store,Create or submit additional cost,inferred from route and handler
+backend/routes/api.php,375,patch,/additional-costs/{additionalCost},AdditionalCostController::update,Update additional cost,inferred from route and handler
+backend/routes/api.php,376,delete,/additional-costs/{additionalCost},AdditionalCostController::destroy,Remove additional cost,inferred from route and handler
+backend/routes/api.php,379,get,/attachments,AttachmentController::index,List or display attachment records,inferred from route and handler
+backend/routes/api.php,380,get,/attachments/{attachment},AttachmentController::show,Read detail for attachment,inferred from route and handler
+backend/routes/api.php,381,get,/attachments/{attachment}/download,AttachmentController::download,Download (attachment),inferred from route and handler
+backend/routes/api.php,382,post,/attachments,AttachmentController::store,Create or submit attachment,inferred from route and handler
+backend/routes/api.php,383,delete,/attachments/{attachment},AttachmentController::destroy,Remove attachment,inferred from route and handler
+backend/routes/api.php,386,get,/connectivity/connections,ConnectivityController::listConnections,List connections (connectivity),inferred from route and handler
+backend/routes/api.php,387,post,/connectivity/connections,ConnectivityController::storeConnection,Store connection (connectivity),inferred from route and handler
+backend/routes/api.php,388,get,/connectivity/connections/{machineConnection},ConnectivityController::showConnection,Show connection (connectivity),inferred from route and handler
+backend/routes/api.php,389,patch,/connectivity/connections/{machineConnection},ConnectivityController::updateConnection,Update connection (connectivity),inferred from route and handler
+backend/routes/api.php,390,get,/connectivity/connections/{machineConnection}/mqtt,ConnectivityController::showMqttSettings,Show mqtt settings (connectivity),inferred from route and handler
+backend/routes/api.php,391,delete,/connectivity/connections/{machineConnection},ConnectivityController::deleteConnection,Delete connection (connectivity),inferred from route and handler
+backend/routes/api.php,392,post,/connectivity/connections/{machineConnection}/toggle-active,ConnectivityController::toggleConnectionActive,Toggle connection active (connectivity),inferred from route and handler
+backend/routes/api.php,394,get,/connectivity/topics,ConnectivityController::listTopics,List topics (connectivity),inferred from route and handler
+backend/routes/api.php,395,post,/connectivity/topics,ConnectivityController::storeTopic,Store topic (connectivity),inferred from route and handler
+backend/routes/api.php,396,get,/connectivity/topics/{machineTopic},ConnectivityController::showTopic,Show topic (connectivity),inferred from route and handler
+backend/routes/api.php,397,patch,/connectivity/topics/{machineTopic},ConnectivityController::updateTopic,Update topic (connectivity),inferred from route and handler
+backend/routes/api.php,398,delete,/connectivity/topics/{machineTopic},ConnectivityController::deleteTopic,Delete topic (connectivity),inferred from route and handler
+backend/routes/api.php,399,post,/connectivity/topics/{machineTopic}/toggle-active,ConnectivityController::toggleTopicActive,Toggle topic active (connectivity),inferred from route and handler
+backend/routes/api.php,401,get,/connectivity/mappings,ConnectivityController::listMappings,List mappings (connectivity),inferred from route and handler
+backend/routes/api.php,402,post,/connectivity/mappings,ConnectivityController::storeMapping,Store mapping (connectivity),inferred from route and handler
+backend/routes/api.php,403,get,/connectivity/mappings/{topicMapping},ConnectivityController::showMapping,Show mapping (connectivity),inferred from route and handler
+backend/routes/api.php,404,patch,/connectivity/mappings/{topicMapping},ConnectivityController::updateMapping,Update mapping (connectivity),inferred from route and handler
+backend/routes/api.php,405,delete,/connectivity/mappings/{topicMapping},ConnectivityController::deleteMapping,Delete mapping (connectivity),inferred from route and handler
+backend/routes/api.php,407,get,/connectivity/messages,ConnectivityController::listMessages,List messages (connectivity),inferred from route and handler
+backend/routes/api.php,408,get,/connectivity/messages/{machineMessage},ConnectivityController::showMessage,Show message (connectivity),inferred from route and handler
+backend/routes/api.php,412,get,/system/settings,SystemController::listSettings,List settings (system),inferred from route and handler
+backend/routes/api.php,413,get,/system/settings/{key},SystemController::showSetting,Show setting (system),inferred from route and handler
+backend/routes/api.php,414,put,/system/settings/{key},SystemController::updateSetting,Update setting (system),inferred from route and handler
+backend/routes/api.php,416,get,/system/modules,SystemController::listModules,List modules (system),inferred from route and handler
+backend/routes/api.php,417,post,/system/modules/{name}/enable,SystemController::enableModule,Enable module (system),inferred from route and handler
+backend/routes/api.php,418,post,/system/modules/{name}/disable,SystemController::disableModule,Disable module (system),inferred from route and handler
+backend/routes/api.php,420,get,/system/schedule,SystemController::schedule,Schedule (system),inferred from route and handler
+backend/routes/api.php,421,get,/system/dashboard-widgets,SystemController::dashboardWidgets,Dashboard widgets (system),inferred from route and handler
+backend/routes/api.php,422,get,/system/alerts,SystemController::alerts,Alerts (system),inferred from route and handler
+backend/routes/api.php,423,get,/system/alerts/counts,SystemController::alertsCounts,Alerts counts (system),inferred from route and handler
+backend/routes/api.php,424,get,/system/update-check,SystemController::updateCheck,Update check (system),inferred from route and handler
+backend/routes/api.php,429,get,/integrations,IntegrationConfigController::index,List or display integration config records,inferred from route and handler
+backend/routes/api.php,430,post,/integrations,IntegrationConfigController::store,Create or submit integration config,inferred from route and handler
+backend/routes/api.php,431,patch,/integrations/{integration},IntegrationConfigController::update,Update integration config,inferred from route and handler
+backend/routes/api.php,432,post,/integrations/{integration}/toggle-active,IntegrationConfigController::toggleActive,Toggle active (integration config),inferred from route and handler
+backend/routes/api.php,433,delete,/integrations/{integration},IntegrationConfigController::destroy,Remove integration config,inferred from route and handler
+backend/routes/api.php,439,get,/api-keys,ApiKeyController::index,List or display api key records,inferred from route and handler
+backend/routes/api.php,440,post,/api-keys,ApiKeyController::store,Create or submit api key,inferred from route and handler
+backend/routes/api.php,441,patch,/api-keys/{apiKey},ApiKeyController::update,Update api key,inferred from route and handler
+backend/routes/api.php,442,post,/api-keys/{apiKey}/toggle-active,ApiKeyController::toggleActive,Toggle active (api key),inferred from route and handler
+backend/routes/api.php,443,delete,/api-keys/{apiKey},ApiKeyController::destroy,Remove api key,inferred from route and handler
+backend/routes/api.php,445,get,/custom-fields,CustomFieldDefinitionController::index,List or display custom field definition records,inferred from route and handler
+backend/routes/api.php,446,get,/custom-fields/meta,CustomFieldDefinitionController::formMeta,Form meta (custom field definition),inferred from route and handler
+backend/routes/api.php,447,post,/custom-fields,CustomFieldDefinitionController::store,Create or submit custom field definition,inferred from route and handler
+backend/routes/api.php,448,patch,/custom-fields/{customField},CustomFieldDefinitionController::update,Update custom field definition,inferred from route and handler
+backend/routes/api.php,449,post,/custom-fields/{customField}/toggle-active,CustomFieldDefinitionController::toggleActive,Toggle active (custom field definition),inferred from route and handler
+backend/routes/api.php,450,delete,/custom-fields/{customField},CustomFieldDefinitionController::destroy,Remove custom field definition,inferred from route and handler
+backend/routes/api.php,451,get,/quality-control-triggers,QualityControlTriggerController::index,List or display quality control trigger records,inferred from route and handler
+backend/routes/api.php,452,get,/quality-control-triggers/meta,QualityControlTriggerController::formMeta,Form meta (quality control trigger),inferred from route and handler
+backend/routes/api.php,453,post,/quality-control-triggers,QualityControlTriggerController::store,Create or submit quality control trigger,inferred from route and handler
+backend/routes/api.php,454,patch,/quality-control-triggers/{qualityControlTrigger},QualityControlTriggerController::update,Update quality control trigger,inferred from route and handler
+backend/routes/api.php,455,post,/quality-control-triggers/{qualityControlTrigger}/toggle-active,QualityControlTriggerController::toggleActive,Toggle active (quality control trigger),inferred from route and handler
+backend/routes/api.php,456,delete,/quality-control-triggers/{qualityControlTrigger},QualityControlTriggerController::destroy,Remove quality control trigger,inferred from route and handler
+backend/routes/api.php,458,get,/webhooks,\App\Http\Controllers\Api\V1\WebhookController::index,List or display webhook records,inferred from route and handler
+backend/routes/api.php,459,get,/webhook-event-types,\App\Http\Controllers\Api\V1\WebhookController::eventTypes,Event types (webhook),inferred from route and handler
+backend/routes/api.php,460,post,/webhooks,\App\Http\Controllers\Api\V1\WebhookController::store,Create or submit webhook,inferred from route and handler
+backend/routes/api.php,461,patch,/webhooks/{webhook},\App\Http\Controllers\Api\V1\WebhookController::update,Update webhook,inferred from route and handler
+backend/routes/api.php,462,post,/webhooks/{webhook}/toggle-active,\App\Http\Controllers\Api\V1\WebhookController::toggleActive,Toggle active (webhook),inferred from route and handler
+backend/routes/api.php,463,delete,/webhooks/{webhook},\App\Http\Controllers\Api\V1\WebhookController::destroy,Remove webhook,inferred from route and handler
+backend/routes/api.php,465,get,/trash,\App\Http\Controllers\Api\V1\TrashController::index,List or display trash records,inferred from route and handler
+backend/routes/api.php,466,post,/trash/{type}/{id}/restore,\App\Http\Controllers\Api\V1\TrashController::restore,Restore (trash),inferred from route and handler
+backend/routes/api.php,468,get,/view-templates,\App\Http\Controllers\Api\V1\ViewTemplateController::index,List or display view template records,inferred from route and handler
+backend/routes/api.php,469,post,/view-templates,\App\Http\Controllers\Api\V1\ViewTemplateController::store,Create or submit view template,inferred from route and handler
+backend/routes/api.php,470,patch,/view-templates/{viewTemplate},\App\Http\Controllers\Api\V1\ViewTemplateController::update,Update view template,inferred from route and handler
+backend/routes/api.php,471,delete,/view-templates/{viewTemplate},\App\Http\Controllers\Api\V1\ViewTemplateController::destroy,Remove view template,inferred from route and handler
+backend/routes/api.php,473,post,/lines,LineController::store,Create or submit line,inferred from route and handler
+backend/routes/api.php,474,patch,/lines/{line},LineController::update,Update line,inferred from route and handler
+backend/routes/api.php,475,delete,/lines/{line},LineController::destroy,Remove line,inferred from route and handler
+backend/routes/api.php,476,post,/lines/{line}/toggle-active,LineController::toggleActive,Toggle active (line),inferred from route and handler
+backend/routes/api.php,477,post,/lines/{line}/users,LineController::syncUsers,Sync users (line),inferred from route and handler
+backend/routes/api.php,478,delete,/lines/{line}/users/{user},LineController::unassignUser,Unassign user (line),inferred from route and handler
+backend/routes/api.php,479,post,/lines/{line}/product-types,LineController::syncProductTypes,Sync product types (line),inferred from route and handler
+backend/routes/api.php,481,post,/lines/{line}/workstations,WorkstationController::store,Create or submit workstation,inferred from route and handler
+backend/routes/api.php,482,patch,/workstations/{workstation},WorkstationController::update,Update workstation,inferred from route and handler
+backend/routes/api.php,483,delete,/workstations/{workstation},WorkstationController::destroy,Remove workstation,inferred from route and handler
+backend/routes/api.php,484,post,/workstations/{workstation}/toggle-active,WorkstationController::toggleActive,Toggle active (workstation),inferred from route and handler
+backend/routes/api.php,487,post,/product-types,ProductTypeController::store,Create or submit product type,inferred from route and handler
+backend/routes/api.php,488,patch,/product-types/{product_type},ProductTypeController::update,Update product type,inferred from route and handler
+backend/routes/api.php,489,delete,/product-types/{product_type},ProductTypeController::destroy,Remove product type,inferred from route and handler
+backend/routes/api.php,490,post,/product-types/{product_type}/toggle-active,ProductTypeController::toggleActive,Toggle active (product type),inferred from route and handler
+backend/routes/api.php,493,post,/product-types/{product_type}/process-templates,ProcessTemplateController::store,Create or submit process template,inferred from route and handler
+backend/routes/api.php,494,patch,/process-templates/{process_template},ProcessTemplateController::update,Update process template,inferred from route and handler
+backend/routes/api.php,495,delete,/process-templates/{process_template},ProcessTemplateController::destroy,Remove process template,inferred from route and handler
+backend/routes/api.php,496,post,/process-templates/{process_template}/toggle-active,ProcessTemplateController::toggleActive,Toggle active (process template),inferred from route and handler
+backend/routes/api.php,499,post,/process-segments,\App\Http\Controllers\Api\V1\ProcessSegmentController::store,Create or submit process segment,inferred from route and handler
+backend/routes/api.php,500,patch,/process-segments/{process_segment},\App\Http\Controllers\Api\V1\ProcessSegmentController::update,Update process segment,inferred from route and handler
+backend/routes/api.php,501,delete,/process-segments/{process_segment},\App\Http\Controllers\Api\V1\ProcessSegmentController::destroy,Remove process segment,inferred from route and handler
+backend/routes/api.php,506,post,/process-templates/{process_template}/steps,ProcessTemplateController::addStep,Add step (process template),inferred from route and handler
+backend/routes/api.php,507,post,/process-templates/{process_template}/steps/reorder,ProcessTemplateController::reorderSteps,Reorder steps (process template),inferred from route and handler
+backend/routes/api.php,508,patch,/template-steps/{template_step},ProcessTemplateController::updateStep,Update step (process template),inferred from route and handler
+backend/routes/api.php,509,delete,/template-steps/{template_step},ProcessTemplateController::destroyStep,Destroy step (process template),inferred from route and handler
+backend/routes/api.php,512,post,/workstation-types,WorkstationTypeController::store,Create or submit workstation type,inferred from route and handler
+backend/routes/api.php,513,patch,/workstation-types/{workstation_type},WorkstationTypeController::update,Update workstation type,inferred from route and handler
+backend/routes/api.php,514,delete,/workstation-types/{workstation_type},WorkstationTypeController::destroy,Remove workstation type,inferred from route and handler
+backend/routes/api.php,515,post,/workstation-types/{workstation_type}/toggle-active,WorkstationTypeController::toggleActive,Toggle active (workstation type),inferred from route and handler
+backend/routes/api.php,530,post,/lines/{line}/statuses,LineStatusController::store,Create or submit line status,inferred from route and handler
+backend/routes/api.php,531,post,/lines/{line}/statuses/reorder,LineStatusController::reorder,Reorder (line status),inferred from route and handler
+backend/routes/api.php,532,patch,/line-statuses/{line_status},LineStatusController::update,Update line status,inferred from route and handler
+backend/routes/api.php,533,delete,/line-statuses/{line_status},LineStatusController::destroy,Remove line status,inferred from route and handler
+backend/routes/api.php,536,post,/companies,CompanyController::store,Create or submit company,inferred from route and handler
+backend/routes/api.php,537,patch,/companies/{company},CompanyController::update,Update company,inferred from route and handler
+backend/routes/api.php,538,delete,/companies/{company},CompanyController::destroy,Remove company,inferred from route and handler
+backend/routes/api.php,539,post,/companies/{company}/toggle-active,CompanyController::toggleActive,Toggle active (company),inferred from route and handler
+backend/routes/api.php,542,post,/cost-sources,CostSourceController::store,Create or submit cost source,inferred from route and handler
+backend/routes/api.php,543,patch,/cost-sources/{cost_source},CostSourceController::update,Update cost source,inferred from route and handler
+backend/routes/api.php,544,delete,/cost-sources/{cost_source},CostSourceController::destroy,Remove cost source,inferred from route and handler
+backend/routes/api.php,545,post,/cost-sources/{cost_source}/toggle-active,CostSourceController::toggleActive,Toggle active (cost source),inferred from route and handler
+backend/routes/api.php,548,post,/scrap-reasons,ScrapReasonController::store,Create or submit scrap reason,inferred from route and handler
+backend/routes/api.php,549,match,/scrap-reasons/{scrapReason},ScrapReasonController::update,Update scrap reason,inferred from route and handler
+backend/routes/api.php,550,delete,/scrap-reasons/{scrapReason},ScrapReasonController::destroy,Remove scrap reason,inferred from route and handler
+backend/routes/api.php,553,post,/subassemblies,SubassemblyController::store,Create or submit subassembly,inferred from route and handler
+backend/routes/api.php,554,patch,/subassemblies/{subassembly},SubassemblyController::update,Update subassembly,inferred from route and handler
+backend/routes/api.php,555,delete,/subassemblies/{subassembly},SubassemblyController::destroy,Remove subassembly,inferred from route and handler
+backend/routes/api.php,558,post,/shifts,ShiftController::store,Create or submit shift,inferred from route and handler
+backend/routes/api.php,559,patch,/shifts/{shift},ShiftController::update,Update shift,inferred from route and handler
+backend/routes/api.php,560,delete,/shifts/{shift},ShiftController::destroy,Remove shift,inferred from route and handler
+backend/routes/api.php,563,post,/lot-sequences,LotSequenceController::store,Create or submit lot sequence,inferred from route and handler
+backend/routes/api.php,564,patch,/lot-sequences/{lotSequence},LotSequenceController::update,Update lot sequence,inferred from route and handler
+backend/routes/api.php,565,delete,/lot-sequences/{lotSequence},LotSequenceController::destroy,Remove lot sequence,inferred from route and handler
+backend/routes/api.php,568,post,/process-templates/{processTemplate}/qc-templates,QualityCheckController::templateStore,Template store (quality check),inferred from route and handler
+backend/routes/api.php,569,patch,/qc-templates/{qualityCheckTemplate},QualityCheckController::templateUpdate,Template update (quality check),inferred from route and handler
+backend/routes/api.php,570,delete,/qc-templates/{qualityCheckTemplate},QualityCheckController::templateDestroy,Template destroy (quality check),inferred from route and handler
+backend/routes/api.php,573,post,/materials,MaterialController::store,Create or submit material,inferred from route and handler
+backend/routes/api.php,574,patch,/materials/{material},MaterialController::update,Update material,inferred from route and handler
+backend/routes/api.php,575,delete,/materials/{material},MaterialController::destroy,Remove material,inferred from route and handler
+backend/routes/api.php,576,post,/materials/import,MaterialController::import,Import (material),inferred from route and handler
+backend/routes/api.php,579,post,/inspection-plans,InspectionPlanController::store,Create or submit inspection plan,inferred from route and handler
+backend/routes/api.php,580,patch,/inspection-plans/{inspectionPlan},InspectionPlanController::update,Update inspection plan,inferred from route and handler
+backend/routes/api.php,581,post,/inspection-plans/{inspectionPlan}/publish,InspectionPlanController::publish,Publish (inspection plan),inferred from route and handler
+backend/routes/api.php,582,delete,/inspection-plans/{inspectionPlan},InspectionPlanController::destroy,Remove inspection plan,inferred from route and handler
+backend/routes/api.php,585,post,/process-templates/{processTemplate}/bom-items,BomItemController::store,Create or submit bom item,inferred from route and handler
+backend/routes/api.php,586,patch,/process-templates/{processTemplate}/bom-items/{bomItem},BomItemController::update,Update bom item,inferred from route and handler
+backend/routes/api.php,587,delete,/process-templates/{processTemplate}/bom-items/{bomItem},BomItemController::destroy,Remove bom item,inferred from route and handler
+backend/routes/api.php,590,post,/tools,ToolController::store,Create or submit tool,inferred from route and handler
+backend/routes/api.php,591,delete,/tools/{tool},ToolController::destroy,Remove tool,inferred from route and handler
+backend/routes/api.php,595,patch,/tools/{tool},ToolController::update,Update tool,inferred from route and handler
+backend/routes/api.php,596,post,/tools/{tool}/status,ToolController::transitionStatus,Transition status (tool),inferred from route and handler
+backend/routes/api.php,600,post,/maintenance-events,MaintenanceEventController::store,Create or submit maintenance event,inferred from route and handler
+backend/routes/api.php,601,patch,/maintenance-events/{maintenance_event},MaintenanceEventController::update,Update maintenance event,inferred from route and handler
+backend/routes/api.php,602,delete,/maintenance-events/{maintenance_event},MaintenanceEventController::destroy,Remove maintenance event,inferred from route and handler
+backend/routes/api.php,607,post,/maintenance-schedules,MaintenanceScheduleController::store,Create or submit maintenance schedule,inferred from route and handler
+backend/routes/api.php,608,patch,/maintenance-schedules/{maintenanceSchedule},MaintenanceScheduleController::update,Update maintenance schedule,inferred from route and handler
+backend/routes/api.php,609,delete,/maintenance-schedules/{maintenanceSchedule},MaintenanceScheduleController::destroy,Remove maintenance schedule,inferred from route and handler
+backend/routes/api.php,610,post,/maintenance-schedules/{maintenanceSchedule}/generate-now,MaintenanceScheduleController::generateNow,Generate now (maintenance schedule),inferred from route and handler
+backend/routes/api.php,616,get,/schedule/board,ScheduleController::board,Board (schedule),inferred from route and handler
+backend/routes/api.php,617,get,/schedule/changes,ScheduleController::changes,Changes (schedule),inferred from route and handler
+backend/routes/api.php,618,post,/schedule/changes/{change}/undo,ScheduleController::undoChange,Undo change (schedule),inferred from route and handler
+backend/routes/api.php,622,get,/schedule/operations,\App\Http\Controllers\Api\V1\FiniteScheduleController::operations,Operations (finite schedule),inferred from route and handler
+backend/routes/api.php,623,put,/schedule/operations/{operation},\App\Http\Controllers\Api\V1\FiniteScheduleController::override,Override (finite schedule),inferred from route and handler
+backend/routes/api.php,624,post,/schedule/simulations,\App\Http\Controllers\Api\V1\FiniteScheduleController::generate,Generate (finite schedule),inferred from route and handler
+backend/routes/api.php,625,get,/schedule/simulations/{simulation},\App\Http\Controllers\Api\V1\FiniteScheduleController::show,Read detail for finite schedule,inferred from route and handler
+backend/routes/api.php,626,post,/schedule/simulations/{simulation}/apply,\App\Http\Controllers\Api\V1\FiniteScheduleController::apply,Apply (finite schedule),inferred from route and handler
+backend/routes/api.php,627,post,/schedule/simulations/{simulation}/discard,\App\Http\Controllers\Api\V1\FiniteScheduleController::discard,Discard (finite schedule),inferred from route and handler
+backend/routes/api.php,631,put,/schedule/{workOrder},ScheduleController::updateOrder,Update order (schedule),inferred from route and handler
+backend/routes/api.php,632,put,/schedule/{workOrder}/resize,ScheduleController::resizeOrder,Resize order (schedule),inferred from route and handler
+backend/routes/api.php,635,get,/schedule/capacity,ScheduleCapacityController::index,List or display schedule capacity records,inferred from route and handler
+backend/routes/api.php,636,get,/schedule/capacity/cell,ScheduleCapacityController::cellOrders,Cell orders (schedule capacity),inferred from route and handler
+backend/routes/api.php,639,get,/pallets,PalletController::index,List or display pallet records,inferred from route and handler
+backend/routes/api.php,640,get,/pallets/meta,PalletController::formMeta,Form meta (pallet),inferred from route and handler
+backend/routes/api.php,641,post,/pallets,PalletController::store,Create or submit pallet,inferred from route and handler
+backend/routes/api.php,642,patch,/pallets/{pallet},PalletController::update,Update pallet,inferred from route and handler
+backend/routes/api.php,643,delete,/pallets/{pallet},PalletController::destroy,Remove pallet,inferred from route and handler
+backend/routes/api.php,644,get,/label-templates,LabelTemplateController::index,List or display label template records,inferred from route and handler
+backend/routes/api.php,645,get,/label-templates/meta,LabelTemplateController::formMeta,Form meta (label template),inferred from route and handler
+backend/routes/api.php,646,post,/label-templates,LabelTemplateController::store,Create or submit label template,inferred from route and handler
+backend/routes/api.php,647,patch,/label-templates/{labelTemplate},LabelTemplateController::update,Update label template,inferred from route and handler
+backend/routes/api.php,648,post,/label-templates/{labelTemplate}/set-default,LabelTemplateController::setDefault,Set default (label template),inferred from route and handler
+backend/routes/api.php,649,delete,/label-templates/{labelTemplate},LabelTemplateController::destroy,Remove label template,inferred from route and handler
+backend/routes/api.php,653,apiResource,work-orders,WorkOrderController,"Manage work-orders through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/api.php,656,post,/work-orders/{workOrder}/accept,WorkOrderController::accept,Accept (work order),inferred from route and handler
+backend/routes/api.php,657,post,/work-orders/{workOrder}/reject,WorkOrderController::reject,Reject (work order),inferred from route and handler
+backend/routes/api.php,658,post,/work-orders/{workOrder}/cancel,WorkOrderController::cancel,Cancel (work order),inferred from route and handler
+backend/routes/api.php,659,post,/work-orders/{workOrder}/pause,WorkOrderController::pause,Pause (work order),inferred from route and handler
+backend/routes/api.php,660,post,/work-orders/{workOrder}/resume,WorkOrderController::resume,Resume (work order),inferred from route and handler
+backend/routes/api.php,661,post,/work-orders/{workOrder}/reopen,WorkOrderController::reopen,Reopen (work order),inferred from route and handler
+backend/routes/api.php,662,post,/work-orders/{workOrder}/complete,WorkOrderController::complete,Complete (work order),inferred from route and handler
+backend/routes/api.php,667,get,/work-orders/{workOrder}/stops,WorkOrderStopController::index,List or display work order stop records,inferred from route and handler
+backend/routes/api.php,668,post,/work-orders/{workOrder}/stop,WorkOrderStopController::store,Create or submit work order stop,inferred from route and handler
+backend/routes/api.php,670,get,/work-orders/{workOrder}/change-requests,WorkOrderChangeRequestController::index,List or display work order change request records,inferred from route and handler
+backend/routes/api.php,671,post,/work-orders/{workOrder}/change-requests,WorkOrderChangeRequestController::store,Create or submit work order change request,inferred from route and handler
+backend/routes/api.php,673,get,/work-order-change-requests/{changeRequest},WorkOrderChangeRequestController::show,Read detail for work order change request,inferred from route and handler
+backend/routes/api.php,674,get,/work-order-change-requests/{changeRequest}/impact,WorkOrderChangeRequestController::impact,Impact (work order change request),inferred from route and handler
+backend/routes/api.php,675,patch,/work-order-change-requests/{changeRequest},WorkOrderChangeRequestController::update,Update work order change request,inferred from route and handler
+backend/routes/api.php,676,post,/work-order-change-requests/{changeRequest}/submit,WorkOrderChangeRequestController::submit,Submit (work order change request),inferred from route and handler
+backend/routes/api.php,677,post,/work-order-change-requests/{changeRequest}/approve,WorkOrderChangeRequestController::approve,Approve (work order change request),inferred from route and handler
+backend/routes/api.php,678,post,/work-order-change-requests/{changeRequest}/reject,WorkOrderChangeRequestController::reject,Reject (work order change request),inferred from route and handler
+backend/routes/api.php,679,post,/work-order-change-requests/{changeRequest}/cancel,WorkOrderChangeRequestController::cancel,Cancel (work order change request),inferred from route and handler
+backend/routes/api.php,680,post,/work-order-change-requests/{changeRequest}/apply,WorkOrderChangeRequestController::apply,Apply (work order change request),inferred from route and handler
+backend/routes/api.php,683,get,/work-orders/{workOrder}/batches,BatchController::index,List or display batch records,inferred from route and handler
+backend/routes/api.php,684,post,/work-orders/{workOrder}/batches,BatchController::store,Create or submit batch,inferred from route and handler
+backend/routes/api.php,685,get,/batches/{batch},BatchController::show,Read detail for batch,inferred from route and handler
+backend/routes/api.php,686,patch,/batches/{batch},BatchController::update,Update batch,inferred from route and handler
+backend/routes/api.php,687,post,/batches/{batch}/cancel,BatchController::cancel,Cancel (batch),inferred from route and handler
+backend/routes/api.php,688,post,/batches/{batch}/release,BatchController::release,Release (batch),inferred from route and handler
+backend/routes/api.php,689,get,/batches/{batch}/allocation-preview,BatchController::allocationPreview,Allocation preview (batch),inferred from route and handler
+backend/routes/api.php,690,delete,/batches/{batch},BatchController::destroy,Remove batch,inferred from route and handler
+backend/routes/api.php,693,post,/batch-steps/{batchStep}/start,BatchStepController::start,Start (batch step),inferred from route and handler
+backend/routes/api.php,694,post,/batch-steps/{batchStep}/complete,BatchStepController::complete,Complete (batch step),inferred from route and handler
+backend/routes/api.php,696,post,/batch-steps/{batchStep}/confirm-instructions,BatchStepController::confirmInstructions,Confirm instructions (batch step),inferred from route and handler
+backend/routes/api.php,697,post,/batch-steps/{batchStep}/problem,BatchStepController::problem,Problem (batch step),inferred from route and handler
+backend/routes/api.php,701,post,/batch-step-documents/{batchStepDocument}/validate,BatchStepDocumentController::validateDocument,Validate document (batch step document),inferred from route and handler
+backend/routes/api.php,703,post,/batch-steps/{batchStep}/documents,BatchStepDocumentController::store,Create or submit batch step document,inferred from route and handler
+backend/routes/api.php,706,post,/batch-steps/{batchStep}/assign,\App\Http\Controllers\Api\V1\BatchStepController::assign,Assign (batch step),inferred from route and handler
+backend/routes/api.php,710,post,/material-allocations/{allocation}/consume,\App\Http\Controllers\Api\V1\MaterialAllocationController::consume,Consume (material allocation),inferred from route and handler
+backend/routes/api.php,711,post,/material-allocations/{allocation}/return,\App\Http\Controllers\Api\V1\MaterialAllocationController::return,Return (material allocation),inferred from route and handler
+backend/routes/api.php,714,post,/material-reclassifications/class,\App\Http\Controllers\Api\V1\MaterialReclassificationController::class,Class (material reclassification),inferred from route and handler
+backend/routes/api.php,715,post,/material-lots/{materialLot}/reclassify-status,\App\Http\Controllers\Api\V1\MaterialReclassificationController::status,Status (material reclassification),inferred from route and handler
+backend/routes/api.php,719,get,/batches/{batch}/confirmations,ProcessConfirmationController::index,List or display process confirmation records,inferred from route and handler
+backend/routes/api.php,720,post,/batches/{batch}/confirmations,ProcessConfirmationController::store,Create or submit process confirmation,inferred from route and handler
+backend/routes/api.php,721,get,/batches/{batch}/confirmations/status,ProcessConfirmationController::status,Status (process confirmation),inferred from route and handler
+backend/routes/api.php,724,get,/batches/{batch}/quality-checks,QualityCheckController::index,List or display quality check records,inferred from route and handler
+backend/routes/api.php,725,post,/batches/{batch}/quality-checks,QualityCheckController::store,Create or submit quality check,inferred from route and handler
+backend/routes/api.php,726,get,/batches/{batch}/quality-checks/status,QualityCheckController::status,Status (quality check),inferred from route and handler
+backend/routes/api.php,729,get,/process-templates/{processTemplate}/qc-templates,QualityCheckController::templateIndex,Template index (quality check),inferred from route and handler
+backend/routes/api.php,732,get,/batches/{batch}/packaging-checklist,PackagingChecklistController::show,Read detail for packaging checklist,inferred from route and handler
+backend/routes/api.php,733,post,/batches/{batch}/packaging-checklist,PackagingChecklistController::store,Create or submit packaging checklist,inferred from route and handler
+backend/routes/api.php,736,get,/issues,IssueController::index,List or display issue records,inferred from route and handler
+backend/routes/api.php,737,get,/issues/{issue},IssueController::show,Read detail for issue,inferred from route and handler
+backend/routes/api.php,738,post,/issues,IssueController::store,Create or submit issue,inferred from route and handler
+backend/routes/api.php,739,patch,/issues/{issue},IssueController::update,Update issue,inferred from route and handler
+backend/routes/api.php,740,post,/issues/{issue}/acknowledge,IssueController::acknowledge,Acknowledge (issue),inferred from route and handler
+backend/routes/api.php,741,post,/issues/{issue}/resolve,IssueController::resolve,Resolve (issue),inferred from route and handler
+backend/routes/api.php,742,post,/issues/{issue}/close,IssueController::close,Close (issue),inferred from route and handler
+backend/routes/api.php,743,delete,/issues/{issue},IssueController::destroy,Remove issue,inferred from route and handler
+backend/routes/api.php,744,get,/issues/stats/line,IssueController::lineStats,Line stats (issue),inferred from route and handler
+backend/routes/api.php,746,put,/issues/{issue}/disposition,IssueController::disposition,Disposition (issue),inferred from route and handler
+backend/routes/api.php,747,get,/issues/{issue}/actions,IssueController::actions,Actions (issue),inferred from route and handler
+backend/routes/api.php,748,post,/issues/{issue}/actions,IssueController::storeAction,Store action (issue),inferred from route and handler
+backend/routes/api.php,749,put,/issue-actions/{action},IssueController::updateAction,Update action (issue),inferred from route and handler
+backend/routes/api.php,752,get,/issue-types,IssueTypeController::index,List or display issue type records,inferred from route and handler
+backend/routes/api.php,753,get,/issue-types/{issueType},IssueTypeController::show,Read detail for issue type,inferred from route and handler
+backend/routes/api.php,754,post,/issue-types,IssueTypeController::store,Create or submit issue type,inferred from route and handler
+backend/routes/api.php,755,patch,/issue-types/{issueType},IssueTypeController::update,Update issue type,inferred from route and handler
+backend/routes/api.php,756,delete,/issue-types/{issueType},IssueTypeController::destroy,Remove issue type,inferred from route and handler
+backend/routes/api.php,760,post,/csv-imports/upload,CsvImportController::upload,Upload (csv import),inferred from route and handler
+backend/routes/api.php,761,post,/csv-imports/execute,CsvImportController::execute,Execute (csv import),inferred from route and handler
+backend/routes/api.php,762,get,/csv-imports,CsvImportController::index,List or display csv import records,inferred from route and handler
+backend/routes/api.php,763,get,/csv-imports/{csvImport},CsvImportController::status,Status (csv import),inferred from route and handler
+backend/routes/api.php,764,get,/csv-import-mappings,CsvImportController::mappings,Mappings (csv import),inferred from route and handler
+backend/routes/api.php,765,post,/csv-import-mappings,CsvImportController::saveMapping,Save mapping (csv import),inferred from route and handler
+backend/routes/api.php,770,get,/audit-logs,AuditLogController::index,List or display audit log records,inferred from route and handler
+backend/routes/api.php,771,get,/audit-logs/entity,AuditLogController::entity,Entity (audit log),inferred from route and handler
+backend/routes/api.php,772,get,/audit-logs/export,AuditLogController::export,Export audit log records,inferred from route and handler
+backend/routes/api.php,775,get,/event-logs,EventLogController::index,List or display event log records,inferred from route and handler
+backend/routes/api.php,776,get,/event-logs/entity,EventLogController::entity,Entity (event log),inferred from route and handler
+backend/routes/api.php,780,get,/system/logs/tail,SystemLogController::tail,Tail (system log),inferred from route and handler
+backend/routes/api.php,781,get,/system/logs/failed-jobs,SystemLogController::failedJobs,Failed jobs (system log),inferred from route and handler
+backend/routes/api.php,782,post,/system/logs/failed-jobs/{uuid}/retry,SystemLogController::retryFailedJob,Retry failed job (system log),inferred from route and handler
+backend/routes/api.php,783,get,/system/logs/deployments,SystemLogController::deployments,Deployments (system log),inferred from route and handler
+backend/routes/api.php,786,get,/users,UserController::index,List or display user records,inferred from route and handler
+backend/routes/api.php,787,get,/users/{user},UserController::show,Read detail for user,inferred from route and handler
+backend/routes/api.php,788,post,/users,UserController::store,Create or submit user,inferred from route and handler
+backend/routes/api.php,789,patch,/users/{user},UserController::update,Update user,inferred from route and handler
+backend/routes/api.php,790,delete,/users/{user},UserController::destroy,Remove user,inferred from route and handler
+backend/routes/api.php,791,post,/users/{user}/reset-password,UserController::resetPassword,Reset password (user),inferred from route and handler
+backend/routes/api.php,792,get,/users/{user}/lines,UserController::lines,Lines (user),inferred from route and handler
+backend/routes/api.php,793,post,/users/{user}/lines,UserController::syncLines,Sync lines (user),inferred from route and handler
+backend/routes/api.php,796,get,/roles,,get · /roles,inferred from route and handler
+backend/routes/api.php,804,get,/quality-control-tasks,QualityControlTaskController::index,List or display quality control task records,inferred from route and handler
+backend/routes/api.php,805,post,/quality-control-tasks/{task}/skip,QualityControlTaskController::skip,Skip (quality control task),inferred from route and handler
+backend/routes/api.php,810,post,/quality-control-tasks/{task}/perform,QualityControlTaskController::perform,Perform (quality control task),inferred from route and handler
+backend/routes/api.php,811,post,/quality-control-tasks,QualityControlTaskController::storeRoaming,Store roaming (quality control task),inferred from route and handler
+backend/routes/api.php,813,get,/admin/dashboard,\App\Http\Controllers\Api\V1\AdminDashboardController::index,List or display admin dashboard records,inferred from route and handler
+backend/routes/api.php,814,get,/alerts,\App\Http\Controllers\Api\V1\AlertController::index,List or display alert records,inferred from route and handler
+backend/routes/api.php,815,get,/analytics/overview,AnalyticsController::overview,Overview (analytics),inferred from route and handler
+backend/routes/api.php,816,get,/analytics/production-by-line,AnalyticsController::productionByLine,Production by line (analytics),inferred from route and handler
+backend/routes/api.php,817,get,/analytics/cycle-time,AnalyticsController::cycleTime,Cycle time (analytics),inferred from route and handler
+backend/routes/api.php,818,get,/analytics/throughput,AnalyticsController::throughput,Throughput (analytics),inferred from route and handler
+backend/routes/api.php,819,get,/analytics/issue-stats,AnalyticsController::issueStats,Issue stats (analytics),inferred from route and handler
+backend/routes/api.php,820,get,/analytics/step-performance,AnalyticsController::stepPerformance,Step performance (analytics),inferred from route and handler
+backend/routes/api.php,821,get,/analytics/operator-rates,AnalyticsController::operatorRates,Operator rates (analytics),inferred from route and handler
+backend/routes/api.php,824,get,/reports/production-summary,ReportController::productionSummary,Production summary (report),inferred from route and handler
+backend/routes/api.php,825,get,/reports/batch-completion,ReportController::batchCompletion,Batch completion (report),inferred from route and handler
+backend/routes/api.php,826,get,/reports/downtime,ReportController::downtimeReport,Downtime report (report),inferred from route and handler
+backend/routes/api.php,827,get,/reports/scrap-pareto,ReportController::scrapPareto,Scrap pareto (report),inferred from route and handler
+backend/routes/api.php,828,get,/reports/scrap-rate,ReportController::scrapRate,Scrap rate (report),inferred from route and handler
+backend/routes/api.php,829,get,/reports/non-conformance-pareto,ReportController::nonConformancePareto,Non conformance pareto (report),inferred from route and handler
+backend/routes/api.php,830,get,/reports/net-requirements,ReportController::netRequirements,Net requirements (report),inferred from route and handler
+backend/routes/api.php,831,get,/reports/production-cost,\App\Http\Controllers\Api\V1\ProductionCostReportController::index,List or display production cost report records,inferred from route and handler
+backend/routes/api.php,832,get,/reports/export-csv,ReportController::exportCsv,Export csv (report),inferred from route and handler
+backend/routes/api.php,835,get,/shift-handover,ShiftHandoverController::index,List or display shift handover records,inferred from route and handler
+backend/routes/api.php,836,post,/shift-handover,ShiftHandoverController::store,Create or submit shift handover,inferred from route and handler
+backend/routes/api.php,837,get,/shift-handover/history,ShiftHandoverController::history,History (shift handover),inferred from route and handler
+backend/routes/api.php,838,get,/shift-handover/{shiftHandover},ShiftHandoverController::show,Read detail for shift handover,inferred from route and handler
+backend/routes/api.php,841,get,/machine-monitor,MachineMonitorController::index,List or display machine monitor records,inferred from route and handler
+backend/routes/api.php,842,post,/machine-monitor/{workstation}/state,MachineMonitorController::setState,Set state (machine monitor),inferred from route and handler
+backend/routes/web.php,84,get,/import/runs/{import},DataImportController::show,Read detail for data import,inferred from route and handler
+backend/routes/web.php,85,get,/import/runs/{import}/errors.csv,DataImportController::errors,Errors (data import),inferred from route and handler
+backend/routes/web.php,86,delete,/import/profiles/{mapping},DataImportController::destroyProfile,Destroy profile (data import),inferred from route and handler
+backend/routes/web.php,87,get,/import/samples/{entity},DataImportController::sample,Sample (data import),inferred from route and handler
+backend/routes/web.php,89,post,/import/{entity}/upload,DataImportController::upload,Upload (data import),inferred from route and handler
+backend/routes/web.php,91,get,/import/{entity}/map/{token},DataImportController::map,Map (data import),inferred from route and handler
+backend/routes/web.php,93,post,/import/{entity}/preview/{token},DataImportController::preview,Preview (data import),inferred from route and handler
+backend/routes/web.php,95,post,/import/{entity}/process,DataImportController::process,Process (data import),inferred from route and handler
+backend/routes/web.php,97,get,/import/{entity?},DataImportController::index,List or display data import records,inferred from route and handler
+backend/routes/web.php,104,get,/,InstallController::index,List or display install records,inferred from route and handler
+backend/routes/web.php,105,get,/environment,InstallController::showEnvironmentForm,Show environment form (install),inferred from route and handler
+backend/routes/web.php,106,post,/environment,InstallController::setupEnvironment,Setup environment (install),inferred from route and handler
+backend/routes/web.php,107,get,/database,InstallController::showDatabaseForm,Show database form (install),inferred from route and handler
+backend/routes/web.php,108,post,/database,InstallController::setupDatabase,Setup database (install),inferred from route and handler
+backend/routes/web.php,109,get,/admin,InstallController::showAdminForm,Show admin form (install),inferred from route and handler
+backend/routes/web.php,110,post,/admin,InstallController::createAdmin,Create admin (install),inferred from route and handler
+backend/routes/web.php,111,get,/complete,InstallController::complete,Complete (install),inferred from route and handler
+backend/routes/web.php,115,get,/,,get · /,inferred from route and handler
+backend/routes/web.php,145,get,/offline,,get · /offline,inferred from route and handler
+backend/routes/web.php,151,get,/locale/{locale},,get · /locale/{locale},inferred from route and handler
+backend/routes/web.php,161,get,/login,AuthController::showLoginForm,Show login form (auth),inferred from route and handler
+backend/routes/web.php,162,post,/login,AuthController::login,Login (auth),inferred from route and handler
+backend/routes/web.php,163,post,/login/pin,AuthController::loginWithPin,Login with pin (auth),inferred from route and handler
+backend/routes/web.php,164,get,/register,RegisterController::show,Read detail for register,inferred from route and handler
+backend/routes/web.php,165,post,/register,RegisterController::store,Create or submit register,inferred from route and handler
+backend/routes/web.php,169,get,/2fa/challenge,\App\Http\Controllers\Web\TwoFactorChallengeController::show,Read detail for two factor challenge,inferred from route and handler
+backend/routes/web.php,170,post,/2fa/challenge,\App\Http\Controllers\Web\TwoFactorChallengeController::verify,Verify (two factor challenge),inferred from route and handler
+backend/routes/web.php,175,post,/logout,AuthController::logout,Logout (auth),inferred from route and handler
+backend/routes/web.php,179,post,/view-as,\App\Http\Controllers\Web\ViewAsController::store,Create or submit view as,inferred from route and handler
+backend/routes/web.php,187,get,/api/collections/{name},\App\Http\Controllers\Api\CollectionController::index,List or display collection records,inferred from route and handler
+backend/routes/web.php,191,get,/maintenance/upcoming-count,,get · /maintenance/upcoming-count,inferred from route and handler
+backend/routes/web.php,203,get,/process-templates/{process_template}/photos/{photo},\App\Http\Controllers\Web\Admin\ProcessTemplatePhotoController::show,Read detail for process template photo,inferred from route and handler
+backend/routes/web.php,208,get,/process-templates/{process_template}/media/{media},\App\Http\Controllers\Web\Admin\TemplateStepMediaController::show,Read detail for template step media,inferred from route and handler
+backend/routes/web.php,213,get,/,\App\Http\Controllers\Web\SettingsController::index,List or display settings records,inferred from route and handler
+backend/routes/web.php,214,get,/change-password,\App\Http\Controllers\Web\SettingsController::showChangePasswordForm,Show change password form (settings),inferred from route and handler
+backend/routes/web.php,215,post,/change-password,\App\Http\Controllers\Web\SettingsController::updatePassword,Update password (settings),inferred from route and handler
+backend/routes/web.php,216,get,/profile,\App\Http\Controllers\Web\SettingsController::showProfileForm,Show profile form (settings),inferred from route and handler
+backend/routes/web.php,217,post,/profile,\App\Http\Controllers\Web\SettingsController::updateProfile,Update profile (settings),inferred from route and handler
+backend/routes/web.php,219,get,/system,\App\Http\Controllers\Web\SettingsController::showSystemSettings,Show system settings (settings),inferred from route and handler
+backend/routes/web.php,220,post,/system,\App\Http\Controllers\Web\SettingsController::updateSystemSettings,Update system settings (settings),inferred from route and handler
+backend/routes/web.php,223,post,/production-targets,\App\Http\Controllers\Web\SettingsController::updateProductionTargets,Update production targets (settings),inferred from route and handler
+backend/routes/web.php,226,get,/telemetry/preview,\App\Http\Controllers\Web\SettingsController::previewTelemetry,Preview telemetry (settings),inferred from route and handler
+backend/routes/web.php,227,post,/telemetry/reset-id,\App\Http\Controllers\Web\SettingsController::resetTelemetryId,Reset telemetry id (settings),inferred from route and handler
+backend/routes/web.php,229,post,/sample-data,\App\Http\Controllers\Web\SettingsController::loadSampleData,Load sample data (settings),inferred from route and handler
+backend/routes/web.php,231,get,/export,\App\Http\Controllers\Web\SettingsController::exportSettings,Export settings (settings),inferred from route and handler
+backend/routes/web.php,232,post,/import,\App\Http\Controllers\Web\SettingsController::importSettings,Import settings (settings),inferred from route and handler
+backend/routes/web.php,234,post,/backups/full,\App\Http\Controllers\Web\BackupController::createFullBackup,Create full backup (backup),inferred from route and handler
+backend/routes/web.php,235,post,/backups/data,\App\Http\Controllers\Web\BackupController::createDataBackup,Create data backup (backup),inferred from route and handler
+backend/routes/web.php,236,post,/backups/upload,\App\Http\Controllers\Web\BackupController::uploadBackup,Upload backup (backup),inferred from route and handler
+backend/routes/web.php,237,get,/backups/download/{filename},\App\Http\Controllers\Web\BackupController::downloadBackup,Download backup (backup),inferred from route and handler
+backend/routes/web.php,238,delete,/backups/{filename},\App\Http\Controllers\Web\BackupController::deleteBackup,Delete backup (backup),inferred from route and handler
+backend/routes/web.php,239,post,/backups/restore/{filename},\App\Http\Controllers\Web\BackupController::restoreBackup,Restore backup (backup),inferred from route and handler
+backend/routes/web.php,240,post,/reset,\App\Http\Controllers\Web\BackupController::resetSystem,Reset system (backup),inferred from route and handler
+backend/routes/web.php,242,get,/two-factor/enable,\App\Http\Controllers\Web\TwoFactorController::enable,Enable (two factor),inferred from route and handler
+backend/routes/web.php,243,post,/two-factor/confirm,\App\Http\Controllers\Web\TwoFactorController::confirm,Confirm (two factor),inferred from route and handler
+backend/routes/web.php,244,post,/two-factor/disable,\App\Http\Controllers\Web\TwoFactorController::disable,Disable (two factor),inferred from route and handler
+backend/routes/web.php,245,post,/two-factor/recovery-codes,\App\Http\Controllers\Web\TwoFactorController::regenerateRecoveryCodes,Regenerate recovery codes (two factor),inferred from route and handler
+backend/routes/web.php,247,get,/pin,\App\Http\Controllers\Web\SettingsController::showPinForm,Show pin form (settings),inferred from route and handler
+backend/routes/web.php,248,post,/pin,\App\Http\Controllers\Web\SettingsController::updatePin,Update pin (settings),inferred from route and handler
+backend/routes/web.php,249,delete,/pin,\App\Http\Controllers\Web\SettingsController::removePin,Remove pin (settings),inferred from route and handler
+backend/routes/web.php,251,get,/api-tokens,\App\Http\Controllers\Web\SettingsController::showApiTokens,Show api tokens (settings),inferred from route and handler
+backend/routes/web.php,252,post,/api-tokens,\App\Http\Controllers\Web\SettingsController::createApiToken,Create api token (settings),inferred from route and handler
+backend/routes/web.php,253,delete,/api-tokens/{token},\App\Http\Controllers\Web\SettingsController::revokeApiToken,Revoke api token (settings),inferred from route and handler
+backend/routes/web.php,259,get,/api-keys,\App\Http\Controllers\Api\V1\ApiKeyController::index,List or display api key records,inferred from route and handler
+backend/routes/web.php,260,post,/api-keys,\App\Http\Controllers\Api\V1\ApiKeyController::store,Create or submit api key,inferred from route and handler
+backend/routes/web.php,261,post,/api-keys/{apiKey}/toggle-active,\App\Http\Controllers\Api\V1\ApiKeyController::toggleActive,Toggle active (api key),inferred from route and handler
+backend/routes/web.php,262,delete,/api-keys/{apiKey},\App\Http\Controllers\Api\V1\ApiKeyController::destroy,Remove api key,inferred from route and handler
+backend/routes/web.php,265,get,/access,\App\Http\Controllers\Web\SettingsController::showAccess,Show access (settings),inferred from route and handler
+backend/routes/web.php,266,post,/access,\App\Http\Controllers\Web\SettingsController::updateAccess,Update access (settings),inferred from route and handler
+backend/routes/web.php,270,get,/change-password,,get · /change-password,inferred from route and handler
+backend/routes/web.php,279,get,/,\App\Http\Controllers\Web\OnboardingController::index,List or display onboarding records,inferred from route and handler
+backend/routes/web.php,280,post,/,\App\Http\Controllers\Web\OnboardingController::store,Create or submit onboarding,inferred from route and handler
+backend/routes/web.php,281,post,/skip,\App\Http\Controllers\Web\OnboardingController::skip,Skip (onboarding),inferred from route and handler
+backend/routes/web.php,286,get,/select-line,OperatorLineController::index,List or display operator line records,inferred from route and handler
+backend/routes/web.php,287,post,/select-line,OperatorLineController::select,Select (operator line),inferred from route and handler
+backend/routes/web.php,288,get,/queue,OperatorWorkOrderController::queue,Queue (operator work order),inferred from route and handler
+backend/routes/web.php,289,get,/queue/check,OperatorWorkOrderController::check,Check (operator work order),inferred from route and handler
+backend/routes/web.php,290,post,/work-order/{workOrder}/line-status,OperatorWorkOrderController::updateLineStatus,Update line status (operator work order),inferred from route and handler
+backend/routes/web.php,291,get,/work-order/{workOrder},OperatorWorkOrderController::show,Read detail for operator work order,inferred from route and handler
+backend/routes/web.php,292,post,/batch,OperatorBatchController::store,Create or submit operator batch,inferred from route and handler
+backend/routes/web.php,293,post,/batch/{batch}/confirm,OperatorBatchController::confirmParameters,Confirm parameters (operator batch),inferred from route and handler
+backend/routes/web.php,294,post,/batch/{batch}/quality-check,OperatorBatchController::qualityCheck,Quality check (operator batch),inferred from route and handler
+backend/routes/web.php,295,post,/batch/{batch}/packaging-checklist,OperatorBatchController::packagingChecklist,Packaging checklist (operator batch),inferred from route and handler
+backend/routes/web.php,296,post,/batch/{batch}/release,OperatorBatchController::release,Release (operator batch),inferred from route and handler
+backend/routes/web.php,300,get,/batch-step/{batchStep}/pick-preview,OperatorBatchController::pickPreview,Pick preview (operator batch),inferred from route and handler
+backend/routes/web.php,301,post,/batch-step/{batchStep}/start,OperatorBatchController::startStep,Start step (operator batch),inferred from route and handler
+backend/routes/web.php,302,post,/batch-step/{batchStep}/complete,OperatorBatchController::completeStep,Complete step (operator batch),inferred from route and handler
+backend/routes/web.php,305,post,/batch-step/{batchStep}/quantity-correction,OperatorBatchController::correctQuantity,Correct quantity (operator batch),inferred from route and handler
+backend/routes/web.php,306,post,/batch-step/{batchStep}/quantity,OperatorBatchController::recordQuantity,Record quantity (operator batch),inferred from route and handler
+backend/routes/web.php,307,post,/batch-step/{batchStep}/skip,OperatorBatchController::skipStep,Skip step (operator batch),inferred from route and handler
+backend/routes/web.php,308,post,/batch-step/{batchStep}/choose-variant,OperatorBatchController::chooseVariant,Choose variant (operator batch),inferred from route and handler
+backend/routes/web.php,310,post,/batch-step/{batchStep}/confirm-instructions,OperatorBatchController::confirmInstructions,Confirm instructions (operator batch),inferred from route and handler
+backend/routes/web.php,312,post,/batch-step-document/{batchStepDocument}/validate,OperatorBatchController::validateDocument,Validate document (operator batch),inferred from route and handler
+backend/routes/web.php,314,get,/batch-step-document/{batchStepDocument}/file,OperatorBatchController::showDocumentFile,Show document file (operator batch),inferred from route and handler
+backend/routes/web.php,316,post,/batch-step/{batchStep}/checklist/{checklistItem}/toggle,OperatorBatchController::toggleChecklistItem,Toggle checklist item (operator batch),inferred from route and handler
+backend/routes/web.php,318,post,/batch-step/{batchStep}/outputs/{output},OperatorBatchController::recordOutput,Record output (operator batch),inferred from route and handler
+backend/routes/web.php,319,get,/batch-step-output/{batchStepOutputValue}/file,OperatorBatchController::showOutputFile,Show output file (operator batch),inferred from route and handler
+backend/routes/web.php,321,post,/issue,OperatorIssueController::store,Create or submit operator issue,inferred from route and handler
+backend/routes/web.php,322,post,/scrap,OperatorScrapController::store,Create or submit operator scrap,inferred from route and handler
+backend/routes/web.php,325,post,/downtime/start,\App\Http\Controllers\Web\Operator\DowntimeController::start,Start (downtime),inferred from route and handler
+backend/routes/web.php,326,post,/downtime/{downtime}/stop,\App\Http\Controllers\Web\Operator\DowntimeController::stop,Stop (downtime),inferred from route and handler
+backend/routes/web.php,329,get,/workstation,OperatorWorkstationController::index,List or display operator workstation records,inferred from route and handler
+backend/routes/web.php,330,get,/unit-labels/station,UnitLabelStationController::index,List or display unit label station records,inferred from route and handler
+backend/routes/web.php,332,get,/packaging,PackagingController::station,Station (packaging),inferred from route and handler
+backend/routes/web.php,333,post,/unit-labels/apply,UnitLabelStationController::apply,Apply (unit label station),inferred from route and handler
+backend/routes/web.php,334,get,/unit-labels/units,UnitLabelStationController::units,Units (unit label station),inferred from route and handler
+backend/routes/web.php,335,post,/unit-labels/component,UnitLabelStationController::component,Component (unit label station),inferred from route and handler
+backend/routes/web.php,336,post,/unit-labels/issue,UnitLabelStationController::issue,Issue (unit label station),inferred from route and handler
+backend/routes/web.php,337,post,/unit-labels/{serialUnit}/scrap,UnitLabelStationController::scrap,Scrap (unit label station),inferred from route and handler
+backend/routes/web.php,338,get,/unit-labels/components,UnitLabelStationController::components,Components (unit label station),inferred from route and handler
+backend/routes/web.php,339,post,/unit-labels/components/{component}/unbind,UnitLabelStationController::unbindComponent,Unbind component (unit label station),inferred from route and handler
+backend/routes/web.php,340,post,/unit-labels/issue-batch,UnitLabelStationController::issueBatch,Issue batch (unit label station),inferred from route and handler
+backend/routes/web.php,341,post,/unit-labels/start,UnitLabelStationController::start,Start (unit label station),inferred from route and handler
+backend/routes/web.php,342,post,/unit-labels/subassembly,UnitLabelStationController::subassembly,Subassembly (unit label station),inferred from route and handler
+backend/routes/web.php,343,post,/unit-labels/{serialUnit}/block,UnitLabelStationController::block,Block (unit label station),inferred from route and handler
+backend/routes/web.php,344,post,/unit-labels/{serialUnit}/unblock,UnitLabelStationController::unblock,Unblock (unit label station),inferred from route and handler
+backend/routes/web.php,345,get,/workstation/check,OperatorWorkstationController::check,Check (operator workstation),inferred from route and handler
+backend/routes/web.php,347,post,/workstation/machine-state/{workstation},OperatorWorkstationController::setMachineState,Set machine state (operator workstation),inferred from route and handler
+backend/routes/web.php,348,post,/workstation/{workOrder}/start,OperatorWorkstationController::start,Start (operator workstation),inferred from route and handler
+backend/routes/web.php,349,post,/workstation/{workOrder}/complete,OperatorWorkstationController::complete,Complete (operator workstation),inferred from route and handler
+backend/routes/web.php,350,post,/workstation/{workOrder}/shift-entry,OperatorWorkstationController::shiftEntry,Shift entry (operator workstation),inferred from route and handler
+backend/routes/web.php,353,get,/shift-entry/{shiftEntry}/correct,ProductionCorrectionController::edit,Open the edit workflow for production correction,inferred from route and handler
+backend/routes/web.php,354,put,/shift-entry/{shiftEntry}/correct,ProductionCorrectionController::update,Update production correction,inferred from route and handler
+backend/routes/web.php,362,get,/inspections,OperatorInspectionController::index,List or display operator inspection records,inferred from route and handler
+backend/routes/web.php,363,post,/inspections,OperatorInspectionController::store,Create or submit operator inspection,inferred from route and handler
+backend/routes/web.php,364,get,/inspections/{inspection},OperatorInspectionController::show,Read detail for operator inspection,inferred from route and handler
+backend/routes/web.php,365,patch,/inspections/{inspection}/results/{result},OperatorInspectionController::recordResult,Record result (operator inspection),inferred from route and handler
+backend/routes/web.php,366,post,/inspections/{inspection}/complete,OperatorInspectionController::complete,Complete (operator inspection),inferred from route and handler
+backend/routes/web.php,367,post,/inspections/{inspection}/disposition,OperatorInspectionController::disposition,Disposition (operator inspection),inferred from route and handler
+backend/routes/web.php,380,get,/dashboard,SupervisorDashboardController::index,List or display supervisor dashboard records,inferred from route and handler
+backend/routes/web.php,386,resource,customers,CustomerController,"Manage customers through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,387,post,/customers/{customer}/toggle-active,CustomerController::toggleActive,Toggle active (customer),inferred from route and handler
+backend/routes/web.php,389,post,/priority-rules/bands,PriorityRuleController::updateBands,Update bands (priority rule),inferred from route and handler
+backend/routes/web.php,390,resource,priority-rules,PriorityRuleController,"Manage priority-rules through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,391,post,/priority-rules/{priority_rule}/toggle-active,PriorityRuleController::toggleActive,Toggle active (priority rule),inferred from route and handler
+backend/routes/web.php,395,get,/csv-import,,get · /csv-import,inferred from route and handler
+backend/routes/web.php,399,get,/shift-monitor,\App\Http\Controllers\Web\Production\ShiftMonitorController::index,List or display shift monitor records,inferred from route and handler
+backend/routes/web.php,400,get,/shift-monitor/check,\App\Http\Controllers\Web\Production\ShiftMonitorController::check,Check (shift monitor),inferred from route and handler
+backend/routes/web.php,401,post,/shift-monitor/downtimes/{downtime}/classify,\App\Http\Controllers\Web\Production\ShiftMonitorController::classify,Classify (shift monitor),inferred from route and handler
+backend/routes/web.php,402,post,/shift-monitor/downtimes/{downtime}/escalate,\App\Http\Controllers\Web\Production\ShiftMonitorController::escalate,Escalate (shift monitor),inferred from route and handler
+backend/routes/web.php,406,get,/shift-overview,\App\Http\Controllers\Web\Production\ShiftOverviewController::index,List or display shift overview records,inferred from route and handler
+backend/routes/web.php,407,get,/shift-overview/check,\App\Http\Controllers\Web\Production\ShiftOverviewController::check,Check (shift overview),inferred from route and handler
+backend/routes/web.php,410,get,/shift-board,\App\Http\Controllers\Web\Production\ShiftBoardController::index,List or display shift board records,inferred from route and handler
+backend/routes/web.php,411,get,/shift-board/check,\App\Http\Controllers\Web\Production\ShiftBoardController::check,Check (shift board),inferred from route and handler
+backend/routes/web.php,414,get,/shift-handover,\App\Http\Controllers\Web\Supervisor\ShiftHandoverController::index,List or display shift handover records,inferred from route and handler
+backend/routes/web.php,415,get,/shift-handover/preview,\App\Http\Controllers\Web\Supervisor\ShiftHandoverController::preview,Preview (shift handover),inferred from route and handler
+backend/routes/web.php,416,post,/shift-handover,\App\Http\Controllers\Web\Supervisor\ShiftHandoverController::store,Create or submit shift handover,inferred from route and handler
+backend/routes/web.php,419,get,/work-orders,\App\Http\Controllers\Web\Supervisor\WorkOrderController::index,List or display work order records,inferred from route and handler
+backend/routes/web.php,421,post,/work-orders/bulk,\App\Http\Controllers\Web\Supervisor\WorkOrderController::bulk,Bulk (work order),inferred from route and handler
+backend/routes/web.php,422,get,/work-orders/create,\App\Http\Controllers\Web\Supervisor\WorkOrderController::create,Open the creation workflow for work order,inferred from route and handler
+backend/routes/web.php,423,post,/work-orders,\App\Http\Controllers\Web\Supervisor\WorkOrderController::store,Create or submit work order,inferred from route and handler
+backend/routes/web.php,424,get,/work-orders/{workOrder},\App\Http\Controllers\Web\Supervisor\WorkOrderController::show,Read detail for work order,inferred from route and handler
+backend/routes/web.php,425,post,/work-orders/{workOrder}/accept,\App\Http\Controllers\Web\Supervisor\WorkOrderController::accept,Accept (work order),inferred from route and handler
+backend/routes/web.php,426,post,/work-orders/{workOrder}/reject,\App\Http\Controllers\Web\Supervisor\WorkOrderController::reject,Reject (work order),inferred from route and handler
+backend/routes/web.php,427,post,/work-orders/{workOrder}/pause,\App\Http\Controllers\Web\Supervisor\WorkOrderController::pause,Pause (work order),inferred from route and handler
+backend/routes/web.php,428,post,/work-orders/{workOrder}/resume,\App\Http\Controllers\Web\Supervisor\WorkOrderController::resume,Resume (work order),inferred from route and handler
+backend/routes/web.php,429,post,/work-orders/{workOrder}/complete,\App\Http\Controllers\Web\Supervisor\WorkOrderController::complete,Complete (work order),inferred from route and handler
+backend/routes/web.php,430,post,/work-orders/{workOrder}/cancel,\App\Http\Controllers\Web\Supervisor\WorkOrderController::cancel,Cancel (work order),inferred from route and handler
+backend/routes/web.php,431,post,/work-orders/{workOrder}/reopen,\App\Http\Controllers\Web\Supervisor\WorkOrderController::reopen,Reopen (work order),inferred from route and handler
+backend/routes/web.php,432,get,/work-orders/{workOrder}/edit,\App\Http\Controllers\Web\Supervisor\WorkOrderController::edit,Open the edit workflow for work order,inferred from route and handler
+backend/routes/web.php,433,put,/work-orders/{workOrder},\App\Http\Controllers\Web\Supervisor\WorkOrderController::update,Update work order,inferred from route and handler
+backend/routes/web.php,437,get,/work-order-change-requests,WorkOrderChangeControlController::index,List or display work order change control records,inferred from route and handler
+backend/routes/web.php,441,delete,/work-orders/{workOrder},\App\Http\Controllers\Web\Supervisor\WorkOrderController::destroy,Remove work order,inferred from route and handler
+backend/routes/web.php,446,get,/issues,IssueManagementController::index,List or display issue management records,inferred from route and handler
+backend/routes/web.php,447,post,/issues,IssueManagementController::store,Create or submit issue management,inferred from route and handler
+backend/routes/web.php,449,post,/issues/bulk,IssueManagementController::bulk,Bulk (issue management),inferred from route and handler
+backend/routes/web.php,450,post,/issues/{issue}/acknowledge,IssueManagementController::acknowledge,Acknowledge (issue management),inferred from route and handler
+backend/routes/web.php,451,post,/issues/{issue}/resolve,IssueManagementController::resolve,Resolve (issue management),inferred from route and handler
+backend/routes/web.php,452,post,/issues/{issue}/close,IssueManagementController::close,Close (issue management),inferred from route and handler
+backend/routes/web.php,454,post,/issues/{issue}/disposition,IssueManagementController::disposition,Disposition (issue management),inferred from route and handler
+backend/routes/web.php,456,get,/issues/{issue}/actions,IssueManagementController::actions,Actions (issue management),inferred from route and handler
+backend/routes/web.php,457,post,/issues/{issue}/actions,IssueManagementController::storeAction,Store action (issue management),inferred from route and handler
+backend/routes/web.php,458,put,/issues/actions/{action},IssueManagementController::updateAction,Update action (issue management),inferred from route and handler
+backend/routes/web.php,459,post,/issues/actions/{action}/start,IssueManagementController::startAction,Start action (issue management),inferred from route and handler
+backend/routes/web.php,460,post,/issues/actions/{action}/complete,IssueManagementController::completeAction,Complete action (issue management),inferred from route and handler
+backend/routes/web.php,461,post,/issues/actions/{action}/verify,IssueManagementController::verifyAction,Verify action (issue management),inferred from route and handler
+backend/routes/web.php,462,delete,/issues/actions/{action},IssueManagementController::destroyAction,Destroy action (issue management),inferred from route and handler
+backend/routes/web.php,471,get,/quality-tasks,QualityControlTaskController::index,List or display quality control task records,inferred from route and handler
+backend/routes/web.php,472,post,/quality-tasks,QualityControlTaskController::storeRoaming,Store roaming (quality control task),inferred from route and handler
+backend/routes/web.php,473,post,/quality-tasks/{task}/perform,QualityControlTaskController::perform,Perform (quality control task),inferred from route and handler
+backend/routes/web.php,474,post,/quality-tasks/{task}/skip,QualityControlTaskController::skip,Skip (quality control task),inferred from route and handler
+backend/routes/web.php,478,get,/reports,AdminReportController::index,List or display admin report records,inferred from route and handler
+backend/routes/web.php,479,get,/reports/export,AdminReportController::export,Export admin report records,inferred from route and handler
+backend/routes/web.php,480,get,/reports/{workOrder},AdminReportController::show,Read detail for admin report,inferred from route and handler
+backend/routes/web.php,494,get,/dashboard,AdminDashboardController::index,List or display admin dashboard records,inferred from route and handler
+backend/routes/web.php,497,get,/shift-monitor,\App\Http\Controllers\Web\Production\ShiftMonitorController::index,List or display shift monitor records,inferred from route and handler
+backend/routes/web.php,498,get,/shift-monitor/check,\App\Http\Controllers\Web\Production\ShiftMonitorController::check,Check (shift monitor),inferred from route and handler
+backend/routes/web.php,499,post,/shift-monitor/downtimes/{downtime}/classify,\App\Http\Controllers\Web\Production\ShiftMonitorController::classify,Classify (shift monitor),inferred from route and handler
+backend/routes/web.php,500,post,/shift-monitor/downtimes/{downtime}/escalate,\App\Http\Controllers\Web\Production\ShiftMonitorController::escalate,Escalate (shift monitor),inferred from route and handler
+backend/routes/web.php,503,get,/shift-overview,\App\Http\Controllers\Web\Production\ShiftOverviewController::index,List or display shift overview records,inferred from route and handler
+backend/routes/web.php,504,get,/shift-overview/check,\App\Http\Controllers\Web\Production\ShiftOverviewController::check,Check (shift overview),inferred from route and handler
+backend/routes/web.php,507,get,/shift-board,\App\Http\Controllers\Web\Production\ShiftBoardController::index,List or display shift board records,inferred from route and handler
+backend/routes/web.php,508,get,/shift-board/check,\App\Http\Controllers\Web\Production\ShiftBoardController::check,Check (shift board),inferred from route and handler
+backend/routes/web.php,511,get,/oee,AdminOeeController::index,List or display admin oee records,inferred from route and handler
+backend/routes/web.php,512,get,/oee/print,AdminOeeController::print,Print (admin oee),inferred from route and handler
+backend/routes/web.php,513,get,/oee/print/pdf,AdminOeeController::printPdf,Print pdf (admin oee),inferred from route and handler
+backend/routes/web.php,514,get,/oee/{line},AdminOeeController::show,Read detail for admin oee,inferred from route and handler
+backend/routes/web.php,517,get,/reports,AdminReportController::index,List or display admin report records,inferred from route and handler
+backend/routes/web.php,518,get,/reports/export,AdminReportController::export,Export admin report records,inferred from route and handler
+backend/routes/web.php,519,get,/reports/{workOrder},AdminReportController::show,Read detail for admin report,inferred from route and handler
+backend/routes/web.php,522,get,/cost-reports,ProductionCostReportController::index,List or display production cost report records,inferred from route and handler
+backend/routes/web.php,523,get,/cost-reports/export,ProductionCostReportController::export,Export production cost report records,inferred from route and handler
+backend/routes/web.php,524,get,/cost-reports/{workOrder},ProductionCostReportController::show,Read detail for production cost report,inferred from route and handler
+backend/routes/web.php,527,get,/alerts,\App\Http\Controllers\Web\Admin\AlertController::index,List or display alert records,inferred from route and handler
+backend/routes/web.php,528,get,/alerts/check,\App\Http\Controllers\Web\Admin\AlertController::check,Check (alert),inferred from route and handler
+backend/routes/web.php,531,get,/update/check,\App\Http\Controllers\Web\Admin\UpdateController::check,Check (update),inferred from route and handler
+backend/routes/web.php,532,post,/update/apply,\App\Http\Controllers\Web\Admin\UpdateController::apply,Apply (update),inferred from route and handler
+backend/routes/web.php,533,get,/update/status,\App\Http\Controllers\Web\Admin\UpdateController::status,Status (update),inferred from route and handler
+backend/routes/web.php,534,get,/update/history,\App\Http\Controllers\Web\Admin\UpdateController::history,History (update),inferred from route and handler
+backend/routes/web.php,537,get,/schedule/list,ScheduleController::index,List or display schedule records,inferred from route and handler
+backend/routes/web.php,538,get,/schedule,SchedulePlannerController::index,List or display schedule planner records,inferred from route and handler
+backend/routes/web.php,539,get,/schedule/capacity,\App\Http\Controllers\Web\Admin\ScheduleCapacityController::index,List or display schedule capacity records,inferred from route and handler
+backend/routes/web.php,540,get,/schedule/capacity/cell,\App\Http\Controllers\Web\Admin\ScheduleCapacityController::cellOrders,Cell orders (schedule capacity),inferred from route and handler
+backend/routes/web.php,541,get,/schedule/check-updates,SchedulePlannerController::checkUpdates,Check updates (schedule planner),inferred from route and handler
+backend/routes/web.php,542,get,/schedule/changes,SchedulePlannerController::changes,Changes (schedule planner),inferred from route and handler
+backend/routes/web.php,543,post,/schedule/changes/{change}/undo,SchedulePlannerController::undoChange,Undo change (schedule planner),inferred from route and handler
+backend/routes/web.php,545,get,/schedule/auto,\App\Http\Controllers\Web\Admin\Schedule\AutoScheduleController::index,List or display auto schedule records,inferred from route and handler
+backend/routes/web.php,546,post,/schedule/simulations,\App\Http\Controllers\Web\Admin\Schedule\AutoScheduleController::generate,Generate (auto schedule),inferred from route and handler
+backend/routes/web.php,547,post,/schedule/simulations/{simulation}/apply,\App\Http\Controllers\Web\Admin\Schedule\AutoScheduleController::apply,Apply (auto schedule),inferred from route and handler
+backend/routes/web.php,548,post,/schedule/simulations/{simulation}/discard,\App\Http\Controllers\Web\Admin\Schedule\AutoScheduleController::discard,Discard (auto schedule),inferred from route and handler
+backend/routes/web.php,549,put,/schedule/operations/{operation},\App\Http\Controllers\Web\Admin\Schedule\AutoScheduleController::override,Override (auto schedule),inferred from route and handler
+backend/routes/web.php,551,resource,schedule/changeover-rules,\App\Http\Controllers\Web\Admin\Schedule\ChangeoverRuleController,"Manage schedule/changeover-rules through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,554,put,/schedule/{workOrder},SchedulePlannerController::updateOrder,Update order (schedule planner),inferred from route and handler
+backend/routes/web.php,555,put,/schedule/{workOrder}/resize,SchedulePlannerController::resizeOrder,Resize order (schedule planner),inferred from route and handler
+backend/routes/web.php,556,post,/schedule/maintenance,SchedulePlannerController::storeMaintenance,Store maintenance (schedule planner),inferred from route and handler
+backend/routes/web.php,559,get,/schedule/employees,\App\Http\Controllers\Web\Admin\EmployeeScheduleController::index,List or display employee schedule records,inferred from route and handler
+backend/routes/web.php,560,get,/schedule/employees/add,\App\Http\Controllers\Web\Admin\EmployeeScheduleController::create,Open the creation workflow for employee schedule,inferred from route and handler
+backend/routes/web.php,561,post,/schedule/employees,\App\Http\Controllers\Web\Admin\EmployeeScheduleController::store,Create or submit employee schedule,inferred from route and handler
+backend/routes/web.php,562,delete,/schedule/employees/{activity},\App\Http\Controllers\Web\Admin\EmployeeScheduleController::destroy,Remove employee schedule,inferred from route and handler
+backend/routes/web.php,565,get,/shifts,\App\Http\Controllers\Web\Admin\ShiftController::index,List or display shift records,inferred from route and handler
+backend/routes/web.php,566,get,/shifts/create,\App\Http\Controllers\Web\Admin\ShiftController::create,Open the creation workflow for shift,inferred from route and handler
+backend/routes/web.php,567,post,/shifts,\App\Http\Controllers\Web\Admin\ShiftController::store,Create or submit shift,inferred from route and handler
+backend/routes/web.php,568,get,/shifts/{shift}/edit,\App\Http\Controllers\Web\Admin\ShiftController::edit,Open the edit workflow for shift,inferred from route and handler
+backend/routes/web.php,569,put,/shifts/{shift},\App\Http\Controllers\Web\Admin\ShiftController::update,Update shift,inferred from route and handler
+backend/routes/web.php,570,delete,/shifts/{shift},\App\Http\Controllers\Web\Admin\ShiftController::destroy,Remove shift,inferred from route and handler
+backend/routes/web.php,575,post,/work-orders/bulk,AdminWorkOrderController::bulk,Bulk (admin work order),inferred from route and handler
+backend/routes/web.php,576,resource,work-orders,AdminWorkOrderController,"Manage work-orders through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,577,post,/work-orders/{workOrder}/cancel,AdminWorkOrderController::cancel,Cancel (admin work order),inferred from route and handler
+backend/routes/web.php,578,post,/work-orders/{workOrder}/accept,AdminWorkOrderController::accept,Accept (admin work order),inferred from route and handler
+backend/routes/web.php,579,post,/work-orders/{workOrder}/reject,AdminWorkOrderController::reject,Reject (admin work order),inferred from route and handler
+backend/routes/web.php,580,post,/work-orders/{workOrder}/pause,AdminWorkOrderController::pause,Pause (admin work order),inferred from route and handler
+backend/routes/web.php,581,post,/work-orders/{workOrder}/resume,AdminWorkOrderController::resume,Resume (admin work order),inferred from route and handler
+backend/routes/web.php,582,post,/work-orders/{workOrder}/reopen,AdminWorkOrderController::reopen,Reopen (admin work order),inferred from route and handler
+backend/routes/web.php,583,post,/work-orders/{workOrder}/complete,AdminWorkOrderController::complete,Complete (admin work order),inferred from route and handler
+backend/routes/web.php,589,post,/work-orders/{workOrder}/allocations/{allocation}/consume,AdminWorkOrderController::recordConsumption,Record consumption (admin work order),inferred from route and handler
+backend/routes/web.php,590,post,/work-orders/{workOrder}/allocations/{allocation}/return,AdminWorkOrderController::returnAllocation,Return allocation (admin work order),inferred from route and handler
+backend/routes/web.php,591,post,/work-orders/{workOrder}/reclassify,AdminWorkOrderController::reclassify,Reclassify (admin work order),inferred from route and handler
+backend/routes/web.php,595,post,/work-orders/{workOrder}/stop,WorkOrderChangeControlController::stop,Stop (work order change control),inferred from route and handler
+backend/routes/web.php,597,post,/work-orders/{workOrder}/change-requests,WorkOrderChangeControlController::storeChangeRequest,Store change request (work order change control),inferred from route and handler
+backend/routes/web.php,600,get,/work-order-change-requests,WorkOrderChangeControlController::index,List or display work order change control records,inferred from route and handler
+backend/routes/web.php,602,get,/work-order-change-requests/{changeRequest},WorkOrderChangeControlController::show,Read detail for work order change control,inferred from route and handler
+backend/routes/web.php,604,patch,/work-order-change-requests/{changeRequest},WorkOrderChangeControlController::updateChangeRequest,Update change request (work order change control),inferred from route and handler
+backend/routes/web.php,606,post,/work-order-change-requests/{changeRequest}/submit,WorkOrderChangeControlController::submit,Submit (work order change control),inferred from route and handler
+backend/routes/web.php,608,post,/work-order-change-requests/{changeRequest}/approve,WorkOrderChangeControlController::approve,Approve (work order change control),inferred from route and handler
+backend/routes/web.php,610,post,/work-order-change-requests/{changeRequest}/reject,WorkOrderChangeControlController::reject,Reject (work order change control),inferred from route and handler
+backend/routes/web.php,612,post,/work-order-change-requests/{changeRequest}/cancel,WorkOrderChangeControlController::cancel,Cancel (work order change control),inferred from route and handler
+backend/routes/web.php,614,post,/work-order-change-requests/{changeRequest}/apply,WorkOrderChangeControlController::apply,Apply (work order change control),inferred from route and handler
+backend/routes/web.php,618,resource,customers,CustomerController,"Manage customers through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,619,post,/customers/{customer}/toggle-active,CustomerController::toggleActive,Toggle active (customer),inferred from route and handler
+backend/routes/web.php,622,resource,product-revisions,\App\Http\Controllers\Web\Admin\ProductRevisionController,"Manage product-revisions through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,623,post,/product-revisions/{productRevision}/release,\App\Http\Controllers\Web\Admin\ProductRevisionController::release,Release (product revision),inferred from route and handler
+backend/routes/web.php,624,post,/product-revisions/{productRevision}/obsolete,\App\Http\Controllers\Web\Admin\ProductRevisionController::obsolete,Obsolete (product revision),inferred from route and handler
+backend/routes/web.php,627,post,/priority-rules/bands,PriorityRuleController::updateBands,Update bands (priority rule),inferred from route and handler
+backend/routes/web.php,628,resource,priority-rules,PriorityRuleController,"Manage priority-rules through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,629,post,/priority-rules/{priority_rule}/toggle-active,PriorityRuleController::toggleActive,Toggle active (priority rule),inferred from route and handler
+backend/routes/web.php,632,resource,issue-types,AdminIssueTypeController,"Manage issue-types through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,633,post,/issue-types/{issueType}/toggle-active,AdminIssueTypeController::toggleActive,Toggle active (admin issue type),inferred from route and handler
+backend/routes/web.php,636,get,/issues,IssueManagementController::index,List or display issue management records,inferred from route and handler
+backend/routes/web.php,637,post,/issues,IssueManagementController::store,Create or submit issue management,inferred from route and handler
+backend/routes/web.php,639,post,/issues/bulk,IssueManagementController::bulk,Bulk (issue management),inferred from route and handler
+backend/routes/web.php,640,post,/issues/{issue}/acknowledge,IssueManagementController::acknowledge,Acknowledge (issue management),inferred from route and handler
+backend/routes/web.php,641,post,/issues/{issue}/resolve,IssueManagementController::resolve,Resolve (issue management),inferred from route and handler
+backend/routes/web.php,642,post,/issues/{issue}/close,IssueManagementController::close,Close (issue management),inferred from route and handler
+backend/routes/web.php,644,post,/issues/{issue}/disposition,IssueManagementController::disposition,Disposition (issue management),inferred from route and handler
+backend/routes/web.php,646,get,/issues/{issue}/actions,IssueManagementController::actions,Actions (issue management),inferred from route and handler
+backend/routes/web.php,647,post,/issues/{issue}/actions,IssueManagementController::storeAction,Store action (issue management),inferred from route and handler
+backend/routes/web.php,648,put,/issues/actions/{action},IssueManagementController::updateAction,Update action (issue management),inferred from route and handler
+backend/routes/web.php,649,post,/issues/actions/{action}/start,IssueManagementController::startAction,Start action (issue management),inferred from route and handler
+backend/routes/web.php,650,post,/issues/actions/{action}/complete,IssueManagementController::completeAction,Complete action (issue management),inferred from route and handler
+backend/routes/web.php,651,post,/issues/actions/{action}/verify,IssueManagementController::verifyAction,Verify action (issue management),inferred from route and handler
+backend/routes/web.php,652,delete,/issues/actions/{action},IssueManagementController::destroyAction,Destroy action (issue management),inferred from route and handler
+backend/routes/web.php,655,get,/quality-tasks,QualityControlTaskController::index,List or display quality control task records,inferred from route and handler
+backend/routes/web.php,656,post,/quality-tasks,QualityControlTaskController::storeRoaming,Store roaming (quality control task),inferred from route and handler
+backend/routes/web.php,657,post,/quality-tasks/{task}/perform,QualityControlTaskController::perform,Perform (quality control task),inferred from route and handler
+backend/routes/web.php,658,post,/quality-tasks/{task}/skip,QualityControlTaskController::skip,Skip (quality control task),inferred from route and handler
+backend/routes/web.php,661,resource,users,\App\Http\Controllers\Web\Admin\UserManagementController,"Manage users through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,662,delete,/users/{user}/worker,\App\Http\Controllers\Web\Admin\UserManagementController::unlinkWorker,Unlink worker (user management),inferred from route and handler
+backend/routes/web.php,665,resource,lines,\App\Http\Controllers\Web\Admin\LineManagementController,"Manage lines through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,666,post,/lines/{line}/toggle-active,\App\Http\Controllers\Web\Admin\LineManagementController::toggleActive,Toggle active (line management),inferred from route and handler
+backend/routes/web.php,667,post,/lines/{line}/assign-operator,\App\Http\Controllers\Web\Admin\LineManagementController::assignOperator,Assign operator (line management),inferred from route and handler
+backend/routes/web.php,668,delete,/lines/{line}/unassign-operator/{user},\App\Http\Controllers\Web\Admin\LineManagementController::unassignOperator,Unassign operator (line management),inferred from route and handler
+backend/routes/web.php,670,post,/lines/{line}/statuses,AdminLineStatusController::storeForLine,Store for line (admin line status),inferred from route and handler
+backend/routes/web.php,672,post,/lines/{line}/product-types/sync,\App\Http\Controllers\Web\Admin\LineManagementController::syncProductTypes,Sync product types (line management),inferred from route and handler
+backend/routes/web.php,673,post,/lines/{line}/view-columns,\App\Http\Controllers\Web\Admin\LineManagementController::saveViewColumns,Save view columns (line management),inferred from route and handler
+backend/routes/web.php,674,post,/lines/{line}/view-template,\App\Http\Controllers\Web\Admin\LineManagementController::assignViewTemplate,Assign view template (line management),inferred from route and handler
+backend/routes/web.php,675,post,/lines/{line}/default-view,\App\Http\Controllers\Web\Admin\LineManagementController::setDefaultView,Set default view (line management),inferred from route and handler
+backend/routes/web.php,678,resource,view-templates,\App\Http\Controllers\Web\Admin\ViewTemplateController,"Manage view-templates through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,681,get,/line-statuses,AdminLineStatusController::index,List or display admin line status records,inferred from route and handler
+backend/routes/web.php,683,get,/line-statuses/create,AdminLineStatusController::create,Open the creation workflow for admin line status,inferred from route and handler
+backend/routes/web.php,684,get,/line-statuses/{lineStatus}/edit,AdminLineStatusController::edit,Open the edit workflow for admin line status,inferred from route and handler
+backend/routes/web.php,685,post,/line-statuses,AdminLineStatusController::store,Create or submit admin line status,inferred from route and handler
+backend/routes/web.php,686,post,/line-statuses/reorder,AdminLineStatusController::reorder,Reorder (admin line status),inferred from route and handler
+backend/routes/web.php,687,put,/line-statuses/{lineStatus},AdminLineStatusController::update,Update admin line status,inferred from route and handler
+backend/routes/web.php,688,delete,/line-statuses/{lineStatus},AdminLineStatusController::destroy,Remove admin line status,inferred from route and handler
+backend/routes/web.php,692,get,/,\App\Http\Controllers\Web\Admin\WorkstationManagementController::index,List or display workstation management records,inferred from route and handler
+backend/routes/web.php,693,get,/create,\App\Http\Controllers\Web\Admin\WorkstationManagementController::create,Open the creation workflow for workstation management,inferred from route and handler
+backend/routes/web.php,694,post,/,\App\Http\Controllers\Web\Admin\WorkstationManagementController::store,Create or submit workstation management,inferred from route and handler
+backend/routes/web.php,695,get,/{workstation}/edit,\App\Http\Controllers\Web\Admin\WorkstationManagementController::edit,Open the edit workflow for workstation management,inferred from route and handler
+backend/routes/web.php,696,put,/{workstation},\App\Http\Controllers\Web\Admin\WorkstationManagementController::update,Update workstation management,inferred from route and handler
+backend/routes/web.php,697,delete,/{workstation},\App\Http\Controllers\Web\Admin\WorkstationManagementController::destroy,Remove workstation management,inferred from route and handler
+backend/routes/web.php,698,post,/{workstation}/toggle-active,\App\Http\Controllers\Web\Admin\WorkstationManagementController::toggleActive,Toggle active (workstation management),inferred from route and handler
+backend/routes/web.php,702,resource,product-types,\App\Http\Controllers\Web\Admin\ProductTypeManagementController,"Manage product-types through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,703,post,/product-types/{product_type}/toggle-active,\App\Http\Controllers\Web\Admin\ProductTypeManagementController::toggleActive,Toggle active (product type management),inferred from route and handler
+backend/routes/web.php,707,get,/product-types/{product_type}/image,\App\Http\Controllers\Web\Admin\ProductTypeManagementController::image,Image (product type management),inferred from route and handler
+backend/routes/web.php,711,get,/,\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::index,List or display process template management records,inferred from route and handler
+backend/routes/web.php,712,get,/create,\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::create,Open the creation workflow for process template management,inferred from route and handler
+backend/routes/web.php,713,post,/,\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::store,Create or submit process template management,inferred from route and handler
+backend/routes/web.php,714,get,/{process_template},\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::show,Read detail for process template management,inferred from route and handler
+backend/routes/web.php,715,get,/{process_template}/edit,\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::edit,Open the edit workflow for process template management,inferred from route and handler
+backend/routes/web.php,716,put,/{process_template},\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::update,Update process template management,inferred from route and handler
+backend/routes/web.php,717,delete,/{process_template},\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::destroy,Remove process template management,inferred from route and handler
+backend/routes/web.php,718,post,/{process_template}/toggle-active,\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::toggleActive,Toggle active (process template management),inferred from route and handler
+backend/routes/web.php,721,post,/{process_template}/steps,\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::addStep,Add step (process template management),inferred from route and handler
+backend/routes/web.php,722,put,/{process_template}/steps/{step},\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::updateStep,Update step (process template management),inferred from route and handler
+backend/routes/web.php,723,delete,/{process_template}/steps/{step},\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::deleteStep,Delete step (process template management),inferred from route and handler
+backend/routes/web.php,724,post,/{process_template}/steps/reorder,\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::reorderSteps,Reorder steps (process template management),inferred from route and handler
+backend/routes/web.php,725,post,/{process_template}/steps/{step}/move-up,\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::moveStepUp,Move step up (process template management),inferred from route and handler
+backend/routes/web.php,726,post,/{process_template}/steps/{step}/move-down,\App\Http\Controllers\Web\Admin\ProcessTemplateManagementController::moveStepDown,Move step down (process template management),inferred from route and handler
+backend/routes/web.php,729,post,/{process_template}/photos,\App\Http\Controllers\Web\Admin\ProcessTemplatePhotoController::store,Create or submit process template photo,inferred from route and handler
+backend/routes/web.php,731,delete,/{process_template}/photos/{photo},\App\Http\Controllers\Web\Admin\ProcessTemplatePhotoController::destroy,Remove process template photo,inferred from route and handler
+backend/routes/web.php,734,post,/{process_template}/media,\App\Http\Controllers\Web\Admin\TemplateStepMediaController::store,Create or submit template step media,inferred from route and handler
+backend/routes/web.php,736,delete,/{process_template}/media/{media},\App\Http\Controllers\Web\Admin\TemplateStepMediaController::destroy,Remove template step media,inferred from route and handler
+backend/routes/web.php,739,post,/{process_template}/checklist-items,\App\Http\Controllers\Web\Admin\TemplateStepChecklistController::store,Create or submit template step checklist,inferred from route and handler
+backend/routes/web.php,740,delete,/{process_template}/checklist-items/{checklistItem},\App\Http\Controllers\Web\Admin\TemplateStepChecklistController::destroy,Remove template step checklist,inferred from route and handler
+backend/routes/web.php,743,post,/{process_template}/outputs,\App\Http\Controllers\Web\Admin\TemplateStepOutputController::store,Create or submit template step output,inferred from route and handler
+backend/routes/web.php,744,delete,/{process_template}/outputs/{output},\App\Http\Controllers\Web\Admin\TemplateStepOutputController::destroy,Remove template step output,inferred from route and handler
+backend/routes/web.php,747,get,/{process_template}/bom,BomManagementController::index,List or display bom management records,inferred from route and handler
+backend/routes/web.php,748,post,/{process_template}/bom,BomManagementController::store,Create or submit bom management,inferred from route and handler
+backend/routes/web.php,749,put,/{process_template}/bom/{bom_item},BomManagementController::update,Update bom management,inferred from route and handler
+backend/routes/web.php,750,delete,/{process_template}/bom/{bom_item},BomManagementController::destroy,Remove bom management,inferred from route and handler
+backend/routes/web.php,754,post,lot-sequences/preview,AdminLotSequenceController::preview,Preview (admin lot sequence),inferred from route and handler
+backend/routes/web.php,755,resource,lot-sequences,AdminLotSequenceController,"Manage lot-sequences through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,758,resource,pallets,AdminPalletController,"Manage pallets through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,761,get,pallet-movements,PalletMovementController::index,List or display pallet movement records,inferred from route and handler
+backend/routes/web.php,764,resource,material-lots,AdminMaterialLotController,"Manage material-lots through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,765,post,/material-lots/{materialLot}/hold,AdminMaterialLotController::hold,Hold (admin material lot),inferred from route and handler
+backend/routes/web.php,766,post,/material-lots/{materialLot}/release,AdminMaterialLotController::release,Release (admin material lot),inferred from route and handler
+backend/routes/web.php,769,get,/traceability,\App\Http\Controllers\Web\Admin\TraceabilityController::index,List or display traceability records,inferred from route and handler
+backend/routes/web.php,772,get,/dashboard-widgets,\App\Http\Controllers\Web\Admin\DashboardWidgetController::index,List or display dashboard widget records,inferred from route and handler
+backend/routes/web.php,773,post,/dashboard-widgets/{widget}/toggle,\App\Http\Controllers\Web\Admin\DashboardWidgetController::toggle,Toggle (dashboard widget),inferred from route and handler
+backend/routes/web.php,774,post,/dashboard-widgets/reorder,\App\Http\Controllers\Web\Admin\DashboardWidgetController::reorder,Reorder (dashboard widget),inferred from route and handler
+backend/routes/web.php,775,post,/dashboard-widgets/save-all,\App\Http\Controllers\Web\Admin\DashboardWidgetController::saveAll,Save all (dashboard widget),inferred from route and handler
+backend/routes/web.php,778,get,/batches/{batch}/report,\App\Http\Controllers\Web\Admin\BatchReportController::show,Read detail for batch report,inferred from route and handler
+backend/routes/web.php,779,get,/batches/{batch}/report/pdf,\App\Http\Controllers\Web\Admin\BatchReportController::pdf,Pdf (batch report),inferred from route and handler
+backend/routes/web.php,782,resource,material-types,\App\Http\Controllers\Web\Admin\MaterialTypeController,"Manage material-types through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,783,resource,materials,MaterialManagementController,"Manage materials through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,784,post,materials/{material}/receipts,MaterialManagementController::receive,Receive (material management),inferred from route and handler
+backend/routes/web.php,785,post,/materials/{material}/toggle-active,MaterialManagementController::toggleActive,Toggle active (material management),inferred from route and handler
+backend/routes/web.php,787,get,/materials-import,,get · /materials-import,inferred from route and handler
+backend/routes/web.php,790,resource,integrations,IntegrationConfigController,"Manage integrations through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,796,put,/webhook-allowlist,\App\Http\Controllers\Web\Admin\WebhookController::updateAllowlist,Update allowlist (webhook),inferred from route and handler
+backend/routes/web.php,798,resource,webhooks,\App\Http\Controllers\Web\Admin\WebhookController,"Manage webhooks through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,799,post,/webhooks/{webhook}/toggle-active,\App\Http\Controllers\Web\Admin\WebhookController::toggleActive,Toggle active (webhook),inferred from route and handler
+backend/routes/web.php,800,post,/webhooks/{webhook}/test,\App\Http\Controllers\Web\Admin\WebhookController::test,Test (webhook),inferred from route and handler
+backend/routes/web.php,801,get,/webhooks/{webhook}/deliveries,\App\Http\Controllers\Web\Admin\WebhookController::deliveries,Deliveries (webhook),inferred from route and handler
+backend/routes/web.php,804,get,/import-example/{type},ImportExampleController::download,Download (import example),inferred from route and handler
+backend/routes/web.php,809,get,/csv-import,,get · /csv-import,inferred from route and handler
+backend/routes/web.php,812,get,/trash,\App\Http\Controllers\Web\Admin\TrashController::index,List or display trash records,inferred from route and handler
+backend/routes/web.php,813,post,/trash/{type}/{id}/restore,\App\Http\Controllers\Web\Admin\TrashController::restore,Restore (trash),inferred from route and handler
+backend/routes/web.php,817,get,/audit-logs,AdminAuditLogController::index,List or display admin audit log records,inferred from route and handler
+backend/routes/web.php,818,get,/audit-logs/export,AdminAuditLogController::export,Export admin audit log records,inferred from route and handler
+backend/routes/web.php,821,get,/logs/activity,\App\Http\Controllers\Web\Admin\ActivityLogController::index,List or display activity log records,inferred from route and handler
+backend/routes/web.php,822,get,/logs/activity/export,\App\Http\Controllers\Web\Admin\ActivityLogController::export,Export activity log records,inferred from route and handler
+backend/routes/web.php,825,get,/logs/system,\App\Http\Controllers\Web\Admin\SystemLogController::index,List or display system log records,inferred from route and handler
+backend/routes/web.php,826,get,/logs/system/tail,\App\Http\Controllers\Web\Admin\SystemLogController::tail,Tail (system log),inferred from route and handler
+backend/routes/web.php,827,post,/logs/system/failed-jobs/{uuid}/retry,\App\Http\Controllers\Web\Admin\SystemLogController::retryFailedJob,Retry failed job (system log),inferred from route and handler
+backend/routes/web.php,831,get,/modules,AdminModulesController::index,List or display admin modules records,inferred from route and handler
+backend/routes/web.php,832,get,/modules/install,AdminModulesController::install,Install (admin modules),inferred from route and handler
+backend/routes/web.php,833,get,/modules/store,AdminModulesController::store,Create or submit admin modules,inferred from route and handler
+backend/routes/web.php,834,post,/modules/upload,AdminModulesController::upload,Upload (admin modules),inferred from route and handler
+backend/routes/web.php,835,post,/modules/{name}/enable,AdminModulesController::enable,Enable (admin modules),inferred from route and handler
+backend/routes/web.php,836,post,/modules/{name}/disable,AdminModulesController::disable,Disable (admin modules),inferred from route and handler
+backend/routes/web.php,837,delete,/modules/{name},AdminModulesController::destroy,Remove admin modules,inferred from route and handler
+backend/routes/web.php,850,resource,workstation-types,WorkstationTypeController,"Manage workstation-types through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,851,post,/workstation-types/{workstationType}/toggle-active,WorkstationTypeController::toggleActive,Toggle active (workstation type),inferred from route and handler
+backend/routes/web.php,854,get,/workstation-devices,\App\Http\Controllers\Web\Admin\WorkstationDeviceController::index,List or display workstation device records,inferred from route and handler
+backend/routes/web.php,855,delete,/workstation-devices/{workstationDevice},\App\Http\Controllers\Web\Admin\WorkstationDeviceController::destroy,Remove workstation device,inferred from route and handler
+backend/routes/web.php,858,resource,subassemblies,SubassemblyController,"Manage subassemblies through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,859,post,/subassemblies/{subassembly}/toggle-active,SubassemblyController::toggleActive,Toggle active (subassembly),inferred from route and handler
+backend/routes/web.php,863,resource,companies,CompanyController,"Manage companies through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,864,post,/companies/{company}/toggle-active,CompanyController::toggleActive,Toggle active (company),inferred from route and handler
+backend/routes/web.php,867,resource,custom-fields,CustomFieldDefinitionController,"Manage custom-fields through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,869,post,/custom-fields/{customField}/toggle-active,CustomFieldDefinitionController::toggleActive,Toggle active (custom field definition),inferred from route and handler
+backend/routes/web.php,870,get,/custom-field-files/{file},CustomFieldDefinitionController::downloadFile,Download file (custom field definition),inferred from route and handler
+backend/routes/web.php,874,resource,unit-aliases,UnitAliasController,"Manage unit-aliases through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,880,resource,workers,\App\Http\Controllers\Web\Admin\WorkerController,"Manage workers through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,881,post,/workers/{worker}/toggle-active,\App\Http\Controllers\Web\Admin\WorkerController::toggleActive,Toggle active (worker),inferred from route and handler
+backend/routes/web.php,885,resource,downtime-reasons,\App\Http\Controllers\Web\Admin\DowntimeReasonController,"Manage downtime-reasons through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,886,post,/downtime-reasons/{downtimeReason}/toggle-active,\App\Http\Controllers\Web\Admin\DowntimeReasonController::toggleActive,Toggle active (downtime reason),inferred from route and handler
+backend/routes/web.php,888,resource,scrap-reasons,ScrapReasonController,"Manage scrap-reasons through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,889,post,/scrap-reasons/{scrapReason}/toggle-active,ScrapReasonController::toggleActive,Toggle active (scrap reason),inferred from route and handler
+backend/routes/web.php,910,get,/scrap-reports,ScrapReportController::index,List or display scrap report records,inferred from route and handler
+backend/routes/web.php,913,get,/non-conformance-reports,\App\Http\Controllers\Web\Admin\NonConformanceReportController::index,List or display non conformance report records,inferred from route and handler
+backend/routes/web.php,916,get,/net-requirements,\App\Http\Controllers\Web\Admin\NetRequirementsReportController::index,List or display net requirements report records,inferred from route and handler
+backend/routes/web.php,919,post,quality-control-triggers/{qualityControlTrigger}/toggle-active,\App\Http\Controllers\Web\Admin\QualityControlTriggerController::toggleActive,Toggle active (quality control trigger),inferred from route and handler
+backend/routes/web.php,920,resource,quality-control-triggers,\App\Http\Controllers\Web\Admin\QualityControlTriggerController,"Manage quality-control-triggers through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,929,resource,cost-sources,CostSourceController,"Manage cost-sources through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,930,post,/cost-sources/{costSource}/toggle-active,CostSourceController::toggleActive,Toggle active (cost source),inferred from route and handler
+backend/routes/web.php,933,get,/connectivity,ConnectivityController::index,List or display connectivity records,inferred from route and handler
+backend/routes/web.php,935,post,/connectivity/connections/{machineConnection}/toggle-active,ConnectivityController::toggleActive,Toggle active (connectivity),inferred from route and handler
+backend/routes/web.php,940,get,/,,get · /,inferred from route and handler
+backend/routes/web.php,941,post,/,,post · /,inferred from route and handler
+backend/routes/web.php,942,put,/{counter},,put · /{counter},inferred from route and handler
+backend/routes/web.php,943,post,/{counter}/legacy,,post · /{counter}/legacy,inferred from route and handler
+backend/routes/web.php,944,post,/{counter}/rebaseline,,post · /{counter}/rebaseline,inferred from route and handler
+backend/routes/web.php,945,post,/{counter}/readings/{reading}/review,,post · /{counter}/readings/{reading}/review,inferred from route and handler
+backend/routes/web.php,946,post,/{counter}/simulate,,post · /{counter}/simulate,inferred from route and handler
+backend/routes/web.php,950,get,/connectivity/mqtt,MqttConnectionController::index,List or display mqtt connection records,inferred from route and handler
+backend/routes/web.php,951,get,/connectivity/mqtt/create,MqttConnectionController::create,Open the creation workflow for mqtt connection,inferred from route and handler
+backend/routes/web.php,952,post,/connectivity/mqtt,MqttConnectionController::store,Create or submit mqtt connection,inferred from route and handler
+backend/routes/web.php,953,get,/connectivity/mqtt/{mqttConnection},MqttConnectionController::show,Read detail for mqtt connection,inferred from route and handler
+backend/routes/web.php,954,get,/connectivity/mqtt/{mqttConnection}/edit,MqttConnectionController::edit,Open the edit workflow for mqtt connection,inferred from route and handler
+backend/routes/web.php,955,put,/connectivity/mqtt/{mqttConnection},MqttConnectionController::update,Update mqtt connection,inferred from route and handler
+backend/routes/web.php,956,delete,/connectivity/mqtt/{mqttConnection},MqttConnectionController::destroy,Remove mqtt connection,inferred from route and handler
+backend/routes/web.php,957,post,/connectivity/mqtt/{mqttConnection}/toggle-active,MqttConnectionController::toggleActive,Toggle active (mqtt connection),inferred from route and handler
+backend/routes/web.php,958,get,/connectivity/mqtt/{mqttConnection}/messages,MqttConnectionController::messages,Messages (mqtt connection),inferred from route and handler
+backend/routes/web.php,961,post,/connectivity/mqtt/{mqttConnection}/topics,MachineTopicController::store,Create or submit machine topic,inferred from route and handler
+backend/routes/web.php,962,put,/connectivity/mqtt/{mqttConnection}/topics/{topic},MachineTopicController::update,Update machine topic,inferred from route and handler
+backend/routes/web.php,963,delete,/connectivity/mqtt/{mqttConnection}/topics/{topic},MachineTopicController::destroy,Remove machine topic,inferred from route and handler
+backend/routes/web.php,966,post,/connectivity/mqtt/{mqttConnection}/topics/{topic}/mappings,TopicMappingController::store,Create or submit topic mapping,inferred from route and handler
+backend/routes/web.php,967,put,/connectivity/mqtt/{mqttConnection}/topics/{topic}/mappings/{mapping},TopicMappingController::update,Update topic mapping,inferred from route and handler
+backend/routes/web.php,968,delete,/connectivity/mqtt/{mqttConnection}/topics/{topic}/mappings/{mapping},TopicMappingController::destroy,Remove topic mapping,inferred from route and handler
+backend/routes/web.php,971,resource,connectivity/modbus,\App\Http\Controllers\Web\Admin\Connectivity\ModbusConnectionController,"Manage connectivity/modbus through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,974,post,/connectivity/modbus/{machineConnection}/tags,\App\Http\Controllers\Web\Admin\Connectivity\ModbusConnectionController::storeTag,Store tag (modbus connection),inferred from route and handler
+backend/routes/web.php,975,delete,/connectivity/modbus/{machineConnection}/tags/{tag},\App\Http\Controllers\Web\Admin\Connectivity\ModbusConnectionController::destroyTag,Destroy tag (modbus connection),inferred from route and handler
+backend/routes/web.php,978,resource,connectivity/opcua,\App\Http\Controllers\Web\Admin\Connectivity\OpcuaConnectionController,"Manage connectivity/opcua through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,981,post,/connectivity/opcua/{machineConnection}/tags,\App\Http\Controllers\Web\Admin\Connectivity\OpcuaConnectionController::storeTag,Store tag (opcua connection),inferred from route and handler
+backend/routes/web.php,982,delete,/connectivity/opcua/{machineConnection}/tags/{tag},\App\Http\Controllers\Web\Admin\Connectivity\OpcuaConnectionController::destroyTag,Destroy tag (opcua connection),inferred from route and handler
+backend/routes/web.php,985,get,/machine-monitor,\App\Http\Controllers\Web\Admin\MachineMonitorController::index,List or display machine monitor records,inferred from route and handler
+backend/routes/web.php,986,get,/machine-monitor/check,\App\Http\Controllers\Web\Admin\MachineMonitorController::check,Check (machine monitor),inferred from route and handler
+backend/routes/web.php,988,post,/machine-monitor/{workstation}/state,\App\Http\Controllers\Web\Admin\MachineMonitorController::setState,Set state (machine monitor),inferred from route and handler
+backend/routes/web.php,992,resource,tools,ToolController,"Manage tools through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,995,resource,maintenance-events,MaintenanceEventController,"Manage maintenance-events through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,996,post,/maintenance-events/{maintenanceEvent}/start,MaintenanceEventController::start,Start (maintenance event),inferred from route and handler
+backend/routes/web.php,997,post,/maintenance-events/{maintenanceEvent}/complete,MaintenanceEventController::complete,Complete (maintenance event),inferred from route and handler
+backend/routes/web.php,998,post,/maintenance-events/{maintenanceEvent}/cancel,MaintenanceEventController::cancel,Cancel (maintenance event),inferred from route and handler
+backend/routes/web.php,1001,resource,process-segments,\App\Http\Controllers\Web\Admin\ProcessSegmentController,"Manage process-segments through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,1004,resource,maintenance-schedules,\App\Http\Controllers\Web\Admin\MaintenanceScheduleController,"Manage maintenance-schedules through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,1006,post,/maintenance-schedules/{maintenanceSchedule}/generate-now,\App\Http\Controllers\Web\Admin\MaintenanceScheduleController::generateNow,Generate now (maintenance schedule),inferred from route and handler
+backend/routes/web.php,1014,get,/move-pallet,PalletMovementController::terminal,Terminal (pallet movement),inferred from route and handler
+backend/routes/web.php,1015,post,/movements,PalletMovementController::store,Create or submit pallet movement,inferred from route and handler
+backend/routes/web.php,1018,get,/pallets,PalletMovementController::pallets,Pallets (pallet movement),inferred from route and handler
+backend/routes/web.php,1019,post,/pallets/destination,PalletMovementController::assignDestination,Assign destination (pallet movement),inferred from route and handler
+backend/routes/web.php,1026,get,/station,PackagingController::station,Station (packaging),inferred from route and handler
+backend/routes/web.php,1027,post,/scan,PackagingController::scan,Scan (packaging),inferred from route and handler
+backend/routes/web.php,1028,post,/scan-unit,PackagingController::scanUnit,Scan unit (packaging),inferred from route and handler
+backend/routes/web.php,1029,get,/items,PackagingController::items,Items (packaging),inferred from route and handler
+backend/routes/web.php,1030,get,/packing-steps,PackagingController::packingSteps,Packing steps (packaging),inferred from route and handler
+backend/routes/web.php,1031,get,/packing-steps/{batchStep}/materials,PackagingController::packingStepMaterials,Packing step materials (packaging),inferred from route and handler
+backend/routes/web.php,1032,post,/packing-steps/{batchStep}/start,PackagingController::startPackingStep,Start packing step (packaging),inferred from route and handler
+backend/routes/web.php,1033,get,/history,PackagingController::history,History (packaging),inferred from route and handler
+backend/routes/web.php,1034,get,/history/poll,PackagingController::historyAfter,History after (packaging),inferred from route and handler
+backend/routes/web.php,1035,get,/stats,PackagingController::stats,Stats (packaging),inferred from route and handler
+backend/routes/web.php,1036,get,/pallets,PackagingController::openPallets,Open pallets (packaging),inferred from route and handler
+backend/routes/web.php,1037,post,/pallets,PackagingController::createPallet,Create pallet (packaging),inferred from route and handler
+backend/routes/web.php,1038,post,/pallets/{pallet}/close,PackagingController::closePallet,Close pallet (packaging),inferred from route and handler
+backend/routes/web.php,1039,post,/pallets/{pallet}/activate,PackagingController::activatePallet,Activate pallet (packaging),inferred from route and handler
+backend/routes/web.php,1040,post,/pallets/{pallet}/release,PackagingController::releasePallet,Release pallet (packaging),inferred from route and handler
+backend/routes/web.php,1042,get,/cartons,UnitCartonController::index,List or display unit carton records,inferred from route and handler
+backend/routes/web.php,1043,post,/cartons,UnitCartonController::store,Create or submit unit carton,inferred from route and handler
+backend/routes/web.php,1044,get,/cartons/{carton},UnitCartonController::show,Read detail for unit carton,inferred from route and handler
+backend/routes/web.php,1045,post,/cartons/{carton}/close,UnitCartonController::close,Close (unit carton),inferred from route and handler
+backend/routes/web.php,1046,post,/cartons/{carton}/activate,UnitCartonController::activate,Activate (unit carton),inferred from route and handler
+backend/routes/web.php,1047,post,/cartons/{carton}/release,UnitCartonController::release,Release (unit carton),inferred from route and handler
+backend/routes/web.php,1048,post,/cartons/{carton}/pallet,UnitCartonController::assignPallet,Assign pallet (unit carton),inferred from route and handler
+backend/routes/web.php,1052,get,/,PackagingController::adminOverview,Admin overview (packaging),inferred from route and handler
+backend/routes/web.php,1053,get,/eans,PackagingEanController::index,List or display packaging ean records,inferred from route and handler
+backend/routes/web.php,1054,post,/eans,PackagingEanController::store,Create or submit packaging ean,inferred from route and handler
+backend/routes/web.php,1055,delete,/eans/{ean},PackagingEanController::destroy,Remove packaging ean,inferred from route and handler
+backend/routes/web.php,1059,get,/work-order/{workOrder}/pdf,LabelPrintController::workOrderPdf,Work order pdf (label print),inferred from route and handler
+backend/routes/web.php,1060,get,/work-order/{workOrder}/zpl,LabelPrintController::workOrderZpl,Work order zpl (label print),inferred from route and handler
+backend/routes/web.php,1061,get,/finished-goods/{batch}/pdf,LabelPrintController::finishedGoodsPdf,Finished goods pdf (label print),inferred from route and handler
+backend/routes/web.php,1062,get,/finished-goods/{batch}/zpl,LabelPrintController::finishedGoodsZpl,Finished goods zpl (label print),inferred from route and handler
+backend/routes/web.php,1063,get,/workstation-step/{batchStep}/pdf,LabelPrintController::batchStepPdf,Batch step pdf (label print),inferred from route and handler
+backend/routes/web.php,1064,get,/workstation-step/{batchStep}/zpl,LabelPrintController::batchStepZpl,Batch step zpl (label print),inferred from route and handler
+backend/routes/web.php,1065,get,/pallet/{pallet}/pdf,LabelPrintController::palletPdf,Pallet pdf (label print),inferred from route and handler
+backend/routes/web.php,1066,get,/pallet/{pallet}/zpl,LabelPrintController::palletZpl,Pallet zpl (label print),inferred from route and handler
+backend/routes/web.php,1067,get,/serial-units/pdf,LabelPrintController::serialUnitsPdf,Serial units pdf (label print),inferred from route and handler
+backend/routes/web.php,1068,get,/serial-units/zpl,LabelPrintController::serialUnitsZpl,Serial units zpl (label print),inferred from route and handler
+backend/routes/web.php,1069,get,/pallet/{pallet}/packing-list,\App\Http\Controllers\Web\Packaging\PackingListController::pallet,Pallet (packing list),inferred from route and handler
+backend/routes/web.php,1070,get,/serial-unit/{serialUnit}/pdf,LabelPrintController::serialUnitPdf,Serial unit pdf (label print),inferred from route and handler
+backend/routes/web.php,1071,get,/serial-unit/{serialUnit}/zpl,LabelPrintController::serialUnitZpl,Serial unit zpl (label print),inferred from route and handler
+backend/routes/web.php,1072,get,/carton/{carton}/pdf,LabelPrintController::cartonPdf,Carton pdf (label print),inferred from route and handler
+backend/routes/web.php,1073,get,/material-lot/{materialLot}/pdf,LabelPrintController::materialLotPdf,Material lot pdf (label print),inferred from route and handler
+backend/routes/web.php,1074,get,/material-lot/{materialLot}/zpl,LabelPrintController::materialLotZpl,Material lot zpl (label print),inferred from route and handler
+backend/routes/web.php,1075,post,/print-multiple,LabelPrintController::printMultiple,Print multiple (label print),inferred from route and handler
+backend/routes/web.php,1080,get,/label-templates/preview,\App\Http\Controllers\Web\Packaging\LabelTemplatePreviewController::draft,Draft (label template preview),inferred from route and handler
+backend/routes/web.php,1081,get,/label-templates/{labelTemplate}/preview,\App\Http\Controllers\Web\Packaging\LabelTemplatePreviewController::show,Read detail for label template preview,inferred from route and handler
+backend/routes/web.php,1082,resource,label-templates,LabelTemplateController,"Manage label-templates through resource actions, subject to route restrictions",inferred from route and handler
+backend/routes/web.php,1083,post,/label-templates/{labelTemplate}/set-default,LabelTemplateController::setDefault,Set default (label template),inferred from route and handler
+backend/routes/web.php,1093,get,/engineering/viewer/{engineeringDocument}/{path},\App\Http\Controllers\EngineeringViewerController::serve,Serve (engineering viewer),inferred from route and handler

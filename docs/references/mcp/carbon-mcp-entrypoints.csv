@@ -1,0 +1,5 @@
+tool,capability,source,line
+search_tools,Find ranked business operations and filter by module or risk classification.,packages/ee/src/mcp/server.ts,447
+describe_tool,Read the input and output contract and permissions for one or more operations.,packages/ee/src/mcp/server.ts,149
+call_tool,Dispatch read and ordinary write operations by name.,packages/ee/src/mcp/server.ts,424
+call_destructive_tool,Dispatch destructive operations using a distinct entry point.,packages/ee/src/mcp/server.ts,435

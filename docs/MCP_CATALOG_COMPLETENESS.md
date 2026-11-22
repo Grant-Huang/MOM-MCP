@@ -8,6 +8,8 @@
 - **Carbon** 区分库存收货与批次绑定、拣料与撤拣、转储与库存纠正。质量也区分测量、部分接收、拒收和不合格处理。存在独立业务意图、权限、状态变化或纠正路径时，应列为独立工具。仅字段不同的同一状态编辑可合为一个受约束命令。 [库存服务](https://github.com/crbnos/carbon/blob/2f5b652498539be79372635666f1ccc45f5cb601/apps/erp/app/modules/inventory/inventory.server.ts) · [质量服务](https://github.com/crbnos/carbon/blob/2f5b652498539be79372635666f1ccc45f5cb601/apps/erp/app/modules/quality/quality.server.ts)
 - **qcadoo** 用明确的工单迁移和报工纠正检查状态覆盖。**OpenMES** 用工单快照生效点与处置事务检查版本和质量覆盖。**WebErpMesv2** 用多订单套料、实际耗料和余料回库检查钣金边界。 [qcadoo 工单状态](https://github.com/qcadoo/mes/blob/625afad7a8adaaa65b5b8b7bd7867af21aafc960/mes-plugins/mes-plugins-orders/src/main/java/com/qcadoo/mes/orders/states/constants/OrderState.java) · [OpenMES 工单快照](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Services/WorkOrder/WorkOrderSnapshotService.php) · [WebErpMesv2 套料](https://github.com/SMEWebify/WebErpMesv2/blob/8fa6c05452ce5a5e3d0bf68ef1592446c1858a54/app/Services/Stock/NestRecorder.php)
 
+P8/P9 的分层规则、拆并条件与场景反证见 [MCP 分层审查](MCP_LAYERING_REVIEW.md)。逐项裁决后再确定公共目录。
+
 ## 目录怎么列
 
 用下表建立 **业务对象 × 生命周期** 矩阵。每格列出业务意图、工具名、可用场景和验收 ID。每格状态为已验收、待实现、范围外；范围外须有理由。跨行业同义的动作以同一名称和 schema 出现，例如 CNC 与 SMT 共用 `mes.reserve_material`，具体允用批次规则由领域配置决定。
@@ -39,3 +41,5 @@
 | 检验、库存移动、资源与版本查询 | 初始清单已有基础查询 | 仍须查漏不合格单与冻结列表、库位能力、班次和资源占用历史，并逐项定范围 |
 
 这些差异属于下一次契约冻结输入。每项状态必须给出可追溯的来源、所属业务流程、工具名和验收 ID，或记录范围外的原因。
+
+目录审计同时覆盖 [长期运营测试模拟](LONG_RUNNING_MES_VALIDATION.md) 的跨班任务、异常叠加、恢复和审计。场景能单次跑完是入口，连续状态和未决事项接续由独立验收矩阵签收。
