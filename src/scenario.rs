@@ -280,6 +280,24 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                         && setup.work_centers.is_some()))),
         "shared dispatch requires assembly or configured manufacturing work centers"
     );
+    anyhow::ensure!(
+        !definition.capabilities.contains(&Action::ReassignOperation)
+            || (definition.capabilities.contains(&Action::DispatchOperation)
+                && (definition
+                    .assembly
+                    .as_ref()
+                    .is_some_and(|setup| setup.exclusive_dispatch)
+                    || definition.manufacturing.as_ref().is_some_and(|setup| setup
+                        .strict_dispatch
+                        && setup.work_centers.is_some()
+                        && !setup.alternate_centers.is_empty()
+                        && setup
+                            .alternate_centers
+                            .iter()
+                            .all(|(center, alternates)| identifier(center)
+                                && alternates.iter().all(|alternate| identifier(alternate)))))),
+        "resource reassignment requires exclusive dispatch and valid work centers"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -363,6 +381,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-cross-shop.json"),
             include_str!("../fixtures/cnc-operation-reads.json"),
             include_str!("../fixtures/cnc-resource-dispatch.json"),
+            include_str!("../fixtures/cnc-resource-occupancy.json"),
+            include_str!("../fixtures/assembly-resource-occupancy.json"),
             include_str!("../fixtures/assembly-resource-dispatch.json"),
             include_str!("../fixtures/assembly-operation-reads.json"),
             include_str!("../fixtures/assembly-order-terminal.json"),
@@ -932,7 +952,9 @@ impl Scenarios {
             || (definition.assembly.is_some()
                 && matches!(
                     action,
-                    Action::DispatchOperation | Action::SetDispatchPriority
+                    Action::DispatchOperation
+                        | Action::ReassignOperation
+                        | Action::SetDispatchPriority
                 ))
         {
             let Some(setup) = &definition.assembly else {

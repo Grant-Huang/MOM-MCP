@@ -3015,3 +3015,60 @@ async fn p8c_02_resource_priority_and_dispatch() {
         assert_eq!(specs[0],specs[1]);
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p8c_03_exclusive_resource_and_reassignment() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("runs.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    let (other, _other_child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        for (scenario, first, second, operation, center, alternate, wrong) in [
+            ("cnc","WO-1","WO-2","machining","MACH-01","MACH-02","ASM-01"),
+            ("assembly","WO-E","WO-L","build","CELL-A","CELL-C","TEST-1"),
+        ] {
+            let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":12})).await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            let dispatch=|id, resource, cursor, key|json!({"work_order":id,"operation":operation,"work_center":resource,"expected_cursor":cursor,"idempotency_key":key});
+            let batch=invoke("release_work_orders",json!({"work_orders":[first,second],"expected_cursor":0,"idempotency_key":"release"})).await;
+            assert_eq!(batch["cursor"],2);
+            let (a,b)=tokio::join!(
+                invoke("dispatch_operation",dispatch(first,center,2,"first")),
+                business(&other,run,"dispatch_operation",dispatch(second,center,2,"second"))
+            );
+            let (owner,waiting,rejected)=if a["ok"]==true {(first,second,b)} else {(second,first,a)};
+            assert_eq!(rejected["code"],"VERSION_CONFLICT");
+            let busy=invoke("dispatch_operation",dispatch(waiting,center,3,"busy")).await;
+            assert_eq!(busy["code"],"RESOURCE_BUSY");
+            assert_eq!(busy["occupied_by"],owner);
+            let blocked=invoke("reassign_operation",dispatch(owner,wrong,3,"wrong")).await;
+            assert_eq!(blocked["ok"],false);
+            let resource=invoke("get_resource_capability",json!({"work_center":center})).await;
+            assert_eq!(resource["resource"]["occupied_by"],owner);
+            let reassigned=invoke("reassign_operation",dispatch(owner,alternate,3,"move")).await;
+            assert_eq!(reassigned["cursor"],4,"{reassigned}");
+            assert_eq!(invoke("reassign_operation",dispatch(owner,alternate,3,"move")).await,reassigned);
+            assert_eq!(invoke("get_resource_capability",json!({"work_center":center})).await["resource"]["available"],true);
+            assert_eq!(invoke("get_resource_capability",json!({"work_center":alternate})).await["resource"]["occupied_by"],owner);
+            assert_eq!(invoke("dispatch_operation",dispatch(waiting,center,4,"busy")).await["cursor"],5);
+            let rejected=invoke("reassign_operation",dispatch(waiting,alternate,5,"occupied-target")).await;
+            assert_eq!(rejected["code"],"RESOURCE_BUSY");
+            assert_eq!(invoke("get_resource_capability",json!({"work_center":center})).await["resource"]["occupied_by"],waiting);
+            let cancelled=invoke("cancel_work_order",json!({"work_order":owner,"expected_cursor":5,"idempotency_key":"cancel","reason":"cancel before execution"})).await;
+            assert_eq!(cancelled["status"],"cancelled");
+            assert_eq!(invoke("get_resource_capability",json!({"work_center":alternate})).await["resource"]["available"],true);
+            if scenario == "cnc" {
+                assert_eq!(mes(&client,run,"issue_material",waiting,"issue",json!({"batch":"LOT-1"})).await["ok"],true);
+                assert_eq!(mes(&client,run,"start_operation",waiting,"start",json!({"operation":operation})).await["ok"],true);
+                assert_eq!(mes(&client,run,"report_operation",waiting,"partial",json!({"operation":operation,"quantity":4})).await["ok"],true);
+                assert_eq!(invoke("get_resource_capability",json!({"work_center":center})).await["resource"]["occupied_by"],waiting);
+                assert_eq!(mes(&client,run,"report_operation",waiting,"finish",json!({"operation":operation,"quantity":6})).await["remaining"],0);
+            } else {
+                assert_eq!(mes(&client,run,"assembly_build",waiting,"build",json!({})).await["ok"],true);
+            }
+            assert_eq!(invoke("get_resource_capability",json!({"work_center":center})).await["resource"]["available"],true);
+        }
+    }).await.unwrap();
+}

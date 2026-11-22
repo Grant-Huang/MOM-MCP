@@ -84,6 +84,12 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "production",
     ),
     (
+        Action::ReassignOperation,
+        "reassign_operation",
+        "将尚未开工的工序改派到可用工作中心",
+        "production",
+    ),
+    (
         Action::DispatchOperation,
         "dispatch_operation",
         "派工",
@@ -157,6 +163,13 @@ pub fn spec(action: Action) -> Spec {
         Action::HoldWorkOrder => &["work_order", "idempotency_key", "expected_cursor", "reason"],
         Action::ReleaseOrder | Action::CloseOrder => &["work_order", "idempotency_key"],
         Action::IssueMaterial => &["work_order", "batch", "idempotency_key"],
+        Action::ReassignOperation => &[
+            "work_order",
+            "operation",
+            "work_center",
+            "expected_cursor",
+            "idempotency_key",
+        ],
         Action::DispatchOperation | Action::StartOperation | Action::ReportOperation => {
             &["work_order", "operation", "idempotency_key"]
         }
@@ -197,7 +210,10 @@ pub fn spec(action: Action) -> Spec {
             json!({"type":"integer","minimum":0,"maximum":9}),
         );
     }
-    if action == Action::DispatchOperation {
+    if matches!(
+        action,
+        Action::DispatchOperation | Action::ReassignOperation
+    ) {
         fields.insert("operation".into(), text());
         fields.insert("work_center".into(), text());
     }
@@ -344,6 +360,7 @@ pub fn spec(action: Action) -> Spec {
             "MATERIAL_HELD",
             "OPERATION_OUT_OF_SEQUENCE",
             "WORK_CENTER_MISMATCH",
+            "RESOURCE_BUSY",
             "CELL_NOT_CAPABLE",
             "OPERATION_NOT_DISPATCHABLE",
             "OPERATION_NOT_FOUND",
@@ -366,12 +383,16 @@ pub struct Setup {
     pub initial_stock: usize,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub strict_dispatch: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub alternate_centers: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_centers: Option<[String; 3]>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
 struct Order {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    assigned_centers: BTreeMap<usize, String>,
     #[serde(default, skip_serializing_if = "priority_is_default")]
     priority: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -540,6 +561,29 @@ pub fn order_status(
     }))
 }
 
+fn occupant<'a>(state: &'a State, center: &str, except: &str) -> Option<&'a str> {
+    state
+        .orders
+        .iter()
+        .find(|(id, order)| {
+            id.as_str() != except
+                && matches!(order.phase, Phase::Dispatched | Phase::Running)
+                && order
+                    .assigned_centers
+                    .get(&order.step)
+                    .is_some_and(|assigned| assigned == center)
+        })
+        .map(|(id, _)| id.as_str())
+}
+
+fn eligible_center(setup: &Setup, primary: &str, candidate: &str) -> bool {
+    primary == candidate
+        || setup
+            .alternate_centers
+            .get(primary)
+            .is_some_and(|alternates| alternates.iter().any(|center| center == candidate))
+}
+
 pub fn operations(
     tx: &Transaction<'_>,
     run: &str,
@@ -594,16 +638,26 @@ pub fn operations(
                     };
                     (phase, blocking)
                 };
+            let center = order.assigned_centers.get(&index).cloned().or_else(|| {
+                order
+                    .work_centers
+                    .as_ref()
+                    .map(|centers| centers[index].clone())
+            });
+            let blocking = blocking.or_else(|| {
+                (status == "ready"
+                    && center
+                        .as_deref()
+                        .is_some_and(|center| occupant(&state, center, id).is_some()))
+                .then_some("RESOURCE_BUSY")
+            });
             rows.push(crate::operations::Operation {
                 work_order: id.clone(),
                 operation,
                 sequence: index + 1,
                 status,
                 blocking,
-                work_center: order
-                    .work_centers
-                    .as_ref()
-                    .map(|centers| centers[index].clone()),
+                work_center: center,
                 priority: order.priority,
                 due: 0,
             });
@@ -625,12 +679,12 @@ pub fn resource_capability(
         if state
             .work_centers
             .as_ref()
-            .is_some_and(|centers| centers[index] == center)
+            .is_some_and(|centers| eligible_center(setup, &centers[index], center))
             || state.orders.values().any(|order| {
                 order
                     .work_centers
                     .as_ref()
-                    .is_some_and(|centers| centers[index] == center)
+                    .is_some_and(|centers| eligible_center(setup, &centers[index], center))
             })
         {
             operations.push(*operation);
@@ -639,13 +693,14 @@ pub fn resource_capability(
     if operations.is_empty() {
         return Ok(None);
     }
+    let occupied_by = occupant(&state, center, "");
     let available = !state.equipment_down
         || operations
             .iter()
             .all(|operation| *operation == "inspection");
     Ok(Some(
         json!({"work_center":center,"operations":operations,"configurations":[],
-        "available":available,"occupied_by":null}),
+        "available":available && occupied_by.is_none(),"occupied_by":occupied_by}),
     ))
 }
 
@@ -820,14 +875,7 @@ pub fn invoke(
             .push(json!({"kind":"equipment_state","equipment_state":args["equipment_state"]}));
         json!({"ok":true,"equipment_down":state.equipment_down})
     } else {
-        apply(
-            &mut state,
-            held,
-            setup.strict_dispatch,
-            action,
-            args,
-            cursor + 1,
-        )
+        apply(&mut state, held, setup, action, args, cursor + 1)
     };
     if response["ok"] != true {
         return Ok((response, false));
@@ -866,12 +914,26 @@ fn release_blocker(phase: &Phase, stock: usize, held: bool) -> Option<&'static s
 fn apply(
     state: &mut State,
     held: bool,
-    strict_dispatch: bool,
+    setup: &Setup,
     action: Action,
     args: &Map<String, Value>,
     revision: i64,
 ) -> Value {
     let id = args["work_order"].as_str().unwrap();
+    let busy = args
+        .get("work_center")
+        .and_then(Value::as_str)
+        .and_then(|center| occupant(state, center, id))
+        .map(str::to_owned);
+    let reverse_busy = action == Action::ReverseReport
+        && state.orders.get(id).is_some_and(|order| {
+            order.phase == Phase::Ready
+                && order
+                    .step
+                    .checked_sub(1)
+                    .and_then(|step| order.assigned_centers.get(&step))
+                    .is_some_and(|center| occupant(state, center, id).is_some())
+        });
     let Some(order) = state.orders.get_mut(id) else {
         return error("WORK_ORDER_NOT_FOUND");
     };
@@ -882,7 +944,10 @@ fn apply(
     }
     if matches!(
         action,
-        Action::DispatchOperation | Action::StartOperation | Action::ReportOperation
+        Action::DispatchOperation
+            | Action::ReassignOperation
+            | Action::StartOperation
+            | Action::ReportOperation
     ) && ROUTE.get(order.step).copied() != args["operation"].as_str()
     {
         return error("OPERATION_OUT_OF_SEQUENCE");
@@ -976,13 +1041,22 @@ fn apply(
             order.priority = args["priority"].as_u64().unwrap();
             return json!({"ok":true,"work_order":id,"priority":order.priority});
         }
-        Action::DispatchOperation if order.phase == Phase::Ready => {
+        Action::DispatchOperation | Action::ReassignOperation
+            if (action == Action::DispatchOperation && order.phase == Phase::Ready)
+                || (action == Action::ReassignOperation
+                    && order.phase == Phase::Dispatched
+                    && !setup.alternate_centers.is_empty()) =>
+        {
             if let Some(centers) = &order.work_centers {
-                let center = &centers[order.step];
-                if args.get("work_center").and_then(Value::as_str) != Some(center) {
-                    return json!({"ok":false,"code":"WORK_CENTER_MISMATCH","required_work_center":center});
+                let primary = &centers[order.step];
+                let center = args
+                    .get("work_center")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if !eligible_center(setup, primary, center) {
+                    return json!({"ok":false,"code":"WORK_CENTER_MISMATCH","required_work_center":primary});
                 }
-                if strict_dispatch {
+                if setup.strict_dispatch {
                     if held {
                         return error("QUALITY_HOLD");
                     }
@@ -995,7 +1069,26 @@ fn apply(
                         return error("MATERIAL_SHORTAGE");
                     }
                 }
-                state.ledger.push(json!({"kind":"operation_dispatch","work_order":id,
+                if !setup.alternate_centers.is_empty() {
+                    if let Some(owner) = busy {
+                        return json!({"ok":false,"code":"RESOURCE_BUSY","occupied_by":owner});
+                    }
+                    if action == Action::ReassignOperation
+                        && order
+                            .assigned_centers
+                            .get(&order.step)
+                            .is_some_and(|assigned| assigned == center)
+                    {
+                        return error("INVALID_STATE");
+                    }
+                    order.assigned_centers.insert(order.step, center.into());
+                }
+                let kind = if action == Action::ReassignOperation {
+                    "operation_reassign"
+                } else {
+                    "operation_dispatch"
+                };
+                state.ledger.push(json!({"kind":kind,"work_order":id,
                     "operation":ROUTE[order.step],"work_center":center,"route_version":order.route_version,"cursor":revision}));
             } else if args.contains_key("work_center") {
                 return error("INVALID_ARGUMENT");
@@ -1123,6 +1216,9 @@ fn apply(
                 .any(|later| later.order == id && later.step == report.step && !later.reversed);
             if report.reversed || !(same_step || previous_step) || later_report {
                 return error("REPORT_HAS_DEPENDENCIES");
+            }
+            if reverse_busy {
+                return error("RESOURCE_BUSY");
             }
             let report = &mut state.reports[index];
             let delta = if report.step == 0 {
