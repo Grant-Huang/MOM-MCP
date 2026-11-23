@@ -689,3 +689,19 @@ spec = "acceptance/P9C.md"
 features = ["F08", "F09", "F10"]
 layers = ["playwright"]
 tests = { playwright = "P9C-05 Record issued material in a partial report" }
+
+[[case]]
+id = "P9C-06"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9c_06_return_unused_material" }
+
+[[case]]
+id = "P9C-07"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P9C-07 Return unused issued material" }

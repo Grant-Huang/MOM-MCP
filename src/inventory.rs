@@ -157,7 +157,7 @@ pub(crate) fn spec(action: Action) -> Spec {
         _ => unreachable!("receipt action"),
     };
     if action == Action::ListInventoryMovements {
-        fields["movement_type"] = json!({"type":"string","enum":["receipt","issue"]});
+        fields["movement_type"] = json!({"type":"string","enum":["receipt","issue","return"]});
         fields["after_movement_id"] = id_schema();
     }
     output["ok"] = json!({"const":true});
@@ -179,6 +179,16 @@ pub(crate) fn spec(action: Action) -> Spec {
             json!({"ok":{"const":true},"run_id":text(),"movements":{"type":"array","items":crate::reservations::row_schema()},
                 "next_after_movement_id":{"type":["string","null"]}}),
         ));
+        output_schema["oneOf"].as_array_mut().unwrap().push(object(
+            &["ok","run_id","movements","next_after_movement_id"],
+            json!({"ok":{"const":true},"run_id":text(),"movements":{"type":"array","items":crate::reservations::return_schema()},
+                "next_after_movement_id":{"type":["string","null"]}}),
+        ));
+        output_schema["anyOf"] = output_schema
+            .as_object_mut()
+            .unwrap()
+            .remove("oneOf")
+            .unwrap();
     }
     Spec {
         name: action.name(),
@@ -298,11 +308,15 @@ fn query(
             .get("movement_type")
             .and_then(Value::as_str)
             .unwrap_or("receipt");
-        if movement_type == "issue" {
+        if matches!(movement_type, "issue" | "return") {
             if args.contains_key("after_receipt_id") {
                 return Ok(Err(Rejection::invalid("after_receipt_id")));
             }
-            return Ok(Ok(crate::reservations::issue_movements(tx, run, args)?));
+            return Ok(Ok(if movement_type == "issue" {
+                crate::reservations::issue_movements(tx, run, args)?
+            } else {
+                crate::reservations::return_movements(tx, run, args)?
+            }));
         }
         if args.contains_key("after_movement_id") {
             return Ok(Err(Rejection::invalid("after_movement_id")));
@@ -558,7 +572,8 @@ fn balance(
     location: Option<&str>,
 ) -> rusqlite::Result<(i64, i64, i64)> {
     tx.query_row(
-        "SELECT COALESCE(SUM(s.quantity - COALESCE((SELECT SUM(x.quantity) FROM stock_reservations x
+        "SELECT COALESCE(SUM(s.quantity - COALESCE((SELECT SUM(x.quantity-COALESCE(t.quantity,0)) FROM stock_reservations x
+             LEFT JOIN stock_return_totals t ON t.run=x.run AND t.reservation=x.reservation
              WHERE x.run=s.run AND x.lot=s.lot AND x.status='issued'),0)),0),
          COALESCE(SUM(CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END),0),
          COALESCE(SUM((SELECT SUM(x.quantity) FROM stock_reservations x

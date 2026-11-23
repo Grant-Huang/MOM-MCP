@@ -983,14 +983,52 @@ pub fn resource_capability(
     ))
 }
 
-fn has_operation_issue(tx: &Transaction<'_>, run: &str, order: &str) -> rusqlite::Result<bool> {
+fn has_operation_issue(
+    tx: &Transaction<'_>,
+    run: &str,
+    order: &str,
+    require_remaining: bool,
+) -> rusqlite::Result<bool> {
     tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM stock_operation_issues i
          JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
-         WHERE i.run=?1 AND r.work_order=?2 AND i.operation=?3)",
-        params![run, order, MATERIAL_INPUT_OPERATION],
+         LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
+         WHERE i.run=?1 AND r.work_order=?2 AND i.operation=?3
+         AND (NOT ?4 OR r.quantity > COALESCE(t.quantity,0)))",
+        params![run, order, MATERIAL_INPUT_OPERATION, require_remaining],
         |row| row.get(0),
     )
+}
+
+pub(crate) fn reported_material_quantity(
+    tx: &Transaction<'_>,
+    run: &str,
+    order: &str,
+    reservation: &str,
+) -> anyhow::Result<i64> {
+    let saved: Option<String> = tx
+        .query_row("SELECT state FROM mes_runs WHERE run=?1", [run], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    let Some(saved) = saved else {
+        return Ok(0);
+    };
+    let state = serde_json::from_str(&saved)?;
+    Ok(material_used(&state, order, reservation))
+}
+
+fn material_used(state: &State, order: &str, reservation: &str) -> i64 {
+    state
+        .reports
+        .iter()
+        .filter(|report| !report.reversed && report.order == order)
+        .flat_map(|report| &report.material_inputs)
+        .filter(|input| input.reservation_id == reservation)
+        .map(|input| {
+            crate::inventory::parse_quantity(&input.quantity).expect("validated material quantity")
+        })
+        .sum()
 }
 
 fn report_material_inputs(
@@ -1017,11 +1055,12 @@ fn report_material_inputs(
         }
         let issue = tx
             .query_row(
-                "SELECT r.lot,s.unit,r.quantity,EXISTS(
+                "SELECT r.lot,s.unit,r.quantity-COALESCE(t.quantity,0),EXISTS(
                  SELECT 1 FROM scenario_holds h WHERE h.run=r.run AND h.batch=r.lot)
              FROM stock_operation_issues i
              JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
              JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
+             LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
              WHERE i.run=?1 AND r.work_order=?2 AND i.operation=?3 AND i.reservation=?4
                AND r.status='issued'",
                 params![run, order, MATERIAL_INPUT_OPERATION, reservation],
@@ -1041,14 +1080,10 @@ fn report_material_inputs(
         if held {
             return Ok(Err("MATERIAL_HELD"));
         }
-        let used: i64 = state
-            .reports
-            .iter()
-            .filter(|report| !report.reversed && report.order == order)
-            .flat_map(|report| &report.material_inputs)
-            .filter(|input| input.reservation_id == *reservation)
-            .map(|input| parse_quantity(&input.quantity).expect("validated material quantity"))
-            .sum();
+        let used = material_used(state, order, reservation);
+        if unit == "each" && requested % crate::inventory::QUANTITY_SCALE != 0 {
+            return Ok(Err("INVALID_ARGUMENT"));
+        }
         if requested > issued - used {
             return Ok(Err("MATERIAL_ISSUE_QUANTITY_EXCEEDED"));
         }
@@ -1165,7 +1200,7 @@ pub fn invoke(
                         actions.push("issue_material");
                     }
                     let can_start = if setup.issued_report_inputs {
-                        order.step != 0 || has_operation_issue(tx, run, id)?
+                        order.step != 0 || has_operation_issue(tx, run, id, true)?
                     } else {
                         order.batch.is_some()
                     };
@@ -1287,7 +1322,7 @@ pub fn invoke(
     }
     if setup.issued_report_inputs
         && action == Action::CancelWorkOrder
-        && has_operation_issue(tx, run, args["work_order"].as_str().unwrap())?
+        && has_operation_issue(tx, run, args["work_order"].as_str().unwrap(), false)?
     {
         return Ok((error("ORDER_HAS_EXECUTION"), false));
     }
@@ -1299,7 +1334,7 @@ pub fn invoke(
             return Ok((error(&code), false));
         }
         if args["operation"] == MATERIAL_INPUT_OPERATION {
-            if action == Action::StartOperation && !has_operation_issue(tx, run, order)? {
+            if action == Action::StartOperation && !has_operation_issue(tx, run, order, true)? {
                 return Ok((error("MATERIAL_NOT_ISSUED"), false));
             }
             if action == Action::PostOperationReport {

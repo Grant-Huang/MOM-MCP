@@ -51,6 +51,13 @@ pub(crate) fn spec(action: Action) -> Spec {
             fields["operation"] = id_schema();
             "将已拣料批次发至指定工序"
         }
+        Action::ReturnUnusedMaterial => {
+            required.extend(["movement_id", "quantity", "reason"]);
+            fields["movement_id"] = id_schema();
+            fields["quantity"] = quantity_schema();
+            fields["reason"] = text();
+            "将工序尚未消耗的物料退回发料批次及原库位"
+        }
         Action::PickMaterial => "将已预留的物料标记为拣料",
         Action::UnpickMaterial => "撤销拣料并恢复预留",
         Action::ReleaseReservation => "释放尚未拣料的预留",
@@ -62,6 +69,11 @@ pub(crate) fn spec(action: Action) -> Spec {
             json!({"ok":{"const":true},
             "run_id":text(),"reservations":{"type":"array","items":row_schema()},
             "next_after_reservation_id":{"type":["string","null"]}}),
+        )
+    } else if action == Action::ReturnUnusedMaterial {
+        object(
+            &["ok", "run_id", "cursor", "movement"],
+            json!({"ok":{"const":true},"run_id":text(),"cursor":{"type":"integer","minimum":1},"movement":return_schema()}),
         )
     } else {
         object(
@@ -98,6 +110,9 @@ pub(crate) fn spec(action: Action) -> Spec {
             "ISSUE_OPERATION_NOT_ELIGIBLE",
             "QUALITY_HOLD",
             "QUALITY_SCRAPPED",
+            "RETURN_MOVEMENT_ALREADY_EXISTS",
+            "MATERIAL_HELD",
+            "RETURN_EXCEEDS_UNUSED_QUANTITY",
             "VERSION_CONFLICT",
             "IDEMPOTENCY_CONFLICT",
         ],
@@ -154,6 +169,152 @@ pub(crate) fn issue_movements(
     Ok(json!({"ok":true,"run_id":run,"movements":rows,"next_after_movement_id":next}))
 }
 
+pub(crate) fn return_schema() -> Value {
+    object(
+        &[
+            "movement_id",
+            "reservation_id",
+            "work_order",
+            "operation",
+            "lot_id",
+            "item_id",
+            "revision",
+            "location",
+            "quantity",
+            "unit",
+            "reason",
+            "returned_cursor",
+        ],
+        json!({
+            "movement_id":id_schema(),"reservation_id":id_schema(),"work_order":id_schema(),
+            "operation":id_schema(),"lot_id":id_schema(),"item_id":id_schema(),"revision":{"type":"integer","minimum":1},
+            "location":id_schema(),"quantity":quantity_schema(),"unit":text(),"reason":text(),
+            "returned_cursor":{"type":"integer","minimum":1}
+        }),
+    )
+}
+
+const RETURN_RECORDS: &str = "SELECT t.movement,t.reservation,r.work_order,i.operation,r.lot,
+    s.item,s.revision,s.location,t.quantity,s.unit,t.reason,t.returned_cursor
+    FROM stock_operation_returns t
+    JOIN stock_reservations r ON r.run=t.run AND r.reservation=t.reservation
+    JOIN stock_operation_issues i ON i.run=r.run AND i.reservation=r.reservation
+    JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot";
+
+fn return_record(row: &Row<'_>) -> rusqlite::Result<Value> {
+    Ok(json!({
+        "movement_id":row.get::<_,String>(0)?,"reservation_id":row.get::<_,String>(1)?,
+        "work_order":row.get::<_,String>(2)?,"operation":row.get::<_,String>(3)?,"lot_id":row.get::<_,String>(4)?,
+        "item_id":row.get::<_,String>(5)?,"revision":row.get::<_,i64>(6)?,"location":row.get::<_,String>(7)?,
+        "quantity":quantity(row.get(8)?),"unit":row.get::<_,String>(9)?,"reason":row.get::<_,String>(10)?,
+        "returned_cursor":row.get::<_,i64>(11)?
+    }))
+}
+
+pub(crate) fn return_movements(
+    tx: &Transaction<'_>,
+    run: &str,
+    args: &Map<String, Value>,
+) -> rusqlite::Result<Value> {
+    let after = args
+        .get("after_movement_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let item = args.get("item_id").and_then(Value::as_str);
+    let revision = args.get("revision").and_then(Value::as_i64);
+    let location = args.get("location").and_then(Value::as_str);
+    let limit = args.get("limit").and_then(Value::as_i64).unwrap_or(20);
+    let mut query = tx.prepare(&format!(
+        "{RETURN_RECORDS} WHERE t.run=?1 AND t.movement>?2
+        AND (?3 IS NULL OR s.item=?3) AND (?4 IS NULL OR s.revision=?4)
+        AND (?5 IS NULL OR s.location=?5) ORDER BY t.movement LIMIT ?6"
+    ))?;
+    let mut rows = query
+        .query_map(
+            params![run, after, item, revision, location, limit + 1],
+            return_record,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let next = if rows.len() > limit as usize {
+        rows.pop();
+        rows.last().map(|row| row["movement_id"].clone())
+    } else {
+        None
+    };
+    Ok(json!({"ok":true,"run_id":run,"movements":rows,"next_after_movement_id":next}))
+}
+
+fn return_unused(
+    tx: &Transaction<'_>,
+    run: &str,
+    id: &str,
+    args: &Map<String, Value>,
+    cursor: i64,
+) -> anyhow::Result<Result<Value, Rejection>> {
+    let issue = tx
+        .query_row(
+            "SELECT r.work_order,s.unit,r.quantity-COALESCE(t.quantity,0),
+            EXISTS(SELECT 1 FROM scenario_holds h WHERE h.run=r.run AND h.batch=r.lot)
+         FROM stock_operation_issues i
+         JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
+         JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
+         LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
+         WHERE i.run=?1 AND i.reservation=?2 AND r.status='issued'",
+            params![run, id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, bool>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((order, unit, remaining, held)) = issue else {
+        let code = if read(tx, run, id)?.is_some() {
+            "RESERVATION_STATE_INVALID"
+        } else {
+            "RESERVATION_NOT_FOUND"
+        };
+        return Ok(Err(reject(code, "reservation_id")));
+    };
+    if held {
+        return Ok(Err(reject("MATERIAL_HELD", "reservation_id")));
+    }
+    let Some(amount) = parse_quantity(args["quantity"].as_str().unwrap())
+        .filter(|amount| unit != "each" || amount % QUANTITY_SCALE == 0)
+    else {
+        return Ok(Err(Rejection::invalid("quantity")));
+    };
+    let movement = args["movement_id"].as_str().unwrap();
+    let duplicate: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM stock_operation_returns WHERE run=?1 AND movement=?2)",
+        params![run, movement],
+        |row| row.get(0),
+    )?;
+    if duplicate {
+        return Ok(Err(reject("RETURN_MOVEMENT_ALREADY_EXISTS", "movement_id")));
+    }
+    let used = crate::mes::reported_material_quantity(tx, run, &order, id)?;
+    if amount > remaining - used {
+        return Ok(Err(reject("RETURN_EXCEEDS_UNUSED_QUANTITY", "quantity")));
+    }
+    tx.execute(
+        "INSERT INTO stock_operation_returns (run,movement,reservation,quantity,reason,returned_cursor)
+         VALUES (?1,?2,?3,?4,?5,?6)",
+        params![run,movement,id,amount,args["reason"].as_str().unwrap(),cursor+1],
+    )?;
+    let row = tx.query_row(
+        &format!("{RETURN_RECORDS} WHERE t.run=?1 AND t.movement=?2"),
+        params![run, movement],
+        return_record,
+    )?;
+    Ok(Ok(
+        json!({"ok":true,"run_id":run,"cursor":cursor+1,"movement":row}),
+    ))
+}
+
 fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Value>> {
     tx.query_row(
         &format!("{RECORDS} WHERE r.run=?1 AND r.reservation=?2"),
@@ -172,8 +333,9 @@ pub(crate) fn order_quantity_by_state(
     issued: bool,
 ) -> rusqlite::Result<i64> {
     tx.query_row(
-        "SELECT COALESCE(SUM(r.quantity),0) FROM stock_reservations r
+        "SELECT COALESCE(SUM(r.quantity-COALESCE(t.quantity,0)),0) FROM stock_reservations r
          JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
+         LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
          WHERE r.run=?1 AND r.work_order=?2 AND s.item=?3 AND s.revision=?4
          AND ((?5 AND r.status='issued') OR (NOT ?5 AND r.status IN ('reserved','picked'))) ",
         params![run, order, item, revision, issued],
@@ -193,6 +355,7 @@ pub(crate) fn invoke(
 ) -> anyhow::Result<Result<Value, Rejection>> {
     for field in [
         "reservation_id",
+        "movement_id",
         "work_order",
         "lot_id",
         "after_reservation_id",
@@ -253,6 +416,12 @@ pub(crate) fn invoke(
         return Ok(Err(reject("VERSION_CONFLICT", "expected_cursor")));
     }
     let id = args["reservation_id"].as_str().unwrap();
+    if action == Action::ReturnUnusedMaterial {
+        return match return_unused(&tx, run, id, args, cursor)? {
+            Ok(response) => finish_write(tx, run, key, &request, response),
+            Err(error) => Ok(Err(error)),
+        };
+    }
     if action == Action::ReserveMaterial {
         if !eligible {
             return Ok(Err(reject("WORK_ORDER_NOT_RESERVABLE", "work_order")));
@@ -263,11 +432,11 @@ pub(crate) fn invoke(
         let lot = args["lot_id"].as_str().unwrap();
         let order = args["work_order"].as_str().unwrap();
         let stock=tx.query_row(
-            "SELECT s.item,s.revision,s.unit,s.quantity,s.requires_inspection AND q.receipt IS NULL
-             FROM stock_receipts s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
-             WHERE s.run=?1 AND s.lot=?2 AND s.posted_cursor IS NOT NULL",params![run,lot],
-            |r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,
-                    r.get::<_,i64>(3)?,r.get::<_,bool>(4)?))).optional()?;
+        "SELECT s.item,s.revision,s.unit,s.quantity,s.requires_inspection AND q.receipt IS NULL
+         FROM stock_receipts s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
+         WHERE s.run=?1 AND s.lot=?2 AND s.posted_cursor IS NOT NULL",params![run,lot],
+        |r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,
+                r.get::<_,i64>(3)?,r.get::<_,bool>(4)?))).optional()?;
         let Some((item, revision, unit, on_hand, pending)) = stock else {
             return Ok(Err(reject("LOT_NOT_FOUND", "lot_id")));
         };
@@ -300,8 +469,9 @@ pub(crate) fn invoke(
             return Ok(Err(reject("ORDER_REQUIREMENT_EXCEEDED", "quantity")));
         }
         let held: i64 = tx.query_row(
-            "SELECT COALESCE(SUM(quantity),0) FROM stock_reservations
-            WHERE run=?1 AND lot=?2 AND status IN ('reserved','picked','issued')",
+            "SELECT COALESCE(SUM(r.quantity-COALESCE(t.quantity,0)),0) FROM stock_reservations r
+        LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
+        WHERE r.run=?1 AND r.lot=?2 AND r.status IN ('reserved','picked','issued')",
             params![run, lot],
             |r| r.get(0),
         )?;
@@ -310,7 +480,7 @@ pub(crate) fn invoke(
         }
         tx.execute(
             "INSERT INTO stock_reservations (run,reservation,work_order,lot,quantity,status)
-            VALUES (?1,?2,?3,?4,?5,'reserved')",
+        VALUES (?1,?2,?3,?4,?5,'reserved')",
             params![run, id, order, lot, amount],
         )?;
     } else {
@@ -328,7 +498,7 @@ pub(crate) fn invoke(
                     _ => return Ok(Err(reject("ISSUE_OPERATION_NOT_ELIGIBLE", "operation"))),
                 };
                 tx.execute("INSERT INTO stock_operation_issues (run,reservation,operation,work_center,issued_cursor)
-                    VALUES (?1,?2,?3,?4,?5)",params![run,id,args["operation"].as_str().unwrap(),center,cursor+1])?;
+                VALUES (?1,?2,?3,?4,?5)",params![run,id,args["operation"].as_str().unwrap(),center,cursor+1])?;
                 "issued"
             }
             (Action::PickMaterial, Some("reserved")) => "picked",
@@ -343,6 +513,16 @@ pub(crate) fn invoke(
     }
     let response =
         json!({"ok":true,"run_id":run,"cursor":cursor+1,"reservation":read(&tx,run,id)?});
+    finish_write(tx, run, key, &request, response)
+}
+
+fn finish_write(
+    tx: Transaction<'_>,
+    run: &str,
+    key: &str,
+    request: &str,
+    response: Value,
+) -> anyhow::Result<Result<Value, Rejection>> {
     tx.execute(
         "UPDATE scenario_runs SET cursor=cursor+1 WHERE id=?1",
         [run],
