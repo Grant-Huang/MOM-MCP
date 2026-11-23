@@ -16,11 +16,11 @@
 
 ## 证据进度
 
-| 来源 | 真实来源接口 | AgentNexus 候选接线 | 正式生产接口 |
+| 来源 | 真实来源接口 | AgentNexus 候选接线 | 正式接口真实来源 |
 |---|---|---|---|
-| Odoo JSON-2 | 本地 Community 19.0 实际应用验证范围内读取和公司隔离 | 工作区候选已通过 200／404 | 待合并链路验收 |
-| OpenMES HTTP | 本地 Laravel 实际应用验证范围内读取和产线隔离 | 工作区候选已通过 200／404 | 待合并链路验收 |
-| Carbon 社区版 REST | 固定版本 Carbon 社区后端完成迁移，真实 Supabase 登录双向验证公司隔离 | 工作区候选经同一真实会话通过 200／404 | 待合并链路验收 |
+| Odoo JSON-2 | 本地 Community 19.0 实际应用验证范围内读取和公司隔离 | 工作区候选已通过 200／404 | 待获批联调 |
+| OpenMES HTTP | 本地 Laravel 实际应用验证范围内读取和产线隔离 | 工作区候选已通过 200／404 | 待获批联调 |
+| Carbon 社区版 REST | 固定版本 Carbon 社区后端完成迁移，真实 Supabase 登录双向验证公司隔离 | 工作区候选经同一真实会话通过 200／404 | 待获批联调 |
 | Carbon 原生 MCP | 回环验证固定协议与结果映射，具备权益的授权实例待验证 | 工作区候选已通过协议夹具 | 兼容性证据待补 |
 
 适配器回环共用入口可执行 `cargo test --locked --test external_observe one_observe_entry_reads_three_authorized_worlds -- --exact`。另执行 `cargo test --locked --test external_observe` 验证逐请求授权、配置与故障隔离。工作区候选证据使用 `/api/world/production/observe`，依赖适配器提交 `ea1fcd8` 和宿主提交 `7a680bf`。用 `scripts/accept-m3-observe.py` 复跑，覆盖 Odoo、OpenMES、Carbon 原生 MCP、Carbon REST 四条回环传输及拒绝、撤权和故障隔离。Carbon 社区版数据路径作为短期取证候选，原生 MCP 兼容性证据单列。MOM-MCP `fbd798a` 的三个适配器 Rust 集成套件共 11 项通过，Carbon 原生探针与本体离线用例共 11 项通过。
@@ -37,14 +37,17 @@ Carbon 社区版补充 [双会话隔离探针](../references/mcp/README.md#carbo
 
 AgentNexus `175e07b` 已包含 PR #228 的 M3 桩路径准出。正式接入需要从可访问的 Git 提交解析独立 adapter crate。先完成 [宿主 Git 依赖复跑](../EXTERNAL_ADAPTER_DESIGN.md#宿主依赖复跑)，再评审真实身份、凭据及出站配置，并经正式 Observe 运行三源验收。另备 [AgentNexus 整仓依赖复跑](../EXTERNAL_ADAPTER_DESIGN.md#agentnexus-整仓依赖复跑)，从干净的宿主提交读取正式 M3 合同和 adapter 夹具测试。 [M3-5 准出证据](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/175e07b/docs/testing/evidence/wa-m3-5.md)
 
-
 AgentNexus `c74b144` 已合入 M3-2，并在 `/api/world/prod` 实现 Bind、Observe、Subscribe 和生产桩水位。桩 Observe 接收绑定的 `world_id` 并返回设备观测。在该提交执行 `cargo test --locked -p an-server --test mom_world_prod`，`RT-WAPROD-01/02` 两项通过。三源工单读取接入以正式 World Adapter 接口为目标。 [M3 任务卡](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/c74b144/docs/mom/WA_M3_TASKS.md) · [M3-2 证据](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/c74b144/docs/testing/evidence/wa-m3-2-green.md)
 
 AgentNexus `47d8557` 已经由 PR #220 合入 M3-3。正式生产桩增加跨范围拒绝、过期游标恢复、分源延迟以及关闭写动作。用 `cargo test --locked -p an-server --test mom_world_prod` 本地复验，6 项通过。正式宿主的真来源身份、工单选择和出站方案仍按 M3 升级边界联审。 [M3-3 证据](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/47d8557/docs/testing/evidence/wa-m3-3-green.md)
 
-| 联审项 | 首个切片待决内容 |
+AgentNexus #248 已合并正式 `/api/world/prod/observe` 路由夹具。其测试以本仓库 #63 合并提交 `5aa312939df2110ff3dda401b9021a0c1ad5a67f` 固定 `mom-external-adapter` 0.1.0。8 项宿主契约覆盖原 M3 桩合同、显式夹具门控、工单授权拒绝零调用、三源读取、范围外不可见及单源故障。夹具响应标为 `provenance=fixture`。[AgentNexus #248](https://github.com/Grant-Huang/multi-agent-conv-mvp/pull/248)
+
+AgentNexus #251 已合并单站点探针，默认模式仍要求三源。候选入口实际来源 3/3，正式入口实际来源 0/3。建议首站采用已有 Community 19 JSON-2 实测的 Odoo。MOM-MCP 提供固定依赖、来源映射及范围内和范围外样本的证据。正式身份、工单绑定、凭据和出站由宿主负责审批与配置。首站通过后记录宿主与 Adapter 提交、源端版本、脱敏的 401／200／404 结果及范围外样本的独立确认。OpenMES 和 Carbon 社区版分别完成同等联调后再执行三源联合验收。[AgentNexus #251](https://github.com/Grant-Huang/multi-agent-conv-mvp/pull/251)
+
+| 联审项 | 当前证据及待决内容 |
 |---|---|
-| 工单选择 | 正式桩请求只接受 world_id 与 request_id。联审确认单工单引用选择方式及现有绑定后观测的兼容策略。 |
+| 工单选择 | 正式路由夹具已验证可选 `selection`、单工单引用以及既有桩合同。真实世界绑定仍由宿主联调确认。 |
 | 生产身份与站点 | 宿主确认调用主体、租户、站点、权威源和工单引用。适配器从已授权绑定取得读取目标。正式源凭据及出站接线依宿主升级方案评审。 |
 | 来源与时间 | 保留 `provenance`、来源及观测时间。区分已验证的源更新时间、读取时点和可续读的发布水位。单次源读取的续读能力待显式声明。 |
 | 错误 | 对照正式错误包络冻结授权拒绝、不可见、源故障及响应错配。Carbon 原生工具拒绝仍需源端证据完成分类。 |
