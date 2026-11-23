@@ -77,23 +77,27 @@ P0 起交付可运行的浏览器验收环境。所有里程碑均需交付当�
 
 P8A 及 P8B 查询、预检、单笔与批量下达、草稿写入、暂停恢复及取消、完工、关单及最小跨车间路线均有阶段证据。P8C–P9D 公共闭环仍待完成。后续阶段以 [MES 工具链扩展计划](MES_EXPANSION_PLAN.md) 为进度来源，以 [公共验收门槛](acceptance/COMMON_MES_GATE.md) 决定何时进入 P10。
 
-## 双主轴架构待办
+## 双主轴路线与准出
 
-依据 [双主轴需求](FEATURES.md#双主轴需求与验收目标) 和 [设计缺口](DESIGN.md#设计缺口)。默认模拟验收见 [P8C-07](acceptance/P8C.md)，已记录 AgentNexus 调用与服务端重放证据。首期外部接入以只读为范围，见下文外部适配器实施计划。
+依据项目方确认的阶段安排，以及 [双主轴需求](FEATURES.md#双主轴需求与验收目标) 和 [架构边界](DESIGN.md#两条主线的接口边界)。阶段按证据推进。
 
-| 待办 | 依赖与交付物 | 退出条件 |
-|---|---|---|
-| 补默认模拟测试的端到端验收 | 复用现有 AgentNexus、MCP 和 DES；在 P8C 阶段验收中补充无外部系统配置的夹具和用例 | AgentNexus 读取 DES 产生的停机事件，查出受影响工单、执行受控处置并复查。保留调用轨迹、状态及重放证据，运行前序回归。 |
+| 阶段 | 通用 Adapter 与本体 | Mock MOM-MCP | 退出条件 |
+|---|---|---|---|
+| 短期 | Carbon 授权实例取证及 AgentNexus 跨仓串联。Odoo、OpenMES、Carbon 运行同一工单查询 | 按 P9D 公共门槛在一个 CNC run 串联下达、领料、部分报工、质量冻结、纠正与对账，再用装配复验 | 三源的身份、来源、状态及失败语义有证据。同一 run 的业务动作与台账可核对。P8C-07 已有 DES 停机处置与重放证据，作为前序回归 |
+| 短期验证之后 | 提交连接器、宿主边界及本体差异 | 提交 DES 事件、公开工具、控制面及台账边界 | 共同审查目标、架构和设计，记录共享契约、兼容影响、待决项和各自负责人 |
+| 中期至末段前 | 扩展三源实际覆盖，维护能力矩阵及版本化本体，在线内验证。选可取证的 MES 或 ERP/CRM 样本探索扩展 | 依据开源参考盘点工具，按五行业场景补齐覆盖，并验证 DES 驱动下 AgentNexus 的观察、处置和复查 | 各线独立验收，能说明能力范围、缺口及对应证据 |
+| 中期末段 | 提供已验证的接口、映射和一致性用例 | 提供 Mock 投影及可复跑工单种子 | 开始对接，以同一工单读取意图联调身份、来源、状态、错误和能力声明 |
+| 后期 | 用第四个、未参与前三源设计的 MES 验证接入，记录工时、变更边界和已有来源回归 | 完成与通用 Adapter 的对接验收 | 分别签收新 MES 接入和 Mock 对接。验证来源隔离、能力差异、失败反馈与既有行为兼容 |
 
-开工前将受影响的 D0 需求、D1/D2 契约、D3 阶段和验收用例相互链接。用例接入后更新 feature map，同时登记测试入口和实际证据。范围评审核对需求与设计的语义一致性，现有 CI 用于已登记用例的结构验证和回归。
+需求、架构、领域设计、阶段计划和验收用例按 D0–D3 互链。阶段开工时冻结用例 ID 和可执行断言，并登记 feature map。单独记录夹具、实际来源和跨仓串联证据。若 Carbon 授权未到位，可先记录其他来源进度，三源准出仍保留待验，Mock 继续推进。
 
 ## 外部适配器实施计划
 
-依据 [外部系统只读适配设计](EXTERNAL_ADAPTER_DESIGN.md)，与 AgentNexus [World Adapter M3/M4](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/43014db/docs/mom/WORLD_ADAPTER_PLAN.md) 对齐。AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收，生产只读仍由 M3 承接。当前 MOM-MCP 基线 `60a2c95` 已登记外部适配方向，尚无对应的可执行外部接入用例。P8/P9 仍按 [公共 MES 扩展计划](MES_EXPANSION_PLAN.md) 交付。
+依据 [外部系统只读适配设计](EXTERNAL_ADAPTER_DESIGN.md)，与 AgentNexus [World Adapter M3/M4](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/43014db/docs/mom/WORLD_ADAPTER_PLAN.md) 对齐。AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收，生产只读仍由 M3 承接。MOM-MCP 已有投影、回环、部分实际来源及候选宿主接线证据。三源在 AgentNexus 上的完整业务验收仍待签收。P8/P9 仍按 [公共 MES 扩展计划](MES_EXPANSION_PLAN.md) 交付。
 
 | 顺序 | 进度与依赖 | 退出条件 |
 |---|---|---|
 | 1. 确认样本、冻结边界 | **样本已选定，候选契约已提交联审。** Carbon MCP、OpenMES HTTP 和 Odoo Community JSON-2 的候选入口已核实。首期最低验证范围为 Odoo、OpenMES 与 Carbon。Odoo 与 OpenMES 已通过本地真实 HTTP 读取和访问边界验证。Carbon 已完成固定源码与查询夹具检查，已备 [Carbon MCP 实例验收入口](EXTERNAL_ADAPTER_DESIGN.md#carbon-mcp-实例验收入口)，4 项离线探针用例通过；仍需获授权实例执行并复核公司边界。[M3 Observe 候选契约](EXTERNAL_ADAPTER_DESIGN.md#m3-observe-联审契约) 已列出授权、字段映射、不可见语义与验收。已验证 Odoo 确认与 OpenMES 接受后的读回状态。三系统 [工单观测本体约定 v0.1](WORK_ORDER_ONTOLOGY.md) 已登记，7 项离线契约用例验证了字段、身份和未知状态，状态暂保留源语义。待联审确认运行时契约。仍需双方确认生产绑定、连接器部署、快照一致性字段及首期规范状态范围。 | 两边同意职责与版本边界；登记三套样本、权限、失败分类和覆盖限制；将首期 Fxx、用例和对应测试入口登记到阶段规范与 feature map。 |
 | 2. 三种只读适配 | **投影与三种传输已试实现。** [Odoo／OpenMES HTTP](EXTERNAL_ADAPTER_DESIGN.md#rust-http-读取试实现) 与 [Carbon MCP](EXTERNAL_ADAPTER_DESIGN.md#rust-carbon-mcp-读取试实现) 均通过回环用例。Odoo 与 OpenMES 的 Rust 读取器已通过 [实际应用复跑](EXTERNAL_ADAPTER_DESIGN.md#rust-客户端的实际应用复跑)，分别复核公司和产线不可见。[Observe 宿主接线候选](EXTERNAL_ADAPTER_DESIGN.md#生产-observe-的宿主接线候选) 已验证逐次授权、来源选择和故障隔离。单一宿主入口已串联三套回环协议，[AgentNexus M3 接线提案](EXTERNAL_ADAPTER_DESIGN.md#agentnexus-m3-接线提案) 待批准生产身份与绑定。仍需 Carbon 授权实例联调及公司隔离取证、跨仓公开 DTO 与 Observe 验收。 | 同一工单读取意图在三种接口返回可追溯结果，覆盖未映射状态、源冲突、授权失败、连接故障及禁止误回退；保留样本回归与运行时证据。 |
-| 3. 跨系统对象关系和事件 | **待步骤 2。** 选定可取得的 ERP／CRM 样本，确认权威来源与关联依据。 | 类型化地关联客户订单、销售订单和生产工单；验证冲突与缺失关联。事件切片另登记水位、断点恢复和去重验收。 |
+| 3. 三源能力扩展、跨系统对象关系和事件 | **待步骤 2 准出。** 先建立三源能力矩阵，按实际权限、业务语义和接口证据分批确定范围。 选定可取得的 ERP／CRM 样本，确认权威来源与关联依据。 | 类型化地关联客户订单、销售订单和生产工单；验证冲突与缺失关联。事件切片另登记水位、断点恢复和去重验收。 |
 | 4. 生产写入决策 | **待只读证据及站点授权。** 与 AgentNexus M4 共同评审写入入口。 | 首个写动作有授权、幂等、审计、部分成功、回执查证和恢复契约，获得独立交付批准后才排期。 |
