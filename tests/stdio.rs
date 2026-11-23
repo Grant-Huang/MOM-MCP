@@ -55,9 +55,13 @@ async fn connect_options(
 }
 
 async fn call(client: &RunningService<RoleClient, ()>, name: &str, args: Value) -> Value {
+    let action = args.get("name").and_then(Value::as_str);
     let request = CallToolRequestParams::new(name.to_owned())
         .with_arguments(args.as_object().unwrap().clone());
-    let response = client.peer().call_tool(request).await.unwrap();
+    let response = timeout(WAIT, client.peer().call_tool(request))
+        .await
+        .unwrap_or_else(|_| panic!("MCP request timed out after {WAIT:?}: {name} {action:?}"))
+        .unwrap();
     assert_ne!(response.is_error, Some(true));
     response.structured_content.unwrap()
 }
@@ -1224,7 +1228,8 @@ async fn p4_02_smt_recall_across_work_orders() {
 async fn p4_03_smt_rework_retest_scrap_and_replay() {
     let dir = tempfile::tempdir().unwrap();
     let (client, _child) = connect_options(&dir.path().join("runs.sqlite3"), "0", true, true).await;
-    timeout(WAIT, async {
+    // This workflow drives two runs with sequential RPCs. Each request still has a five-second deadline.
+    timeout(Duration::from_secs(30), async {
         let run = smt(&client).await;
         smt_population(&client, &run).await;
         let event = smt_recall(&client, &run).await;
@@ -1369,7 +1374,7 @@ async fn p4_03_smt_rework_retest_scrap_and_replay() {
         );
     })
     .await
-    .unwrap();
+    .expect("SMT rework and replay workflow exceeded its 30-second budget");
 }
 
 async fn open_assembly(client: &RunningService<RoleClient, ()>, normal: bool) -> Value {
