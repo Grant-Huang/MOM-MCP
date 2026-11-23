@@ -8,6 +8,7 @@ use crate::scenario::Rejection;
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     IssueMaterialToOperation,
+    ReturnUnusedMaterial,
     ReserveMaterial,
     ListReservations,
     ReleaseReservation,
@@ -176,6 +177,7 @@ impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
             Self::IssueMaterialToOperation,
+            Self::ReturnUnusedMaterial,
             Self::ReserveMaterial,
             Self::ListReservations,
             Self::ReleaseReservation,
@@ -248,6 +250,7 @@ impl Action {
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::IssueMaterialToOperation => "issue_material_to_operation",
+            Self::ReturnUnusedMaterial => "return_unused_material",
             Self::ReserveMaterial => "reserve_material",
             Self::ListReservations => "list_reservations",
             Self::ReleaseReservation => "release_reservation",
@@ -413,6 +416,7 @@ impl Action {
         matches!(
             self,
             Self::IssueMaterialToOperation
+                | Self::ReturnUnusedMaterial
                 | Self::ReserveMaterial
                 | Self::ListReservations
                 | Self::ReleaseReservation

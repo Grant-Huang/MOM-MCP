@@ -314,6 +314,22 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     anyhow::ensure!(
         !definition
             .capabilities
+            .contains(&Action::ReturnUnusedMaterial)
+            || (definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| setup.issued_report_inputs)
+                && definition
+                    .capabilities
+                    .contains(&Action::IssueMaterialToOperation)
+                && definition
+                    .capabilities
+                    .contains(&Action::PostOperationReport)),
+        "operation material returns require recorded issue and report inputs"
+    );
+    anyhow::ensure!(
+        !definition
+            .capabilities
             .contains(&Action::RequestMaintenance)
             || (definition
                 .manufacturing
@@ -424,6 +440,15 @@ impl Scenarios {
                  operation TEXT NOT NULL, work_center TEXT NOT NULL, issued_cursor INTEGER NOT NULL,
                  PRIMARY KEY(run,reservation)
              );
+             CREATE TABLE IF NOT EXISTS stock_operation_returns (
+                 run TEXT NOT NULL, movement TEXT NOT NULL, reservation TEXT NOT NULL,
+                 quantity INTEGER NOT NULL, reason TEXT NOT NULL, returned_cursor INTEGER NOT NULL,
+                 PRIMARY KEY(run,movement)
+             );
+             CREATE INDEX IF NOT EXISTS stock_return_reservation ON stock_operation_returns(run,reservation);
+             CREATE VIEW IF NOT EXISTS stock_return_totals AS
+                 SELECT run,reservation,SUM(quantity) AS quantity FROM stock_operation_returns
+                 GROUP BY run,reservation;
              CREATE TABLE IF NOT EXISTS stock_reservations (
                  run TEXT NOT NULL, reservation TEXT NOT NULL, work_order TEXT NOT NULL,
                  lot TEXT NOT NULL, quantity INTEGER NOT NULL, status TEXT NOT NULL,
@@ -538,6 +563,7 @@ impl Scenarios {
             include_str!("../fixtures/assembly-reservations.json"),
             include_str!("../fixtures/cnc-operation-issues.json"),
             include_str!("../fixtures/cnc-report-inputs.json"),
+            include_str!("../fixtures/cnc-unused-material-returns.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),

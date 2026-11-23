@@ -151,9 +151,10 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
+  { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
 ]) {
   test(title, async ({ page }) => {
     await page.goto("/scenarios");
@@ -236,6 +237,21 @@ for (const { title, scenario, work_order, operation, work_center, report } of [
       expect(journal.reports).toEqual([posted.report]);
       const after = await invoke("get_material_availability", { item_id: "WIRE", revision: 1 });
       expect(after.balance).toEqual(stock.balance);
+      if (returns) {
+        await button("搜索工具").click();
+        await page.getByLabel("匹配工具").selectOption("return_unused_material");
+        await page.getByLabel("JSON 参数").fill(JSON.stringify({
+          ...reservation, movement_id: "RET-1", quantity: "0.75", reason: "unused",
+          expected_cursor: posted.cursor, idempotency_key: "return",
+        }));
+        await button("调用工具").click();
+        await expect(status).toContainText('"movement_id": "RET-1"');
+        const returned = await invoke("list_inventory_movements", { movement_type: "return", location: "RAW-02" });
+        expect(returned.movements[0]).toMatchObject({ ...lot, quantity: "0.75", location: "RAW-02" });
+        const stockAfterReturn = await invoke("get_material_availability", { item_id: "WIRE", revision: 1 });
+        expect(stockAfterReturn.balance).toMatchObject({ on_hand: "1.25", available: "1.25", reserved: "0" });
+      }
+
     }
   });
 }
