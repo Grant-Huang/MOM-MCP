@@ -93,7 +93,9 @@ P8A 及 P8B 查询、预检、单笔与批量下达、草稿写入、暂停恢�
 
 ## 外部适配器实施计划
 
-依据 [外部系统只读适配设计](EXTERNAL_ADAPTER_DESIGN.md)，与 AgentNexus [World Adapter M3/M4](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/43014db/docs/mom/WORLD_ADAPTER_PLAN.md) 对齐。AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收，生产只读仍由 M3 承接。MOM-MCP 已有投影、回环、部分实际来源及候选宿主接线证据。三源在 AgentNexus 上的完整业务验收仍待签收。P8/P9 仍按 [公共 MES 扩展计划](MES_EXPANSION_PLAN.md) 交付。
+[三源工单读取短期验收候选](acceptance/ADAPTER_READ.md) 汇总来源实测、宿主接线证据与正式 M3 接口待决项。
+
+依据 [外部系统只读适配设计](EXTERNAL_ADAPTER_DESIGN.md)，与 AgentNexus [World Adapter M3/M4](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/c74b144/docs/mom/WORLD_ADAPTER_PLAN.md) 对齐。AgentNexus `c74b144` 已合入正式生产 Bind／Observe／Subscribe 桩。MOM-MCP 短期继续取得三源读取和正式 Observe 串联证据。P8/P9 按 [公共 MES 扩展计划](MES_EXPANSION_PLAN.md) 独立交付。
 
 | 顺序 | 进度与依赖 | 退出条件 |
 |---|---|---|
