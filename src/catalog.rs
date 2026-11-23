@@ -7,6 +7,7 @@ use crate::scenario::Rejection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    IssueMaterialToOperation,
     ReserveMaterial,
     ListReservations,
     ReleaseReservation,
@@ -174,6 +175,7 @@ pub(crate) fn text() -> Value {
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
+            Self::IssueMaterialToOperation,
             Self::ReserveMaterial,
             Self::ListReservations,
             Self::ReleaseReservation,
@@ -245,6 +247,7 @@ impl Action {
 
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::IssueMaterialToOperation => "issue_material_to_operation",
             Self::ReserveMaterial => "reserve_material",
             Self::ListReservations => "list_reservations",
             Self::ReleaseReservation => "release_reservation",
@@ -409,7 +412,8 @@ impl Action {
     pub(crate) fn is_reservation_action(self) -> bool {
         matches!(
             self,
-            Self::ReserveMaterial
+            Self::IssueMaterialToOperation
+                | Self::ReserveMaterial
                 | Self::ListReservations
                 | Self::ReleaseReservation
                 | Self::PickMaterial

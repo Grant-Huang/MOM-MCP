@@ -4240,3 +4240,106 @@ async fn p9c_01_reservation_contention_and_picking() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p9c_02_issue_to_operation() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("inventory.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(Duration::from_secs(30), async {
+        for (scenario,version,orders,operation,center) in [
+            ("cnc",27,["WO-1"],"machining","MACH-01"),
+            ("assembly",26,["WO-E"],"build","CELL-A"),
+        ] {
+            let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            let cursor=async || call(&client,"get_run",json!({"run_id":run})).await["cursor"].clone();
+            let write=async |name:&str,key:&str,mut args:Value| {
+                args["expected_cursor"]=cursor().await;
+                args["idempotency_key"]=json!(key);
+                invoke(name,args).await
+            };
+            let apply=async |name:&str,key:&str,args| {
+                let result=write(name,key,args).await;
+                assert_eq!(result["ok"],true,"{name}: {result}");
+                result
+            };
+            for (name,args) in [
+                ("create_item",json!({"item_id":"FRAME","base_unit":"each"})),
+                ("create_item",json!({"item_id":"WIRE","base_unit":"m"})),
+                ("create_item_revision",json!({"item_id":"FRAME","revision":1,"name":"Frame"})),
+                ("create_item_revision",json!({"item_id":"WIRE","revision":1,"name":"Wire"})),
+                ("activate_revision",json!({"revision_type":"item","item_id":"FRAME","revision":1})),
+                ("activate_revision",json!({"revision_type":"item","item_id":"WIRE","revision":1})),
+                ("create_bom_revision",json!({"item_id":"FRAME","revision":1})),
+                ("set_bom_components",json!({"item_id":"FRAME","revision":1,"components":{"WIRE":{"revision":1,"quantity":2,"unit":"m"}}})),
+                ("activate_revision",json!({"revision_type":"bom","item_id":"FRAME","revision":1})),
+                ("create_route_revision",json!({"item_id":"FRAME","revision":1})),
+                ("set_route_operations",json!({"item_id":"FRAME","revision":1,"operations":{(operation):{"work_center":center,"predecessors":[]}}})),
+                ("activate_revision",json!({"revision_type":"route","item_id":"FRAME","revision":1})),
+                ("create_inspection_plan_revision",json!({"plan_id":"QA","revision":1,"characteristics":{"width":{"unit":"mm","lower_limit":1,"upper_limit":2}}})),
+                ("activate_inspection_plan_revision",json!({"plan_id":"QA","revision":1})),
+            ].into_iter().enumerate().map(|(i,(name,args))| (format!("setup-{i}"),(name,args))) {
+                apply(args.0,&name,args.1).await;
+            }
+            for order in orders {
+                let mut args=json!({"work_order":order,"definition_selection":{"item_id":"FRAME","inspection_plan_id":"QA"}});
+                let readiness=invoke("get_release_readiness",args.clone()).await;
+                assert_eq!(readiness["ready"],true,"{readiness}");
+                args["snapshot_fingerprint"]=readiness["definition_snapshot"]["fingerprint"].clone();
+                apply("release_work_order",order,args).await;
+            }
+
+            let order=orders[0];
+            apply("create_receipt","receipt",json!({"receipt_id":"RC-1","item_id":"WIRE","revision":1,"quantity":"2","requires_inspection":false})).await;
+            apply("assign_receipt_tracking","track",json!({"receipt_id":"RC-1","lot_id":"LOT-1","supplier_lot":"SUP","location":"RAW-02"})).await;
+            apply("post_receipt","post",json!({"receipt_id":"RC-1"})).await;
+            let reserve=json!({"reservation_id":"RS-1","work_order":order,"lot_id":"LOT-1","quantity":"1.5"});
+            apply("reserve_material","reserve",reserve.clone()).await;
+            let issue=json!({"reservation_id":"RS-1","operation":operation});
+            assert_eq!(write("issue_material_to_operation","issue",issue.clone()).await["code"],"RESERVATION_STATE_INVALID");
+            apply("pick_material","pick",json!({"reservation_id":"RS-1"})).await;
+            assert_eq!(write("issue_material_to_operation","issue",issue.clone()).await["code"],"ISSUE_OPERATION_NOT_ELIGIBLE");
+            apply("dispatch_operation","dispatch",json!({"work_order":order,"operation":operation,"work_center":center})).await;
+            assert_eq!(write("issue_material_to_operation","issue",json!({"reservation_id":"RS-1","operation":"missing"})).await["code"],"ISSUE_OPERATION_NOT_FOUND");
+            let balance=||invoke("get_stock_balance",json!({"item_id":"WIRE","location":"RAW-02"}));
+            assert_eq!(balance().await["balance"]["on_hand"],"2");
+            assert_eq!(balance().await["balance"]["reserved"],"1.5");
+            let mut submitted=issue.clone();
+            submitted["expected_cursor"]=cursor().await;
+            submitted["idempotency_key"]=json!("issue");
+            let first=invoke("issue_material_to_operation",submitted.clone()).await;
+            assert_eq!(first["reservation"]["status"],"issued","{first}");
+            assert_eq!(first["reservation"]["work_center"],center);
+            assert_eq!(balance().await["balance"]["on_hand"],"0.5");
+            assert_eq!(balance().await["balance"]["available"],"0.5");
+            assert_eq!(balance().await["balance"]["reserved"],"0");
+            assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
+            assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
+            let counts=invoke("get_material_requirements",json!({"work_order":order})).await;
+            assert_eq!(counts["requirements"][0]["issued"],"1.5");
+            assert_eq!(counts["requirements"][0]["shortage"],if scenario=="cnc" {"18"} else {"0"});
+            let mut unavailable=reserve;
+            unavailable["reservation_id"]=json!("RS-2");
+            unavailable["quantity"]=json!("0.6");
+            assert_eq!(write("reserve_material","after-issue",unavailable).await["code"],
+                if scenario=="cnc" {"LOT_AVAILABLE_QUANTITY_EXCEEDED"} else {"ORDER_REQUIREMENT_EXCEEDED"});
+            apply("reserve_material","rs3",json!({"reservation_id":"RS-3","work_order":order,"lot_id":"LOT-1","quantity":"0.5"})).await;
+            apply("pick_material","pick3",json!({"reservation_id":"RS-3"})).await;
+            apply("create_inspection","qc",json!({"inspection_id":"QC-1","work_order":order,"specification_version":"QA@1"})).await;
+            apply("record_measurement","out-of-range",json!({"inspection_id":"QC-1","characteristic":"width",
+                "unit":"mm","value":3,"lower_limit":1,"upper_limit":2})).await;
+            apply("complete_inspection","complete-qc",json!({"inspection_id":"QC-1"})).await;
+            let blocked_at=cursor().await;
+            assert_eq!(write("issue_material_to_operation","blocked",json!({"reservation_id":"RS-3","operation":operation})).await["code"],"QUALITY_HOLD");
+            assert_eq!(cursor().await,blocked_at);
+            assert_eq!(balance().await["balance"]["on_hand"],"0.5");
+            let (peer,_child)=connect_mode(&db,"0",true).await;
+            let journal=business(&peer,run,"list_inventory_movements",json!({"movement_type":"issue","location":"RAW-02"})).await;
+            assert_eq!(journal["movements"],json!([first["reservation"]]));
+            assert_eq!(invoke("list_inventory_movements",json!({})).await["movements"][0]["quantity"],"2");
+        }
+    }).await.unwrap();
+}
