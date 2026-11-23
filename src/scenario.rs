@@ -324,6 +324,26 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                 && !definition.capabilities.contains(&Action::SetEquipment)),
         "maintenance requires event-driven CNC equipment"
     );
+    let has = |action| definition.capabilities.contains(&action);
+    anyhow::ensure!(
+        !has(Action::AssessEngineeringChange) || has(Action::GetOrderSnapshot),
+        "engineering change assessment requires order snapshots"
+    );
+    anyhow::ensure!(
+        !has(Action::GetOrderSnapshot)
+            || ([
+                Action::GetReleaseReadiness,
+                Action::ReleaseWorkOrder,
+                Action::CreateBomRevision,
+                Action::CreateRouteRevision,
+                Action::ActivateInspectionPlanRevision
+            ]
+            .into_iter()
+            .all(has)
+                && !has(Action::ReleaseOrder)
+                && !has(Action::ReleaseWorkOrders)),
+        "order snapshots require versioned definitions and single-order release"
+    );
     for action in &definition.capabilities {
         if crate::fabrication::tools().any(|tool| tool.0 == *action) {
             anyhow::ensure!(
@@ -389,6 +409,10 @@ impl Scenarios {
                  run TEXT NOT NULL, id TEXT NOT NULL, template TEXT NOT NULL,
                  demand TEXT NOT NULL, serial TEXT,
                  PRIMARY KEY (run, id)
+             );
+             CREATE TABLE IF NOT EXISTS order_definition_snapshots (
+                 run TEXT NOT NULL, work_order TEXT NOT NULL, snapshot TEXT NOT NULL,
+                 PRIMARY KEY(run,work_order)
              );
              CREATE TABLE IF NOT EXISTS master_routes (
                  run TEXT NOT NULL, item TEXT NOT NULL, revision INTEGER NOT NULL,
@@ -476,6 +500,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-bom-revisions.json"),
             include_str!("../fixtures/cnc-route-revisions.json"),
             include_str!("../fixtures/assembly-route-revisions.json"),
+            include_str!("../fixtures/cnc-order-snapshots.json"),
+            include_str!("../fixtures/assembly-order-snapshots.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -799,7 +825,11 @@ impl Scenarios {
         let route_enabled = definition
             .capabilities
             .contains(&Action::CreateRouteRevision);
+        let snapshot_enabled = definition.capabilities.contains(&Action::GetOrderSnapshot);
         let spec = match action {
+            Action::GetReleaseReadiness | Action::ReleaseWorkOrder if snapshot_enabled => {
+                crate::snapshots::release_spec(action)
+            }
             Action::ActivateRevision => crate::items::spec(action, bom_enabled, route_enabled),
             Action::ValidateRevision => crate::bom::validation_spec(route_enabled),
             _ => action.spec(),
@@ -810,6 +840,64 @@ impl Scenarios {
         let parameters = args["arguments"].as_object().unwrap();
         if let Err(error) = catalog::validate(&spec.input, parameters) {
             return Ok(Err(error));
+        }
+        if matches!(
+            action,
+            Action::GetOrderSnapshot | Action::AssessEngineeringChange
+        ) {
+            return crate::snapshots::query(
+                &tx,
+                run,
+                action,
+                parameters["work_order"].as_str().unwrap(),
+            );
+        }
+        let mut definition_snapshot = None;
+        if snapshot_enabled
+            && matches!(
+                action,
+                Action::GetReleaseReadiness | Action::ReleaseWorkOrder
+            )
+        {
+            let order = parameters["work_order"].as_str().unwrap();
+            if !definition.work_orders.iter().any(|id| id == order) {
+                return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
+            }
+            if action == Action::ReleaseWorkOrder {
+                let key = parameters["idempotency_key"].as_str().unwrap();
+                let request = json!({"action":action,"arguments":parameters}).to_string();
+                let saved = tx
+                    .query_row(
+                        "SELECT request,response FROM scenario_requests WHERE run=?1 AND key=?2",
+                        params![run, key],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()?;
+                if let Some((original, response)) = saved {
+                    return Ok(if original == request {
+                        Ok(serde_json::from_str(&response)?)
+                    } else {
+                        Err(reject("IDEMPOTENCY_CONFLICT", "idempotency_key"))
+                    });
+                }
+            }
+            let selection = match crate::snapshots::selection(&parameters["definition_selection"]) {
+                Ok(selection) => selection,
+                Err(error) => return Ok(Err(error)),
+            };
+            let resolved = crate::snapshots::resolve(&tx, run, order, &selection)?;
+            match (action, resolved) {
+                (Action::ReleaseWorkOrder, Ok(snapshot))
+                    if snapshot["fingerprint"] == parameters["snapshot_fingerprint"] =>
+                {
+                    definition_snapshot = Some(snapshot);
+                }
+                (Action::ReleaseWorkOrder, _) => {
+                    return Ok(Err(reject("SNAPSHOT_CHANGED", "snapshot_fingerprint")));
+                }
+                (_, Ok(snapshot)) => definition_snapshot = Some(snapshot),
+                (_, Err(error)) => return Ok(Err(error)),
+            }
         }
         if action.is_route_action()
             || (matches!(action, Action::ActivateRevision | Action::ValidateRevision)
@@ -1183,16 +1271,22 @@ impl Scenarios {
             tx.commit()?;
             return Ok(Ok(response));
         }
-        if action == Action::GetReleaseReadiness {
-            if let Some(setup) = &definition.assembly {
-                return Ok(Ok(crate::assembly::release_readiness(
-                    &tx,
-                    run,
-                    setup,
-                    parameters["work_order"].as_str().unwrap(),
-                    cursor,
-                )?));
+        if action == Action::GetReleaseReadiness
+            && let Some(setup) = &definition.assembly
+        {
+            let mut response = crate::assembly::release_readiness(
+                &tx,
+                run,
+                setup,
+                parameters["work_order"].as_str().unwrap(),
+                cursor,
+            )?;
+            if response["ok"] == true
+                && let Some(snapshot) = definition_snapshot
+            {
+                response["definition_snapshot"] = snapshot;
             }
+            return Ok(Ok(response));
         }
         if crate::fabrication::tools().any(|tool| tool.0 == action) {
             let Some(setup) = definition
@@ -1252,7 +1346,7 @@ impl Scenarios {
                     model.as_ref(),
                 )
             });
-            let (response, changed) = crate::assembly::invoke(
+            let (mut response, changed) = crate::assembly::invoke(
                 &tx,
                 run,
                 setup,
@@ -1265,6 +1359,11 @@ impl Scenarios {
                 model.as_ref(),
             )?;
             if changed {
+                if action == Action::ReleaseWorkOrder
+                    && let Some(snapshot) = &definition_snapshot
+                {
+                    crate::snapshots::freeze(&tx, run, parameters, snapshot, &mut response)?;
+                }
                 tx.commit()?;
             }
             return Ok(Ok(response));
@@ -1324,7 +1423,18 @@ impl Scenarios {
                     json!(["complete_work_order"])
                 };
             }
+            if action == Action::GetReleaseReadiness
+                && response["ok"] == true
+                && let Some(snapshot) = &definition_snapshot
+            {
+                response["definition_snapshot"] = snapshot.clone();
+            }
             if changed {
+                if action == Action::ReleaseWorkOrder
+                    && let Some(snapshot) = &definition_snapshot
+                {
+                    crate::snapshots::freeze(&tx, run, parameters, snapshot, &mut response)?;
+                }
                 tx.commit()?;
             }
             return Ok(Ok(response));

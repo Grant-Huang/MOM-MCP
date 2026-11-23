@@ -464,6 +464,15 @@ pub(crate) fn invoke(
                     "specification_version",
                 )));
             };
+            let frozen = crate::snapshots::load(&tx, run, work_order)?;
+            if frozen.as_ref().is_some_and(|snapshot| {
+                snapshot["inspection_plan"]["specification_version"] != specification
+            }) {
+                return Ok(Err(reject(
+                    "INSPECTION_PLAN_SNAPSHOT_MISMATCH",
+                    "specification_version",
+                )));
+            }
             if let Some(original) = reinspection_of {
                 let valid = inspection(&tx, run, original)?.is_some_and(|previous| {
                     previous.status == "failed"
@@ -476,7 +485,7 @@ pub(crate) fn invoke(
                         "reinspection_of",
                     )));
                 }
-            } else if plan.status != "active" {
+            } else if frozen.is_none() && plan.status != "active" {
                 return Ok(Err(reject(
                     "PLAN_REVISION_NOT_ACTIVE",
                     "specification_version",
