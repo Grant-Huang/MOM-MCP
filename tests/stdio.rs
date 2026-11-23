@@ -4260,6 +4260,11 @@ async fn p9c_06_return_unused_material() {
     operation_issue_scenarios(&[("cnc", 29, "WO-1", "machining", "MACH-01")]).await;
 }
 
+#[tokio::test]
+async fn p9c_08_stock_transfer() {
+    operation_issue_scenarios(&[("cnc", 30, "WO-1", "machining", "MACH-01")]).await;
+}
+
 async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
@@ -4309,6 +4314,72 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             apply("assign_receipt_tracking","track",json!({"receipt_id":"RC-1","lot_id":"LOT-1","supplier_lot":"SUP","location":"RAW-02"})).await;
             apply("post_receipt","post",json!({"receipt_id":"RC-1"})).await;
             let reserve=json!({"reservation_id":"RS-1","work_order":order,"lot_id":"LOT-1","quantity":"1.5"});
+            if version == 30 {
+                let search=call(&client,"search_tools",json!({"run_id":run})).await;
+                for name in ["create_stock_transfer","post_stock_transfer"] {
+                    assert!(search["tools"].as_array().unwrap().iter().any(|tool|tool["name"]==name));
+                }
+                let draft_args=json!({"transfer_id":"TR-1","lot_id":"LOT-1","source_location":"RAW-02",
+                    "destination_location":"RAW-01","reason":"reposition"});
+                let draft=apply("create_stock_transfer","draft",draft_args.clone()).await;
+                assert_eq!(draft["transfer"]["status"],"draft");
+                let mut competing=draft_args;
+                competing["transfer_id"]=json!("TR-2");
+                apply("create_stock_transfer","draft-competing",competing).await;
+                let balance=|location:Option<&str>| invoke("get_stock_balance",if let Some(location)=location {json!({"item_id":"WIRE","location":location})} else {json!({"item_id":"WIRE"})});
+                assert_eq!(balance(Some("RAW-02")).await["balance"]["on_hand"],"2");
+                assert_eq!(balance(Some("RAW-01")).await["balance"]["on_hand"],"0");
+                let post=json!({"transfer_id":"TR-1"});
+                apply("reserve_material","reserved",reserve.clone()).await;
+                let before=cursor().await;
+                assert_eq!(write("post_stock_transfer","blocked",post.clone()).await["code"],"LOT_COMMITTED");
+                assert_eq!(cursor().await,before);
+                apply("release_reservation","release",json!({"reservation_id":"RS-1"})).await;
+                let mut submitted=post;
+                submitted["expected_cursor"]=cursor().await;
+                submitted["idempotency_key"]=json!("transfer-post");
+                let receipt=invoke("post_stock_transfer",submitted.clone()).await;
+                assert_eq!(receipt["transfer"]["quantity"],"2","{receipt}");
+                assert_eq!(invoke("post_stock_transfer",submitted).await,receipt);
+                assert_eq!(write("post_stock_transfer","duplicate-post",json!({"transfer_id":"TR-1"})).await["code"],"TRANSFER_ALREADY_POSTED");
+                assert_eq!(write("post_stock_transfer","stale-source",json!({"transfer_id":"TR-2"})).await["code"],"TRANSFER_SOURCE_CHANGED");
+                assert_eq!(balance(Some("RAW-02")).await["balance"]["on_hand"],"0");
+                assert_eq!(balance(Some("RAW-01")).await["balance"]["on_hand"],"2");
+                assert_eq!(balance(None::<&str>).await["balance"]["on_hand"],"2");
+                assert_eq!(invoke("get_lot",json!({"lot_id":"LOT-1"})).await["lot"]["location"],"RAW-01");
+                assert_eq!(invoke("list_lots",json!({"location":"RAW-01"})).await["lots"][0]["lot_id"],"LOT-1");
+                assert_eq!(invoke("list_inventory_movements",json!({"location":"RAW-02"})).await["movements"][0]["lot_id"],"LOT-1");
+                let mut pick=reserve;
+                pick["reservation_id"]=json!("RS-2");
+                assert_eq!(apply("reserve_material","reserve-moved",pick).await["reservation"]["location"],"RAW-01");
+                apply("pick_material","pick-moved",json!({"reservation_id":"RS-2"})).await;
+                apply("dispatch_operation","dispatch-moved",json!({"work_order":order,"operation":operation,"work_center":center})).await;
+                let issued=apply("issue_material_to_operation","issue-moved",json!({"reservation_id":"RS-2","operation":operation})).await;
+                apply("create_stock_transfer","draft-back",json!({"transfer_id":"TR-3","lot_id":"LOT-1",
+                    "source_location":"RAW-01","destination_location":"RAW-02","reason":"return to storage"})).await;
+                assert_eq!(write("post_stock_transfer","issued-block",json!({"transfer_id":"TR-3"})).await["code"],"LOT_COMMITTED");
+                let returned=apply("return_unused_material","returned",json!({"movement_id":"RET-1","reservation_id":"RS-2","quantity":"1.5","reason":"unused"})).await;
+                apply("post_stock_transfer","posted-back",json!({"transfer_id":"TR-3"})).await;
+                assert_eq!(invoke("list_inventory_movements",json!({"movement_type":"issue","location":"RAW-01"})).await["movements"],json!([issued["reservation"]]));
+                assert_eq!(invoke("list_inventory_movements",json!({"movement_type":"return","location":"RAW-01"})).await["movements"],json!([returned["movement"]]));
+                let (peer,_child)=connect_mode(&db,"0",true).await;
+                let page=business(&peer,run,"list_inventory_movements",json!({"movement_type":"transfer","limit":1,"location":"RAW-02"})).await;
+                assert_eq!(page["movements"],json!([receipt["transfer"]]));
+                assert_eq!(page["next_after_movement_id"],"TR-1");
+                let next=invoke("list_inventory_movements",json!({"movement_type":"transfer","after_movement_id":"TR-1"})).await;
+                assert_eq!(next["movements"][0]["transfer_id"],"TR-3");
+                apply("create_receipt","pending-receipt",json!({"receipt_id":"RC-2","item_id":"WIRE","revision":1,"quantity":"1","requires_inspection":true})).await;
+                apply("assign_receipt_tracking","pending-track",json!({"receipt_id":"RC-2","lot_id":"LOT-2","supplier_lot":"SUP","location":"RAW-02"})).await;
+                apply("post_receipt","pending-post",json!({"receipt_id":"RC-2"})).await;
+                apply("create_stock_transfer","pending-draft",json!({"transfer_id":"TR-4","lot_id":"LOT-2",
+                    "source_location":"RAW-02","destination_location":"RAW-01","reason":"pending inspection"})).await;
+                assert_eq!(write("post_stock_transfer","pending-transfer",json!({"transfer_id":"TR-4"})).await["code"],"LOT_PENDING_INSPECTION");
+                assert_eq!(invoke("hold_material",json!({"batch":"LOT-1","reason":"segregate","idempotency_key":"hold-transfer"})).await["ok"],true);
+                assert_eq!(write("post_stock_transfer","held-transfer",json!({"transfer_id":"TR-2"})).await["code"],"MATERIAL_HELD");
+
+                continue;
+            }
+
             apply("reserve_material","reserve",reserve.clone()).await;
             let issue=json!({"reservation_id":"RS-1","operation":operation});
             assert_eq!(write("issue_material_to_operation","issue",issue.clone()).await["code"],"RESERVATION_STATE_INVALID");

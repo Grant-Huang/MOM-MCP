@@ -14,6 +14,7 @@ mod scenario;
 mod simulation;
 mod smt;
 mod snapshots;
+mod transfers;
 mod web;
 
 use clap::{Parser, Subcommand};

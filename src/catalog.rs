@@ -9,6 +9,8 @@ use crate::scenario::Rejection;
 pub enum Action {
     IssueMaterialToOperation,
     ReturnUnusedMaterial,
+    CreateStockTransfer,
+    PostStockTransfer,
     ReserveMaterial,
     ListReservations,
     ReleaseReservation,
@@ -178,6 +180,8 @@ impl Action {
         [
             Self::IssueMaterialToOperation,
             Self::ReturnUnusedMaterial,
+            Self::CreateStockTransfer,
+            Self::PostStockTransfer,
             Self::ReserveMaterial,
             Self::ListReservations,
             Self::ReleaseReservation,
@@ -250,6 +254,8 @@ impl Action {
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::IssueMaterialToOperation => "issue_material_to_operation",
+            Self::CreateStockTransfer => "create_stock_transfer",
+            Self::PostStockTransfer => "post_stock_transfer",
             Self::ReturnUnusedMaterial => "return_unused_material",
             Self::ReserveMaterial => "reserve_material",
             Self::ListReservations => "list_reservations",
@@ -425,6 +431,9 @@ impl Action {
         )
     }
     pub fn spec(self) -> Spec {
+        if matches!(self, Self::CreateStockTransfer | Self::PostStockTransfer) {
+            return crate::transfers::spec(self);
+        }
         if self.is_reservation_action() {
             return crate::reservations::spec(self);
         }
