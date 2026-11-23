@@ -26,27 +26,47 @@ pub(crate) fn row_schema() -> Value {
             "revision":{"type":"integer","minimum":1},"unit":text(),"source_location":id_schema(),
             "destination_location":id_schema(),"reason":text(),"status":{"enum":["draft","posted"]},
             "quantity":{"anyOf":[quantity_schema(),{"type":"null"}]},
-            "posted_cursor":{"type":["integer","null"],"minimum":1}}),
+            "posted_cursor":{"type":["integer","null"],"minimum":1},"reverses_transfer_id":id_schema()}),
     )
 }
 
 pub(crate) fn spec(action: Action) -> Spec {
-    let mut fields = json!({"transfer_id":id_schema(),"expected_cursor":{"type":"integer","minimum":0,"maximum":i64::MAX},"idempotency_key":text()});
-    let mut required = vec!["transfer_id", "expected_cursor", "idempotency_key"];
-    let description = if action == Action::CreateStockTransfer {
-        required.extend([
-            "lot_id",
-            "source_location",
-            "destination_location",
-            "reason",
-        ]);
-        for field in ["lot_id", "source_location", "destination_location"] {
-            fields[field] = id_schema();
+    let mut fields = json!({"expected_cursor":{"type":"integer","minimum":0,"maximum":i64::MAX},"idempotency_key":text()});
+    let mut required = vec!["expected_cursor", "idempotency_key"];
+    let description = match action {
+        Action::CreateStockTransfer => {
+            required.extend([
+                "transfer_id",
+                "lot_id",
+                "source_location",
+                "destination_location",
+                "reason",
+            ]);
+            for field in [
+                "transfer_id",
+                "lot_id",
+                "source_location",
+                "destination_location",
+            ] {
+                fields[field] = id_schema();
+            }
+            fields["reason"] = text();
+            "创建整批库存库位转储单"
         }
-        fields["reason"] = text();
-        "创建整批库存库位转储单"
-    } else {
-        "核对整批库存可用性并过账库位转储"
+        Action::PostStockTransfer => {
+            required.push("transfer_id");
+            fields["transfer_id"] = id_schema();
+            "核对整批库存可用性并过账库位转储"
+        }
+        Action::ReverseInventoryMovement => {
+            required.extend(["movement_type", "movement_id", "reversal_id", "reason"]);
+            fields["movement_type"] = json!({"type":"string","enum":["transfer"]});
+            fields["movement_id"] = id_schema();
+            fields["reversal_id"] = id_schema();
+            fields["reason"] = text();
+            "冲销已过账整批转储并记录反向流水"
+        }
+        _ => unreachable!("stock transfer action"),
     };
     Spec {
         name: action.name(),
@@ -67,6 +87,10 @@ pub(crate) fn spec(action: Action) -> Spec {
             "TRANSFER_NOT_FOUND",
             "TRANSFER_ALREADY_POSTED",
             "TRANSFER_SOURCE_CHANGED",
+            "TRANSFER_NOT_POSTED",
+            "TRANSFER_ALREADY_REVERSED",
+            "TRANSFER_IS_REVERSAL",
+            "TRANSFER_HAS_DEPENDENCIES",
             "LOT_PENDING_INSPECTION",
             "MATERIAL_HELD",
             "LOT_COMMITTED",
@@ -77,18 +101,21 @@ pub(crate) fn spec(action: Action) -> Spec {
     }
 }
 
-const RECORDS: &str = "SELECT t.transfer,t.lot,s.item,s.revision,s.unit,t.source,t.destination,t.reason,t.quantity,t.posted_cursor
-    FROM stock_transfers t JOIN stock_receipts s ON s.run=t.run AND s.lot=t.lot";
+const RECORDS: &str = "SELECT t.transfer,t.lot,s.item,s.revision,s.unit,t.source,t.destination,t.reason,t.quantity,t.posted_cursor,r.original
+    FROM stock_transfers t JOIN stock_receipts s ON s.run=t.run AND s.lot=t.lot
+    LEFT JOIN stock_transfer_reversals r ON r.run=t.run AND r.reversal=t.transfer";
 
 fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
     let cursor: Option<i64> = row.get(9)?;
-    Ok(
-        json!({"transfer_id":row.get::<_,String>(0)?,"lot_id":row.get::<_,String>(1)?,
+    let mut result = json!({"transfer_id":row.get::<_,String>(0)?,"lot_id":row.get::<_,String>(1)?,
         "item_id":row.get::<_,String>(2)?,"revision":row.get::<_,i64>(3)?,"unit":row.get::<_,String>(4)?,
         "source_location":row.get::<_,String>(5)?,"destination_location":row.get::<_,String>(6)?,
         "reason":row.get::<_,String>(7)?,"quantity":row.get::<_,Option<i64>>(8)?.map(quantity),
-        "status":if cursor.is_some() {"posted"} else {"draft"},"posted_cursor":cursor}),
-    )
+        "status":if cursor.is_some() {"posted"} else {"draft"},"posted_cursor":cursor});
+    if let Some(original) = row.get::<_, Option<String>>(10)? {
+        result["reverses_transfer_id"] = json!(original);
+    }
+    Ok(result)
 }
 
 pub(crate) fn list(
@@ -133,6 +160,8 @@ pub(crate) fn invoke(
 ) -> anyhow::Result<Result<Value, Rejection>> {
     for field in [
         "transfer_id",
+        "movement_id",
+        "reversal_id",
         "lot_id",
         "source_location",
         "destination_location",
@@ -145,7 +174,12 @@ pub(crate) fn invoke(
             return Ok(Err(Rejection::invalid(field)));
         }
     }
-    let id = args["transfer_id"].as_str().unwrap();
+    let id_field = if action == Action::ReverseInventoryMovement {
+        "reversal_id"
+    } else {
+        "transfer_id"
+    };
+    let id = args[id_field].as_str().unwrap();
     let key = args["idempotency_key"].as_str().unwrap();
     let request = json!({"action":action,"arguments":args}).to_string();
     let saved = tx
@@ -165,6 +199,30 @@ pub(crate) fn invoke(
     if args["expected_cursor"].as_i64() != Some(cursor) {
         return Ok(Err(reject("VERSION_CONFLICT", "expected_cursor")));
     }
+    if action == Action::ReverseInventoryMovement {
+        if let Err(error) = reverse(&tx, run, id, args, cursor)? {
+            return Ok(Err(error));
+        }
+    } else if let Err(error) = create_or_post(&tx, run, action, id, args, cursor)? {
+        return Ok(Err(error));
+    }
+    let transfer = tx.query_row(
+        &format!("{RECORDS} WHERE t.run=?1 AND t.transfer=?2"),
+        params![run, id],
+        record,
+    )?;
+    let response = json!({"ok":true,"run_id":run,"cursor":cursor+1,"transfer":transfer});
+    crate::reservations::finish_write(tx, run, key, &request, response)
+}
+
+fn create_or_post(
+    tx: &Transaction<'_>,
+    run: &str,
+    action: Action,
+    id: &str,
+    args: &Map<String, Value>,
+    cursor: i64,
+) -> rusqlite::Result<Result<(), Rejection>> {
     let saved = tx
         .query_row(
             "SELECT lot,source,posted_cursor FROM stock_transfers WHERE run=?1 AND transfer=?2",
@@ -215,7 +273,7 @@ pub(crate) fn invoke(
         if posted.is_some() {
             return Ok(Err(reject("TRANSFER_ALREADY_POSTED", "transfer_id")));
         }
-        let amount = match transferable_quantity(&tx, run, &lot, &source)? {
+        let amount = match transferable_quantity(tx, run, &lot, &source)? {
             Ok(amount) => amount,
             Err(error) => return Ok(Err(error)),
         };
@@ -224,13 +282,71 @@ pub(crate) fn invoke(
             params![run, id, cursor + 1, amount],
         )?;
     }
+    Ok(Ok(()))
+}
+
+fn reverse(
+    tx: &Transaction<'_>,
+    run: &str,
+    id: &str,
+    args: &Map<String, Value>,
+    cursor: i64,
+) -> rusqlite::Result<Result<(), Rejection>> {
+    let original = args["movement_id"].as_str().unwrap();
     let transfer = tx.query_row(
-        &format!("{RECORDS} WHERE t.run=?1 AND t.transfer=?2"),
+        "SELECT lot,source,destination,posted_cursor FROM stock_transfers WHERE run=?1 AND transfer=?2",
+        params![run,original], |row| Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?,
+            row.get::<_,String>(2)?,row.get::<_,Option<i64>>(3)?)),
+    ).optional()?;
+    let Some((lot, source, destination, posted)) = transfer else {
+        return Ok(Err(reject("TRANSFER_NOT_FOUND", "movement_id")));
+    };
+    let Some(posted) = posted else {
+        return Ok(Err(reject("TRANSFER_NOT_POSTED", "movement_id")));
+    };
+    let link = tx.query_row(
+        "SELECT original,reversal FROM stock_transfer_reversals WHERE run=?1 AND (original=?2 OR reversal=?2)",
+        params![run,original], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)),
+    ).optional()?;
+    if let Some((_, reversal)) = link {
+        let code = if reversal == original {
+            "TRANSFER_IS_REVERSAL"
+        } else {
+            "TRANSFER_ALREADY_REVERSED"
+        };
+        return Ok(Err(reject(code, "movement_id")));
+    }
+    let duplicate: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM stock_transfers WHERE run=?1 AND transfer=?2)",
         params![run, id],
-        record,
+        |row| row.get(0),
     )?;
-    let response = json!({"ok":true,"run_id":run,"cursor":cursor+1,"transfer":transfer});
-    crate::reservations::finish_write(tx, run, key, &request, response)
+    if duplicate {
+        return Ok(Err(reject("TRANSFER_ALREADY_EXISTS", "reversal_id")));
+    }
+    let dependent: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM stock_transfers WHERE run=?1 AND lot=?2 AND posted_cursor>?3)
+         OR EXISTS(SELECT 1 FROM stock_operation_issues i JOIN stock_reservations r
+             ON r.run=i.run AND r.reservation=i.reservation WHERE i.run=?1 AND r.lot=?2 AND i.issued_cursor>?3)",
+        params![run,lot,posted], |row| row.get(0),
+    )?;
+    if dependent {
+        return Ok(Err(reject("TRANSFER_HAS_DEPENDENCIES", "movement_id")));
+    }
+    let amount = match transferable_quantity(tx, run, &lot, &destination)? {
+        Ok(amount) => amount,
+        Err(error) => return Ok(Err(error)),
+    };
+    tx.execute(
+        "INSERT INTO stock_transfers (run,transfer,lot,source,destination,reason,posted_cursor,quantity)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+        params![run,id,lot,destination,source,args["reason"].as_str().unwrap(),cursor+1,amount],
+    )?;
+    tx.execute(
+        "INSERT INTO stock_transfer_reversals (run,original,reversal) VALUES (?1,?2,?3)",
+        params![run, original, id],
+    )?;
+    Ok(Ok(()))
 }
 
 fn transferable_quantity(
