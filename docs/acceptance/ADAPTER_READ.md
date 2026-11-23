@@ -35,6 +35,9 @@ Carbon 社区版补充 [双会话隔离探针](../references/mcp/README.md#carbo
 
 ## AgentNexus 正式接口联审输入
 
+AgentNexus `175e07b` 已包含 PR #228 的 M3 桩路径准出。正式接入需要从可访问的 Git 提交解析独立 adapter crate。先完成 [宿主 Git 依赖复跑](../EXTERNAL_ADAPTER_DESIGN.md#宿主依赖复跑)，再评审真实身份、凭据及出站配置，并经正式 Observe 运行三源验收。 [M3-5 准出证据](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/175e07b/docs/testing/evidence/wa-m3-5.md)
+
+
 AgentNexus `c74b144` 已合入 M3-2，并在 `/api/world/prod` 实现 Bind、Observe、Subscribe 和生产桩水位。桩 Observe 接收绑定的 `world_id` 并返回设备观测。在该提交执行 `cargo test --locked -p an-server --test mom_world_prod`，`RT-WAPROD-01/02` 两项通过。三源工单读取接入以正式 World Adapter 接口为目标。 [M3 任务卡](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/c74b144/docs/mom/WA_M3_TASKS.md) · [M3-2 证据](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/c74b144/docs/testing/evidence/wa-m3-2-green.md)
 
 AgentNexus `47d8557` 已经由 PR #220 合入 M3-3。正式生产桩增加跨范围拒绝、过期游标恢复、分源延迟以及关闭写动作。用 `cargo test --locked -p an-server --test mom_world_prod` 本地复验，6 项通过。正式宿主的真来源身份、工单选择和出站方案仍按 M3 升级边界联审。 [M3-3 证据](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/47d8557/docs/testing/evidence/wa-m3-3-green.md)

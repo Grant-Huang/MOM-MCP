@@ -195,3 +195,9 @@ MOM-MCP 侧已用 `cargo test --locked --test external_observe one_observe_entry
 通过环境提供 `MOM_SAMPLE_TOKEN`、`MOM_CARBON_COMPANY` 和 `MOM_CARBON_PROJECT_KEY`，执行 `cargo run --locked --example external_order_smoke -- carbon-rest SUPABASE_ORIGIN VISIBLE_ID OTHER_COMPANY_ID EXPECTED_SOURCE_STATUS`。由测试管理员预先确认两条工单均存在。公司隔离取证时，以同一用户会话在源端按另一公司工单 ID 读取一次，查询省略公司过滤，确认源端返回空数组。
 
 本地验证使用 PostgreSQL 16、PostgREST 12.2.12、上游 `jobs` 视图、`job` SELECT 策略及员工公司解析函数。隔离夹具只建立所需表列，以合成用户 JWT 执行查询，并以回环 HTTP 转发提供 Supabase 路径和项目键检查。已复核源端 RLS、Rust 读取，以及 AgentNexus Observe 的范围内 200 和跨公司 404。完整 Carbon 自托管部署、真实 Supabase 登录与生产站点签收仍待取证。
+
+### 宿主依赖复跑
+
+独立包名为 `mom-external-adapter`，版本为 `0.1.0`。宿主可用 Git 仓库及完整提交 SHA 固定依赖。包包含工单本体投影、只读 HTTP／MCP 传输和逐请求授权的 `ExternalObserve`。MOM-MCP 继续通过原模块路径导出同一实现。
+
+执行 `bash scripts/check-external-adapter-consumer.sh FULL_COMMIT_SHA [GIT_URL]`。脚本在临时 Cargo 项目中从固定 Git 提交解析 adapter，并连接 AgentNexus 当前采用的 `rusqlite 0.43`。它检查 adapter 的依赖子树，启动空的 adapter 注册表，并通过宿主 SQLite 执行内存查询。省略 URL 时使用当前 Git 仓库的文件传输，正式宿主接线时提供可访问的远端 Git URL 并更新宿主锁文件。
