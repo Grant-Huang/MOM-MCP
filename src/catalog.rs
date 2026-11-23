@@ -11,6 +11,7 @@ pub enum Action {
     ReturnUnusedMaterial,
     CreateStockTransfer,
     PostStockTransfer,
+    ReverseInventoryMovement,
     ReserveMaterial,
     ListReservations,
     ReleaseReservation,
@@ -182,6 +183,7 @@ impl Action {
             Self::ReturnUnusedMaterial,
             Self::CreateStockTransfer,
             Self::PostStockTransfer,
+            Self::ReverseInventoryMovement,
             Self::ReserveMaterial,
             Self::ListReservations,
             Self::ReleaseReservation,
@@ -255,6 +257,7 @@ impl Action {
         match self {
             Self::IssueMaterialToOperation => "issue_material_to_operation",
             Self::CreateStockTransfer => "create_stock_transfer",
+            Self::ReverseInventoryMovement => "reverse_inventory_movement",
             Self::PostStockTransfer => "post_stock_transfer",
             Self::ReturnUnusedMaterial => "return_unused_material",
             Self::ReserveMaterial => "reserve_material",
@@ -431,7 +434,10 @@ impl Action {
         )
     }
     pub fn spec(self) -> Spec {
-        if matches!(self, Self::CreateStockTransfer | Self::PostStockTransfer) {
+        if matches!(
+            self,
+            Self::CreateStockTransfer | Self::PostStockTransfer | Self::ReverseInventoryMovement
+        ) {
             return crate::transfers::spec(self);
         }
         if self.is_reservation_action() {

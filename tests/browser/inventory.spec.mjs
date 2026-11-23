@@ -151,11 +151,12 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
   { title: "P9C-09 Post a stock transfer", scenario: "cnc@30", work_order: "WO-1", operation: "machining", work_center: "MACH-01", transfer: true },
+  { title: "P9C-11 Reverse a posted stock transfer", scenario: "cnc@31", work_order: "WO-1", operation: "machining", work_center: "MACH-01", transfer: true, reverse: true },
 ]) {
   test(title, async ({ page }) => {
     await page.goto("/scenarios");
@@ -220,6 +221,24 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       for (const [location, amount] of [["RAW-02", "0"], ["RAW-01", "2"]]) {
         const stock = await invoke("get_stock_balance", { item_id: "WIRE", location });
         expect(stock.balance.on_hand).toBe(amount);
+      }
+      if (reverse) {
+        const posted = JSON.parse(await status.textContent());
+        await button("搜索工具").click();
+        await page.getByLabel("匹配工具").selectOption("reverse_inventory_movement");
+        await page.getByLabel("JSON 参数").fill(JSON.stringify({
+          movement_type: "transfer", movement_id: "TR-1", reversal_id: "TR-2", reason: "wrong destination",
+          expected_cursor: posted.cursor, idempotency_key: "reverse-transfer",
+        }));
+        await button("调用工具").click();
+        await expect(status).toContainText('"reverses_transfer_id": "TR-1"');
+        const after = await invoke("list_inventory_movements", { movement_type: "transfer" });
+        expect(after.movements[0]).toEqual(ledger.movements[0]);
+        expect(after.movements[1]).toMatchObject({
+          reverses_transfer_id: "TR-1", source_location: "RAW-01", destination_location: "RAW-02", quantity: "2",
+        });
+        const stock = await invoke("get_stock_balance", { item_id: "WIRE", location: "RAW-02" });
+        expect(stock.balance.on_hand).toBe("2");
       }
       return;
     }

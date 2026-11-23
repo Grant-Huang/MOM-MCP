@@ -446,6 +446,10 @@ impl Scenarios {
                  posted_cursor INTEGER, quantity INTEGER,
                  PRIMARY KEY(run,transfer)
              );
+             CREATE TABLE IF NOT EXISTS stock_transfer_reversals (
+                 run TEXT NOT NULL, original TEXT NOT NULL, reversal TEXT NOT NULL,
+                 PRIMARY KEY(run,original), UNIQUE(run,reversal)
+             );
              CREATE INDEX IF NOT EXISTS stock_transfer_history ON stock_transfers(run,lot,posted_cursor);
              CREATE VIEW IF NOT EXISTS stock_current_lots AS
                  SELECT s.run,s.receipt,s.item,s.revision,s.unit,s.quantity,s.requires_inspection,s.lot,s.supplier_lot,
@@ -578,6 +582,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-report-inputs.json"),
             include_str!("../fixtures/cnc-unused-material-returns.json"),
             include_str!("../fixtures/cnc-stock-transfers.json"),
+            include_str!("../fixtures/cnc-stock-transfer-reversal.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
@@ -1086,7 +1091,9 @@ impl Scenarios {
         }
         if matches!(
             action,
-            Action::CreateStockTransfer | Action::PostStockTransfer
+            Action::CreateStockTransfer
+                | Action::PostStockTransfer
+                | Action::ReverseInventoryMovement
         ) {
             return crate::transfers::invoke(tx, run, action, parameters, cursor);
         }
