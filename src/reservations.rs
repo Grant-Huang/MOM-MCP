@@ -121,8 +121,12 @@ pub(crate) fn spec(action: Action) -> Spec {
 }
 
 const RECORDS: &str = "SELECT r.reservation,r.work_order,r.lot,r.quantity,r.status,
-    s.item,s.revision,s.unit,s.location,i.operation,i.work_center,i.issued_cursor FROM stock_reservations r
+    s.item,s.revision,s.unit,CASE WHEN i.issued_cursor IS NULL THEN c.location ELSE COALESCE((
+        SELECT t.destination FROM stock_transfers t WHERE t.run=r.run AND t.lot=r.lot
+        AND t.posted_cursor<i.issued_cursor ORDER BY t.posted_cursor DESC LIMIT 1),s.location) END AS issue_location,
+    i.operation,i.work_center,i.issued_cursor FROM stock_reservations r
     JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
+    JOIN stock_current_lots c ON c.run=r.run AND c.lot=r.lot
     LEFT JOIN stock_operation_issues i ON i.run=r.run AND i.reservation=r.reservation";
 
 fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
@@ -153,7 +157,7 @@ pub(crate) fn issue_movements(
     let limit = args.get("limit").and_then(Value::as_i64).unwrap_or(20);
     let mut query=tx.prepare(&format!("{RECORDS} WHERE r.run=?1 AND r.reservation>?2
         AND i.reservation IS NOT NULL AND (?3 IS NULL OR s.item=?3) AND (?4 IS NULL OR s.revision=?4)
-        AND (?5 IS NULL OR s.location=?5) ORDER BY r.reservation LIMIT ?6"))?;
+        AND (?5 IS NULL OR issue_location=?5) ORDER BY r.reservation LIMIT ?6"))?;
     let mut rows = query
         .query_map(
             params![run, after, item, revision, location, limit + 1],
@@ -195,7 +199,9 @@ pub(crate) fn return_schema() -> Value {
 }
 
 const RETURN_RECORDS: &str = "SELECT t.movement,t.reservation,r.work_order,i.operation,r.lot,
-    s.item,s.revision,s.location,t.quantity,s.unit,t.reason,t.returned_cursor
+    s.item,s.revision,COALESCE((SELECT m.destination FROM stock_transfers m WHERE m.run=r.run AND m.lot=r.lot
+        AND m.posted_cursor<i.issued_cursor ORDER BY m.posted_cursor DESC LIMIT 1),s.location) AS issue_location,
+    t.quantity,s.unit,t.reason,t.returned_cursor
     FROM stock_operation_returns t
     JOIN stock_reservations r ON r.run=t.run AND r.reservation=t.reservation
     JOIN stock_operation_issues i ON i.run=r.run AND i.reservation=r.reservation
@@ -227,7 +233,7 @@ pub(crate) fn return_movements(
     let mut query = tx.prepare(&format!(
         "{RETURN_RECORDS} WHERE t.run=?1 AND t.movement>?2
         AND (?3 IS NULL OR s.item=?3) AND (?4 IS NULL OR s.revision=?4)
-        AND (?5 IS NULL OR s.location=?5) ORDER BY t.movement LIMIT ?6"
+        AND (?5 IS NULL OR issue_location=?5) ORDER BY t.movement LIMIT ?6"
     ))?;
     let mut rows = query
         .query_map(
@@ -516,7 +522,7 @@ pub(crate) fn invoke(
     finish_write(tx, run, key, &request, response)
 }
 
-fn finish_write(
+pub(crate) fn finish_write(
     tx: Transaction<'_>,
     run: &str,
     key: &str,

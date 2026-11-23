@@ -440,6 +440,19 @@ impl Scenarios {
                  operation TEXT NOT NULL, work_center TEXT NOT NULL, issued_cursor INTEGER NOT NULL,
                  PRIMARY KEY(run,reservation)
              );
+             CREATE TABLE IF NOT EXISTS stock_transfers (
+                 run TEXT NOT NULL, transfer TEXT NOT NULL, lot TEXT NOT NULL,
+                 source TEXT NOT NULL, destination TEXT NOT NULL, reason TEXT NOT NULL,
+                 posted_cursor INTEGER, quantity INTEGER,
+                 PRIMARY KEY(run,transfer)
+             );
+             CREATE INDEX IF NOT EXISTS stock_transfer_history ON stock_transfers(run,lot,posted_cursor);
+             CREATE VIEW IF NOT EXISTS stock_current_lots AS
+                 SELECT s.run,s.receipt,s.item,s.revision,s.unit,s.quantity,s.requires_inspection,s.lot,s.supplier_lot,
+                        COALESCE((SELECT t.destination FROM stock_transfers t WHERE t.run=s.run
+                            AND t.lot=s.lot AND t.posted_cursor IS NOT NULL ORDER BY t.posted_cursor DESC LIMIT 1),s.location) AS location,
+                        s.posted_cursor
+                 FROM stock_receipts s;
              CREATE TABLE IF NOT EXISTS stock_operation_returns (
                  run TEXT NOT NULL, movement TEXT NOT NULL, reservation TEXT NOT NULL,
                  quantity INTEGER NOT NULL, reason TEXT NOT NULL, returned_cursor INTEGER NOT NULL,
@@ -564,6 +577,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-operation-issues.json"),
             include_str!("../fixtures/cnc-report-inputs.json"),
             include_str!("../fixtures/cnc-unused-material-returns.json"),
+            include_str!("../fixtures/cnc-stock-transfers.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
@@ -1069,6 +1083,12 @@ impl Scenarios {
                 parameters["work_order"].as_str().unwrap(),
                 quantity,
             );
+        }
+        if matches!(
+            action,
+            Action::CreateStockTransfer | Action::PostStockTransfer
+        ) {
+            return crate::transfers::invoke(tx, run, action, parameters, cursor);
         }
         if action.is_receipt_action() {
             return crate::inventory::invoke(tx, run, action, parameters, cursor);

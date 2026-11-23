@@ -151,10 +151,11 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
+  { title: "P9C-09 Post a stock transfer", scenario: "cnc@30", work_order: "WO-1", operation: "machining", work_center: "MACH-01", transfer: true },
 ]) {
   test(title, async ({ page }) => {
     await page.goto("/scenarios");
@@ -204,6 +205,24 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     await write("create_receipt", { ...receipt, item_id: "WIRE", revision: 1, quantity: "2", requires_inspection: false });
     await write("assign_receipt_tracking", { ...receipt, ...lot, supplier_lot: "SUP-42", location: "RAW-02" });
     await write("post_receipt", receipt);
+    if (transfer) {
+      const draft = await write("create_stock_transfer", {
+        ...lot, transfer_id: "TR-1", source_location: "RAW-02", destination_location: "RAW-01", reason: "restock",
+      });
+      expect(draft.transfer.status).toBe("draft");
+      await button("搜索工具").click();
+      await page.getByLabel("匹配工具").selectOption("post_stock_transfer");
+      await page.getByLabel("JSON 参数").fill(JSON.stringify({ transfer_id: "TR-1", expected_cursor: cursor, idempotency_key: "transfer" }));
+      await button("调用工具").click();
+      await expect(status).toContainText('"status": "posted"');
+      const ledger = await invoke("list_inventory_movements", { movement_type: "transfer" });
+      expect(ledger.movements[0]).toMatchObject({ ...lot, source_location: "RAW-02", destination_location: "RAW-01", quantity: "2" });
+      for (const [location, amount] of [["RAW-02", "0"], ["RAW-01", "2"]]) {
+        const stock = await invoke("get_stock_balance", { item_id: "WIRE", location });
+        expect(stock.balance.on_hand).toBe(amount);
+      }
+      return;
+    }
     const reservation = { reservation_id: "RS-1" };
     await write("reserve_material", { ...reservation, ...lot, work_order: order.work_order, quantity: "1.5" });
     await write("pick_material", reservation);

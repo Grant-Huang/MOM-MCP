@@ -6,7 +6,7 @@ use crate::{
     scenario::{Rejection, identifier, reject},
 };
 
-const LOCATIONS: &[&str] = &["RAW-01", "RAW-02"];
+pub(crate) const LOCATIONS: &[&str] = &["RAW-01", "RAW-02"];
 pub(crate) const QUANTITY_SCALE: i64 = 1000;
 const MAX_RECEIPT_QUANTITY: i64 = 1_000_000_000 * QUANTITY_SCALE;
 
@@ -116,7 +116,7 @@ pub(crate) fn spec(action: Action) -> Spec {
             let (description, key) = if action == Action::ListLots {
                 ("分页查询已入库批次", "lots")
             } else {
-                ("分页查询收货入库流水", "movements")
+                ("按业务类型分页查询库存流水", "movements")
             };
             let mut output = json!({"next_after_receipt_id":{"type":["string","null"]}});
             output[key] = json!({"type":"array","items":receipt_schema()});
@@ -157,7 +157,8 @@ pub(crate) fn spec(action: Action) -> Spec {
         _ => unreachable!("receipt action"),
     };
     if action == Action::ListInventoryMovements {
-        fields["movement_type"] = json!({"type":"string","enum":["receipt","issue","return"]});
+        fields["movement_type"] =
+            json!({"type":"string","enum":["receipt","issue","return","transfer"]});
         fields["after_movement_id"] = id_schema();
     }
     output["ok"] = json!({"const":true});
@@ -182,6 +183,11 @@ pub(crate) fn spec(action: Action) -> Spec {
         output_schema["oneOf"].as_array_mut().unwrap().push(object(
             &["ok","run_id","movements","next_after_movement_id"],
             json!({"ok":{"const":true},"run_id":text(),"movements":{"type":"array","items":crate::reservations::return_schema()},
+                "next_after_movement_id":{"type":["string","null"]}}),
+        ));
+        output_schema["oneOf"].as_array_mut().unwrap().push(object(
+            &["ok","run_id","movements","next_after_movement_id"],
+            json!({"ok":{"const":true},"run_id":text(),"movements":{"type":"array","items":crate::transfers::row_schema()},
                 "next_after_movement_id":{"type":["string","null"]}}),
         ));
         output_schema["anyOf"] = output_schema
@@ -308,14 +314,14 @@ fn query(
             .get("movement_type")
             .and_then(Value::as_str)
             .unwrap_or("receipt");
-        if matches!(movement_type, "issue" | "return") {
+        if matches!(movement_type, "issue" | "return" | "transfer") {
             if args.contains_key("after_receipt_id") {
                 return Ok(Err(Rejection::invalid("after_receipt_id")));
             }
-            return Ok(Ok(if movement_type == "issue" {
-                crate::reservations::issue_movements(tx, run, args)?
-            } else {
-                crate::reservations::return_movements(tx, run, args)?
+            return Ok(Ok(match movement_type {
+                "issue" => crate::reservations::issue_movements(tx, run, args)?,
+                "return" => crate::reservations::return_movements(tx, run, args)?,
+                _ => crate::transfers::list(tx, run, args)?,
             }));
         }
         if args.contains_key("after_movement_id") {
@@ -331,7 +337,7 @@ fn query(
             let lot = tx
                 .query_row(
                     &format!(
-                        "SELECT {RECEIPT_COLUMNS} FROM stock_receipts
+                        "SELECT {RECEIPT_COLUMNS} FROM stock_current_lots AS stock_receipts
                 WHERE run=?1 AND lot=?2 AND posted_cursor IS NOT NULL"
                     ),
                     params![run, args["lot_id"].as_str().unwrap()],
@@ -369,8 +375,13 @@ fn query(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             let limit = args.get("limit").and_then(Value::as_i64).unwrap_or(20);
+            let source = if action == Action::ListLots {
+                "stock_current_lots"
+            } else {
+                "stock_receipts"
+            };
             let mut statement = tx.prepare(&format!(
-                "SELECT {RECEIPT_COLUMNS} FROM stock_receipts
+                "SELECT {RECEIPT_COLUMNS} FROM {source} AS stock_receipts
                 WHERE run=?1 AND receipt>?2 AND posted_cursor IS NOT NULL
                 AND (?3 IS NULL OR item=?3) AND (?4 IS NULL OR revision=?4)
                 AND (?5 IS NULL OR location=?5) ORDER BY receipt LIMIT ?6"
@@ -578,7 +589,7 @@ fn balance(
          COALESCE(SUM(CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END),0),
          COALESCE(SUM((SELECT SUM(x.quantity) FROM stock_reservations x
              WHERE x.run=s.run AND x.lot=s.lot AND x.status IN ('reserved','picked'))),0)
-         FROM stock_receipts s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
+         FROM stock_current_lots s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
          WHERE s.run=?1 AND s.item=?2 AND s.posted_cursor IS NOT NULL
          AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)",
         params![run,item,revision,location],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
