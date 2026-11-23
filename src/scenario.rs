@@ -37,6 +37,8 @@ pub struct Definition {
     work_orders: Vec<String>,
     materials: BTreeMap<String, String>,
     capabilities: Vec<Action>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    receipt_reversals: bool,
 }
 
 const fn model_version() -> u32 {
@@ -446,6 +448,14 @@ impl Scenarios {
                  posted_cursor INTEGER, quantity INTEGER,
                  PRIMARY KEY(run,transfer)
              );
+             CREATE TABLE IF NOT EXISTS stock_receipt_reversals (
+                 run TEXT NOT NULL, receipt TEXT NOT NULL, reversal TEXT NOT NULL,
+                 reason TEXT NOT NULL, reversed_cursor INTEGER NOT NULL,
+                 PRIMARY KEY(run,receipt), UNIQUE(run,reversal)
+             );
+             CREATE VIEW IF NOT EXISTS stock_active_lots AS
+                 SELECT s.* FROM stock_current_lots s WHERE NOT EXISTS(
+                     SELECT 1 FROM stock_receipt_reversals r WHERE r.run=s.run AND r.receipt=s.receipt);
              CREATE TABLE IF NOT EXISTS stock_transfer_reversals (
                  run TEXT NOT NULL, original TEXT NOT NULL, reversal TEXT NOT NULL,
                  PRIMARY KEY(run,original), UNIQUE(run,reversal)
@@ -583,6 +593,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-unused-material-returns.json"),
             include_str!("../fixtures/cnc-stock-transfers.json"),
             include_str!("../fixtures/cnc-stock-transfer-reversal.json"),
+            include_str!("../fixtures/cnc-receipt-reversal.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
@@ -911,6 +922,9 @@ impl Scenarios {
         let mut spec = match action {
             Action::GetReleaseReadiness | Action::ReleaseWorkOrder if snapshot_enabled => {
                 crate::snapshots::release_spec(action)
+            }
+            Action::ReverseInventoryMovement if definition.receipt_reversals => {
+                crate::receipt_reversals::extend_spec(action.spec())
             }
             Action::ActivateRevision => crate::items::spec(action, bom_enabled, route_enabled),
             Action::ValidateRevision => crate::bom::validation_spec(route_enabled),

@@ -64,7 +64,7 @@ pub(crate) fn spec(action: Action) -> Spec {
             fields["movement_id"] = id_schema();
             fields["reversal_id"] = id_schema();
             fields["reason"] = text();
-            "冲销已过账整批转储并记录反向流水"
+            "冲销已过账库存流水并记录反向流水"
         }
         _ => unreachable!("stock transfer action"),
     };
@@ -199,6 +199,18 @@ pub(crate) fn invoke(
     if args["expected_cursor"].as_i64() != Some(cursor) {
         return Ok(Err(reject("VERSION_CONFLICT", "expected_cursor")));
     }
+    if action == Action::ReverseInventoryMovement && args["movement_type"] == "receipt" {
+        return match crate::receipt_reversals::reverse(&tx, run, id, args, cursor)? {
+            Ok(row) => crate::reservations::finish_write(
+                tx,
+                run,
+                key,
+                &request,
+                json!({"ok":true,"run_id":run,"cursor":cursor+1,"receipt_reversal":row}),
+            ),
+            Err(error) => Ok(Err(error)),
+        };
+    }
     if action == Action::ReverseInventoryMovement {
         if let Err(error) = reverse(&tx, run, id, args, cursor)? {
             return Ok(Err(error));
@@ -255,7 +267,7 @@ fn create_or_post(
         }
         let lot = args["lot_id"].as_str().unwrap();
         let current: Option<String> = tx.query_row(
-            "SELECT location FROM stock_current_lots WHERE run=?1 AND lot=?2 AND posted_cursor IS NOT NULL",
+            "SELECT location FROM stock_active_lots WHERE run=?1 AND lot=?2 AND posted_cursor IS NOT NULL",
             params![run,lot],|row| row.get(0)).optional()?;
         match current.as_deref() {
             None => return Ok(Err(reject("LOT_NOT_FOUND", "lot_id"))),
@@ -355,16 +367,19 @@ fn transferable_quantity(
     lot: &str,
     source: &str,
 ) -> rusqlite::Result<Result<i64, Rejection>> {
-    let (location,amount,pending,held,committed) = tx.query_row(
+    let lot_stock = tx.query_row(
         "SELECT s.location,s.quantity,s.requires_inspection AND q.receipt IS NULL,
             EXISTS(SELECT 1 FROM scenario_holds h WHERE h.run=s.run AND h.batch=s.lot),
             EXISTS(SELECT 1 FROM stock_reservations r LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
                 WHERE r.run=s.run AND r.lot=s.lot AND (r.status IN ('reserved','picked')
                     OR (r.status='issued' AND r.quantity>COALESCE(t.quantity,0))))
-        FROM stock_current_lots s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
+        FROM stock_active_lots s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
         WHERE s.run=?1 AND s.lot=?2",
         params![run,lot],|row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,
-            row.get::<_,bool>(2)?,row.get::<_,bool>(3)?,row.get::<_,bool>(4)?)))?;
+            row.get::<_,bool>(2)?,row.get::<_,bool>(3)?,row.get::<_,bool>(4)?))).optional()?;
+    let Some((location, amount, pending, held, committed)) = lot_stock else {
+        return Ok(Err(reject("LOT_NOT_FOUND", "lot_id")));
+    };
     if location != source {
         return Ok(Err(reject("TRANSFER_SOURCE_CHANGED", "source_location")));
     }

@@ -439,7 +439,7 @@ pub(crate) fn invoke(
         let order = args["work_order"].as_str().unwrap();
         let stock=tx.query_row(
         "SELECT s.item,s.revision,s.unit,s.quantity,s.requires_inspection AND q.receipt IS NULL
-         FROM stock_receipts s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
+         FROM stock_active_lots s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
          WHERE s.run=?1 AND s.lot=?2 AND s.posted_cursor IS NOT NULL",params![run,lot],
         |r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,
                 r.get::<_,i64>(3)?,r.get::<_,bool>(4)?))).optional()?;
