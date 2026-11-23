@@ -48,3 +48,18 @@ CSV 采用 UTF-8 和表头。按 `capability` 筛选业务意图，按 `descript
 - 两个 Laravel 清单提取跟踪的路由文件中带字面量路径的声明。路径列保留原始片段，完整路径取决于外层组前缀及框架配置。资源路由一行对应一处声明，展开后的 HTTP 路由数量取决于资源限制。清单也包含页面、认证、基础设施和集成入口。
 - 对 REST 和 Web 路由的计数是静态源文件索引。运行时条件、注册器动态路由、Java 插件定义中的 UI 按钮和后台调用需要另沿实现核实。本次核对源码与静态记录，未启动四个上游系统。
 - MOM-MCP 采用业务流程作为交付单位。P10 前优先用这些附件对照执行、质量、主数据、库存和谱系闭环，并将配置动作纳入后续目录。以业务意图、独立权限、状态影响和纠正路径决定拆分粒度。参照 [MES MCP 目录完整性标准](../../MCP_CATALOG_COMPLETENESS.md)。
+
+## Carbon 社区版公司隔离取证
+
+在有合法访问权限的 Carbon 社区版测试实例中，准备两个测试公司，每个公司各一条已知工单。为两个只属于各自公司的员工签发 Supabase 登录会话。通过受信环境注入以下变量。
+
+| 变量 | 输入 |
+|---|---|
+| `MOM_CARBON_REST_ORIGIN` | Supabase 网关根地址，HTTPS 或隔离环境的回环 HTTP |
+| `MOM_CARBON_PROJECT_KEY` | Supabase 公开项目键 |
+| `MOM_CARBON_A_TOKEN`、`MOM_CARBON_B_TOKEN` | 两个员工各自的用户访问令牌 |
+| `MOM_CARBON_A_JOB_ID`、`MOM_CARBON_B_JOB_ID` | 两个对应工单的内部记录 ID |
+
+运行 `node docs/references/mcp/carbon-community-smoke.mjs`。它先用各自的用户会话确认两条工单存在且属于不同公司，再交叉读取。查询按工单 ID 精确匹配，省略公司过滤，因此空数组验证的是源端可见范围。任一 HTTP 错误、重复响应或跨公司记录可见均使脚本失败。通过时只输出两次本公司读取和两次跨公司读取的结果分类。
+
+记录部署版本、测试角色范围和脱敏结果。通过后继续使用同一组工单完成 [AgentNexus 短期验收](../../acceptance/ADAPTER_READ.md)。离线执行 `node --test docs/references/mcp/carbon-community-smoke.test.mjs`。

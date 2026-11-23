@@ -13,12 +13,18 @@ async fn check() -> Result<(), &'static str> {
     }
     let token = env::var("MOM_SAMPLE_TOKEN").map_err(|_| "Missing MOM_SAMPLE_TOKEN")?;
     let database = env::var("MOM_ODOO_DATABASE").unwrap_or_default();
+    let company = env::var("MOM_CARBON_COMPANY").unwrap_or_default();
+    let project_key = env::var("MOM_CARBON_PROJECT_KEY").unwrap_or_default();
     let kind = match vendor.as_str() {
         "odoo" => HttpSourceKind::Odoo {
             database: &database,
         },
         "openmes" => HttpSourceKind::OpenMes,
-        _ => return Err("Expected odoo or openmes"),
+        "carbon-rest" => HttpSourceKind::CarbonRest {
+            company: &company,
+            project_key: &project_key,
+        },
+        _ => return Err("Expected odoo, openmes or carbon-rest"),
     };
     let source = HttpOrderReader::new(HttpSource {
         kind,

@@ -221,3 +221,65 @@ async fn carbon_entitlement_failure_stops_before_any_tool_call() {
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn carbon_rest_enforces_exact_id_and_company_and_classifies_failures() {
+    use axum::extract::Query;
+    use std::collections::HashMap;
+
+    async fn jobs(
+        headers: HeaderMap,
+        Query(query): Query<HashMap<String, String>>,
+    ) -> impl IntoResponse {
+        assert_eq!(headers["authorization"], "Bearer local-fixture");
+        assert_eq!(headers["apikey"], "project-fixture");
+        assert_eq!(query.len(), 4);
+        assert_eq!(query["select"], "id,jobId,status,companyId");
+        assert_eq!(query["companyId"], "eq.company-a");
+        assert_eq!(query["limit"], "2");
+        let id = query["id"].strip_prefix("eq.").unwrap();
+        let row = json!({"id":id,"jobId":"WO-42","status":"Ready","companyId":"company-a"});
+        match id {
+            "visible" => Json(json!([row])).into_response(),
+            "hidden" => Json(json!([])).into_response(),
+            "wrong-company" => Json(json!([{"companyId":"company-b"}])).into_response(),
+            "wrong-id" => Json(
+                json!([{"id":"other","jobId":"WO-42","status":"Ready","companyId":"company-a"}]),
+            )
+            .into_response(),
+            "duplicate" => Json(json!([row, row])).into_response(),
+            "missing-company" => Json(json!([{"id":id,"jobId":"WO-42"}])).into_response(),
+            "auth-error" => StatusCode::UNAUTHORIZED.into_response(),
+            _ => panic!("Unexpected query"),
+        }
+    }
+
+    let router = Router::new().route("/rest/v1/jobs", get(jobs));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let reader = HttpOrderReader::new(source(
+        &url,
+        HttpSourceKind::CarbonRest {
+            company: "company-a",
+            project_key: "project-fixture",
+        },
+    ))
+    .unwrap();
+    let visible = reader.read_order("visible").await.unwrap();
+    assert_eq!(visible.display_number, "WO-42");
+    assert_eq!(visible.source_status.as_deref(), Some("Ready"));
+    assert!(visible.normalized_status.is_none());
+    for (id, expected) in [
+        ("hidden", ReadError::NotVisible),
+        ("wrong-company", ReadError::UnexpectedRecord),
+        ("wrong-id", ReadError::UnexpectedRecord),
+        ("duplicate", ReadError::InvalidResponse),
+        ("missing-company", ReadError::InvalidResponse),
+        ("auth-error", ReadError::SourceUnavailable),
+        ("bad,id", ReadError::InvalidBinding),
+    ] {
+        assert_eq!(reader.read_order(id).await, Err(expected), "{id}");
+    }
+    server.abort();
+}

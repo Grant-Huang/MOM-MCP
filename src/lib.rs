@@ -1,6 +1,6 @@
 //! Components shared by prospective external adapters.
-pub mod external_order;
+pub use mom_external_adapter::external_order;
 
-pub mod external_http;
+pub use mom_external_adapter::external_http;
 
-pub mod external_observe;
+pub use mom_external_adapter::external_observe;

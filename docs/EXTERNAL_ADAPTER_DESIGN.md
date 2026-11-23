@@ -181,3 +181,29 @@ Observe 候选结果保留不透明引用、来源别名、观测时点、显示
 首个跨仓验收应使用真实宿主身份入口检查合法读取、未认证、跨世界、撤权及已绑定来源失败。通过计数和脱敏报告证明拒绝请求对来源零访问，断言失效来源零回退。对 Odoo、OpenMES、Carbon 重复相同读取意图。跨仓改动进入 AgentNexus 的公开接口及权限评审流程后再实施。
 
 MOM-MCP 侧已用 `cargo test --locked --test external_observe one_observe_entry_reads_three_authorized_worlds` 验证同一宿主 API 经受权解析回调调通三种回环协议。三个世界使用相同不透明引用和显示号，各自读回正确来源与原始状态。测试身份和数据均为夹具。这组证据覆盖宿主 API 串联，实际 AgentNexus 入口、授权实例和站点验收单独取证。
+
+### 跨仓 crate 边界
+
+`mom-external-adapter` 提供工单投影、Odoo／OpenMES／Carbon 传输和 `ExternalObserve`，宿主可单独依赖此 crate。MOM-MCP 保留同名模块导出供已有调用方使用。模拟器 SQLite 依赖留在 `mom-mcp`，因此宿主可继续使用自己的 SQLite 版本。
+
+### Carbon 社区版 REST 读取
+
+选定第二条 Carbon 传输 `carbon-rest`。社区版应用的 `getJob` 使用调用者的 Supabase 客户端按 ID 读取 `jobs`。固定版本 `05bd067c0a72ca9f0983f6278d2a7c9bb48b716c` 的 `jobs` 以 `SECURITY_INVOKER` 执行，`job` 的 SELECT 策略按员工可访问的公司过滤。API 连接使用自托管 Supabase 网关根地址、普通用户的短期访问令牌和 Supabase 公开项目键。为联调配置单公司读身份。 [应用查询源码](https://github.com/crbnos/carbon/blob/05bd067/apps/erp/app/modules/production/production.service.ts#L1436) · [视图定义](https://github.com/crbnos/carbon/blob/05bd067/packages/database/supabase/migrations/20261006220401_fleet-bridge.sql#L207) · [工单读取策略](https://github.com/crbnos/carbon/blob/05bd067/packages/database/supabase/migrations/20260228000000_rls-refactor-3.sql#L859)
+
+`GET /rest/v1/jobs` 只选择 `id,jobId,status,companyId`，按绑定公司和工单 ID 精确过滤，读取上限为两条。适配器逐条核对公司及记录 ID。空数组返回不可见，多条或错配中止读取，HTTP 失败按来源故障处理。观察结果沿用 Carbon 工单本体的原始状态。原生 MCP 可选用 `carbon` 传输，社区版路径使用自己的 Observe 绑定。
+
+通过环境提供 `MOM_SAMPLE_TOKEN`、`MOM_CARBON_COMPANY` 和 `MOM_CARBON_PROJECT_KEY`，执行 `cargo run --locked --example external_order_smoke -- carbon-rest SUPABASE_ORIGIN VISIBLE_ID OTHER_COMPANY_ID EXPECTED_SOURCE_STATUS`。由测试管理员预先确认两条工单均存在。公司隔离取证时，以同一用户会话在源端按另一公司工单 ID 读取一次，查询省略公司过滤，确认源端返回空数组。
+
+本地验证使用 PostgreSQL 16、PostgREST 12.2.12、上游 `jobs` 视图、`job` SELECT 策略及员工公司解析函数。隔离夹具只建立所需表列，以合成用户 JWT 执行查询，并以回环 HTTP 转发提供 Supabase 路径和项目键检查。已复核源端 RLS、Rust 读取，以及 AgentNexus Observe 的范围内 200 和跨公司 404。完整 Carbon 自托管部署、真实 Supabase 登录与生产站点签收仍待取证。
+
+### 宿主依赖复跑
+
+独立包名为 `mom-external-adapter`，版本为 `0.1.0`。宿主可用 Git 仓库及完整提交 SHA 固定依赖。包包含工单本体投影、只读 HTTP／MCP 传输和逐请求授权的 `ExternalObserve`。MOM-MCP 继续通过原模块路径导出同一实现。
+
+执行 `bash scripts/check-external-adapter-consumer.sh FULL_COMMIT_SHA [GIT_URL]`。脚本在临时 Cargo 项目中从固定 Git 提交解析 adapter，并连接 AgentNexus 当前采用的 `rusqlite 0.43`。它检查 adapter 的依赖子树，启动空的 adapter 注册表，并通过宿主 SQLite 执行内存查询。省略 URL 时使用当前 Git 仓库的文件传输，正式宿主接线时提供可访问的远端 Git URL 并更新宿主锁文件。
+
+### AgentNexus 整仓依赖复跑
+
+执行 `bash scripts/check-external-adapter-agentnexus.sh ADAPTER_SHA AGENTNEXUS_CHECKOUT HOST_SHA [ADAPTER_GIT_URL]`。两个 SHA 均为完整提交。脚本按宿主 SHA 导出干净源码，在临时项目的 `an-server` 测试依赖中固定 adapter 的 Git revision，并生成该临时项目的锁文件。用同一个宿主工作区执行正式 M3 桩合同及 adapter 的工单投影、HTTP／MCP 传输和逐请求绑定回归。移植测试只调整导入名。来源请求使用回环协议夹具，真实生产凭据及出站接线按宿主方案评审。
+
+本地复跑使用 adapter 提交 `01e9318` 和 AgentNexus `ba9a7c7`。Cargo 在临时宿主锁文件中只新增 `mom-external-adapter 0.1.0`。同一宿主通过正式 M3 桩合同 6 项、工单投影 3 项、连接器传输 5 项和 Observe 绑定 4 项。复跑使用 Git 文件传输。远端发布复核需换用可访问的 Git URL。
