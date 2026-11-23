@@ -3990,3 +3990,66 @@ async fn p9a_08_release_snapshot_and_change_impact() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p9b_01_receipt_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("inventory.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        for (scenario,version) in [("cnc",24),("assembly",23)] {
+            let open=async || call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
+            let opened=open().await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            let write=async |name:&str,key:&str,mut args:Value| {
+                args["expected_cursor"]=call(&client,"get_run",json!({"run_id":run})).await["cursor"].clone();
+                args["idempotency_key"]=json!(key);
+                invoke(name,args).await
+            };
+            let draft=|id:&str,amount:&str,pending| json!({"receipt_id":id,"item_id":"WIRE",
+                "revision":1,"quantity":amount,"requires_inspection":pending});
+            let track=|id:&str,lot:&str,location:&str|json!({"receipt_id":id,"lot_id":lot,
+                "supplier_lot":"SUP-1","location":location});
+            assert_eq!(invoke("list_stock_locations",json!({})).await["locations"],json!(["RAW-01","RAW-02"]));
+            assert_eq!(write("create_item","item",json!({"item_id":"WIRE","base_unit":"m"})).await["ok"],true);
+            assert_eq!(write("create_item_revision","revision",json!({"item_id":"WIRE","revision":1,"name":"Wire"})).await["ok"],true);
+            assert_eq!(write("create_receipt","receipt-a",draft("RC-A","1.25",true)).await["code"],"ITEM_REVISION_NOT_PUBLISHED");
+            assert_eq!(write("activate_revision","active",json!({"revision_type":"item","item_id":"WIRE","revision":1})).await["ok"],true);
+            assert_eq!(write("create_receipt","precision",draft("RC-A","1.0001",true)).await["field"],"quantity");
+            assert_eq!(write("create_receipt","receipt-a",draft("RC-A","1.250",true)).await["receipt"]["quantity"],"1.25");
+            assert_eq!(write("create_receipt","receipt-b",draft("RC-B","2.005",false)).await["receipt"]["status"],"draft");
+            assert_eq!(write("post_receipt","post-a",json!({"receipt_id":"RC-A"})).await["code"],"RECEIPT_TRACKING_REQUIRED");
+            assert_eq!(write("assign_receipt_tracking","track-a",track("RC-A","LOT-A","RAW-03")).await["code"],"LOCATION_NOT_FOUND");
+            assert_eq!(write("assign_receipt_tracking","track-a",track("RC-A","LOT-A","RAW-01")).await["receipt"]["status"],"tracked");
+            assert_eq!(write("assign_receipt_tracking","duplicate",track("RC-B","LOT-A","RAW-02")).await["code"],"LOT_ALREADY_ASSIGNED");
+            assert_eq!(write("assign_receipt_tracking","track-b",track("RC-B","LOT-B","RAW-02")).await["ok"],true);
+            assert_eq!(invoke("get_lot",json!({"lot_id":"LOT-A"})).await["code"],"LOT_NOT_FOUND");
+            assert_eq!(invoke("get_stock_balance",json!({"item_id":"WIRE"})).await["balance"]["on_hand"],"0");
+            let args=json!({"receipt_id":"RC-A","expected_cursor":7,"idempotency_key":"post-a"});
+            let (peer,_child)=connect_mode(&db,"0",true).await;
+            let (first,replay)=tokio::join!(invoke("post_receipt",args.clone()),business(&peer,run,"post_receipt",args));
+            assert_eq!(first,replay);
+            assert_eq!(first["receipt"]["availability"],"pending_inspection","{first}");
+            assert_eq!(write("post_receipt","post-a-again",json!({"receipt_id":"RC-A"})).await["code"],"RECEIPT_ALREADY_POSTED");
+            assert_eq!(write("post_receipt","post-b",json!({"receipt_id":"RC-B"})).await["receipt"]["availability"],"available");
+            let stock=business(&peer,run,"get_stock_balance",json!({"item_id":"WIRE","revision":1})).await;
+            assert_eq!(stock["balance"]["on_hand"],"3.255");
+            assert_eq!(stock["balance"]["available"],"2.005");
+            assert_eq!(stock["balance"]["pending_inspection"],"1.25");
+            let location=invoke("get_stock_balance",json!({"item_id":"WIRE","location":"RAW-01"})).await;
+            assert_eq!(location["balance"]["available"],"0");
+            let page=invoke("list_lots",json!({"limit":1})).await;
+            assert_eq!(page["lots"][0]["lot_id"],"LOT-A");
+            let next=invoke("list_lots",json!({"limit":1,"after_receipt_id":page["next_after_receipt_id"]})).await;
+            assert_eq!(next["lots"][0]["lot_id"],"LOT-B");
+            assert!(next["next_after_receipt_id"].is_null());
+            let movements=invoke("list_inventory_movements",json!({"item_id":"WIRE"})).await;
+            assert_eq!(movements["movements"].as_array().unwrap().len(),2);
+            assert_eq!(movements["movements"][0],first["receipt"]);
+            let isolated=open().await;
+            assert_eq!(business(&peer,&isolated["run_id"],"get_lot",json!({"lot_id":"LOT-A"})).await["code"],"LOT_NOT_FOUND");
+        }
+    }).await.unwrap();
+}

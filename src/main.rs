@@ -2,6 +2,7 @@ mod assembly;
 mod bom;
 mod catalog;
 mod fabrication;
+mod inventory;
 mod items;
 mod mes;
 mod operations;
