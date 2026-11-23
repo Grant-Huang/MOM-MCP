@@ -419,6 +419,13 @@ impl Scenarios {
                  released_cursor INTEGER NOT NULL,
                  PRIMARY KEY (run,receipt)
              );
+             CREATE TABLE IF NOT EXISTS stock_reservations (
+                 run TEXT NOT NULL, reservation TEXT NOT NULL, work_order TEXT NOT NULL,
+                 lot TEXT NOT NULL, quantity INTEGER NOT NULL, status TEXT NOT NULL,
+                 PRIMARY KEY(run,reservation)
+             );
+             CREATE INDEX IF NOT EXISTS stock_reservation_lot ON stock_reservations (run,lot,status);
+             CREATE INDEX IF NOT EXISTS stock_reservation_order ON stock_reservations (run,work_order,status);
              CREATE TABLE IF NOT EXISTS stock_receipts (
                  run TEXT NOT NULL, receipt TEXT NOT NULL, item TEXT NOT NULL,
                  revision INTEGER NOT NULL, unit TEXT NOT NULL, quantity INTEGER NOT NULL,
@@ -522,6 +529,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-receipts.json"),
             include_str!("../fixtures/cnc-receipt-quality.json"),
             include_str!("../fixtures/assembly-receipt-quality.json"),
+            include_str!("../fixtures/cnc-reservations.json"),
+            include_str!("../fixtures/assembly-reservations.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -925,6 +934,40 @@ impl Scenarios {
                 (_, Ok(snapshot)) => definition_snapshot = Some(snapshot),
                 (_, Err(error)) => return Ok(Err(error)),
             }
+        }
+        if action.is_reservation_action() {
+            let quantity = if definition.manufacturing.is_some() {
+                crate::mes::QUANTITY as i64
+            } else {
+                1
+            };
+            let order = match action {
+                Action::ReserveMaterial => {
+                    Some(parameters["work_order"].as_str().unwrap().to_owned())
+                }
+                Action::PickMaterial => tx
+                    .query_row(
+                        "SELECT work_order FROM stock_reservations WHERE run=?1 AND reservation=?2",
+                        params![run, parameters["reservation_id"].as_str().unwrap()],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?,
+                _ => None,
+            };
+            let eligible = if let Some(order) = &order {
+                read_work_order(&tx, run, &definition, order)?.is_some_and(|order| {
+                    order["completion_confirmed"] != true
+                        && !matches!(
+                            order["status"].as_str(),
+                            Some("planned" | "cancelled" | "closed" | "completed")
+                        )
+                })
+            } else {
+                true
+            };
+            return crate::reservations::invoke(
+                tx, run, action, parameters, cursor, quantity, eligible,
+            );
         }
         if action == Action::GetMaterialRequirements {
             let quantity = if definition.manufacturing.is_some() {

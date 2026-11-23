@@ -7,6 +7,11 @@ use crate::scenario::Rejection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    ReserveMaterial,
+    ListReservations,
+    ReleaseReservation,
+    PickMaterial,
+    UnpickMaterial,
     ReleaseReceiptInspection,
     GetMaterialAvailability,
     GetMaterialRequirements,
@@ -169,6 +174,11 @@ pub(crate) fn text() -> Value {
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
+            Self::ReserveMaterial,
+            Self::ListReservations,
+            Self::ReleaseReservation,
+            Self::PickMaterial,
+            Self::UnpickMaterial,
             Self::ReleaseReceiptInspection,
             Self::GetMaterialAvailability,
             Self::GetMaterialRequirements,
@@ -235,6 +245,11 @@ impl Action {
 
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::ReserveMaterial => "reserve_material",
+            Self::ListReservations => "list_reservations",
+            Self::ReleaseReservation => "release_reservation",
+            Self::PickMaterial => "pick_material",
+            Self::UnpickMaterial => "unpick_material",
             Self::ReleaseReceiptInspection => "release_receipt_inspection",
             Self::GetMaterialAvailability => "get_material_availability",
             Self::GetMaterialRequirements => "get_material_requirements",
@@ -328,6 +343,7 @@ impl Action {
             | Self::PlaceQualityHold
             | Self::DispositionNonconformance
             | Self::ReleaseQualityHold => &["检验", "质量", "inspection", "quality"],
+            action if action.is_reservation_action() => &["预留", "拣料", "reservation", "picking"],
             action if action.is_receipt_action() => &["库存", "收货", "inventory", "receipt"],
             action if action.is_route_action() => &["工艺路线", "route", "revision"],
             action if action.is_bom_action() => &["物料清单", "bom", "revision"],
@@ -390,7 +406,20 @@ impl Action {
                 | Self::ListInventoryMovements
         )
     }
+    pub(crate) fn is_reservation_action(self) -> bool {
+        matches!(
+            self,
+            Self::ReserveMaterial
+                | Self::ListReservations
+                | Self::ReleaseReservation
+                | Self::PickMaterial
+                | Self::UnpickMaterial
+        )
+    }
     pub fn spec(self) -> Spec {
+        if self.is_reservation_action() {
+            return crate::reservations::spec(self);
+        }
         if self.is_receipt_action() {
             return crate::inventory::spec(self);
         }

@@ -7,14 +7,14 @@ use crate::{
 };
 
 const LOCATIONS: &[&str] = &["RAW-01", "RAW-02"];
-const QUANTITY_SCALE: i64 = 1000;
+pub(crate) const QUANTITY_SCALE: i64 = 1000;
 const MAX_RECEIPT_QUANTITY: i64 = 1_000_000_000 * QUANTITY_SCALE;
 
-fn id_schema() -> Value {
+pub(crate) fn id_schema() -> Value {
     json!({"type":"string","minLength":1,"maxLength":64,"pattern":"^[A-Za-z0-9_-]+$"})
 }
 
-fn quantity_schema() -> Value {
+pub(crate) fn quantity_schema() -> Value {
     json!({"type":"string","minLength":1,"maxLength":32,"pattern":"^[0-9]+(\\.[0-9]{1,3})?$"})
 }
 
@@ -94,7 +94,7 @@ pub(crate) fn spec(action: Action) -> Spec {
                 "requirements":{"type":"array","items":object(
                     &["item_id","revision","unit","required","available","shortage"],
                     json!({"item_id":id_schema(),"revision":revision_schema(),"unit":text(),
-                        "required":quantity_schema(),"available":quantity_schema(),"shortage":quantity_schema()}))}}),
+                        "required":quantity_schema(),"available":quantity_schema(),"shortage":quantity_schema(),"reserved":quantity_schema()}))}}),
             )
         }
         Action::GetStockBalance | Action::GetMaterialAvailability => {
@@ -109,7 +109,7 @@ pub(crate) fn spec(action: Action) -> Spec {
                 json!({"item_id":id_schema(),"revision":{"type":["integer","null"]},
                     "location":{"type":["string","null"]},"unit":text(),
                     "on_hand":quantity_schema(),"pending_inspection":quantity_schema(),
-                    "available":quantity_schema()}))}),
+                    "available":quantity_schema(),"reserved":quantity_schema()}))}),
             )
         }
         Action::ListLots | Action::ListInventoryMovements => {
@@ -201,7 +201,7 @@ pub(crate) fn spec(action: Action) -> Spec {
     }
 }
 
-fn parse_quantity(value: &str) -> Option<i64> {
+pub(crate) fn parse_quantity(value: &str) -> Option<i64> {
     let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
     if whole.is_empty()
         || !whole.bytes().all(|b| b.is_ascii_digit())
@@ -219,7 +219,7 @@ fn parse_quantity(value: &str) -> Option<i64> {
         .filter(|q| (1..=MAX_RECEIPT_QUANTITY).contains(q))
 }
 
-fn quantity(milli: i64) -> String {
+pub(crate) fn quantity(milli: i64) -> String {
     let whole = milli / QUANTITY_SCALE;
     let remainder = milli % QUANTITY_SCALE;
     if remainder == 0 {
@@ -318,9 +318,9 @@ fn query(
             {
                 return Ok(Err(reject("ITEM_REVISION_NOT_FOUND", "revision")));
             }
-            let (on_hand, pending) = balance(tx, run, item.unwrap(), revision, location)?;
+            let (on_hand, pending, reserved) = balance(tx, run, item.unwrap(), revision, location)?;
             json!({"balance":{"item_id":item,"revision":revision,"location":location,"unit":unit,
-                "on_hand":quantity(on_hand),"pending_inspection":quantity(pending),"available":quantity(on_hand-pending)}})
+                "on_hand":quantity(on_hand),"pending_inspection":quantity(pending),"reserved":quantity(reserved),"available":quantity(on_hand-pending-reserved)}})
         }
         _ => {
             let after = args
@@ -528,14 +528,16 @@ fn balance(
     item: &str,
     revision: Option<i64>,
     location: Option<&str>,
-) -> rusqlite::Result<(i64, i64)> {
+) -> rusqlite::Result<(i64, i64, i64)> {
     tx.query_row(
         "SELECT COALESCE(SUM(s.quantity),0),
-         COALESCE(SUM(CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END),0)
+         COALESCE(SUM(CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END),0),
+         COALESCE(SUM((SELECT SUM(x.quantity) FROM stock_reservations x
+             WHERE x.run=s.run AND x.lot=s.lot AND x.status IN ('reserved','picked'))),0)
          FROM stock_receipts s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
          WHERE s.run=?1 AND s.item=?2 AND s.posted_cursor IS NOT NULL
          AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)",
-        params![run,item,revision,location],|row|Ok((row.get(0)?,row.get(1)?)),
+        params![run,item,revision,location],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
     )
 }
 
@@ -600,12 +602,12 @@ impl Requirements {
     }
 }
 
-pub(crate) fn requirements(
+fn expanded_order(
     tx: &Transaction<'_>,
     run: &str,
     order: &str,
     order_quantity: i64,
-) -> anyhow::Result<Result<Value, Rejection>> {
+) -> anyhow::Result<Result<(Value, Requirements), Rejection>> {
     if !identifier(order) {
         return Ok(Err(Rejection::invalid("work_order")));
     }
@@ -622,14 +624,50 @@ pub(crate) fn requirements(
     )? {
         return Ok(Err(error));
     }
+    Ok(Ok((snapshot, expansion)))
+}
+
+pub(crate) fn required_quantity(
+    tx: &Transaction<'_>,
+    run: &str,
+    order: &str,
+    order_quantity: i64,
+    item: &str,
+    revision: i64,
+    unit: &str,
+) -> anyhow::Result<Result<i64, Rejection>> {
+    Ok(
+        expanded_order(tx, run, order, order_quantity)?.map(|(_, expansion)| {
+            expansion
+                .quantities
+                .get(&(item.into(), revision, unit.into()))
+                .copied()
+                .unwrap_or(0)
+        }),
+    )
+}
+
+pub(crate) fn requirements(
+    tx: &Transaction<'_>,
+    run: &str,
+    order: &str,
+    order_quantity: i64,
+) -> anyhow::Result<Result<Value, Rejection>> {
+    let (snapshot, expansion) = match expanded_order(tx, run, order, order_quantity)? {
+        Ok(data) => data,
+        Err(error) => return Ok(Err(error)),
+    };
     let mut requirements = Vec::with_capacity(expansion.quantities.len());
     for ((item, revision, unit), required) in expansion.quantities {
-        let (on_hand, pending) = balance(tx, run, &item, Some(revision), None)?;
-        let available = on_hand - pending;
-        requirements.push(
-            json!({"item_id":item,"revision":revision,"unit":unit,"required":quantity(required),
-            "available":quantity(available),"shortage":quantity((required-available).max(0))}),
-        );
+        let (on_hand, pending, reserved) = balance(tx, run, &item, Some(revision), None)?;
+        let available = on_hand - pending - reserved;
+        let assigned = crate::reservations::order_reserved(tx, run, order, &item, revision)?;
+        let mut line = json!({"item_id":item,"revision":revision,"unit":unit,"required":quantity(required),
+            "available":quantity(available),"shortage":quantity((required-assigned-available).max(0))});
+        if assigned > 0 {
+            line["reserved"] = json!(quantity(assigned));
+        }
+        requirements.push(line);
     }
     Ok(Ok(json!({"ok":true,"run_id":run,"work_order":order,
         "snapshot_fingerprint":snapshot["fingerprint"],"requirements":requirements})))

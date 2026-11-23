@@ -86,3 +86,67 @@ test("P9B-03 Release inspected inventory", async ({ page }) => {
   await expect(status).toContainText('"released_inspection_id": "QC-1"');
   expect((await invoke("get_material_availability", item)).balance.available).toBe("2");
 });
+
+test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption("assembly@25");
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  const { run_id } = JSON.parse(await status.textContent());
+
+  async function invoke(name, arguments_) {
+    const response = await page.request.post("/api/scenarios", {
+      data: { name: "call_tool", arguments: { run_id, name, arguments: arguments_ } },
+    });
+    expect(response.ok()).toBeTruthy();
+    return response.json();
+  }
+  let cursor = 0;
+  async function write(name, args) {
+    const result = await invoke(name, { ...args, expected_cursor: cursor, idempotency_key: name + cursor });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    cursor = result.cursor;
+    return result;
+  }
+
+  for (const [item_id, base_unit] of [["FRAME", "each"], ["WIRE", "m"]]) {
+    await write("create_item", { item_id, base_unit });
+    await write("create_item_revision", { item_id, revision: 1, name: item_id });
+    await write("activate_revision", { item_id, revision: 1, revision_type: "item" });
+  }
+  const frame = { item_id: "FRAME", revision: 1 };
+  await write("create_bom_revision", frame);
+  await write("set_bom_components", { ...frame, components: { WIRE: { revision: 1, quantity: 2, unit: "m" } } });
+  await write("activate_revision", { ...frame, revision_type: "bom" });
+  await write("create_route_revision", frame);
+  await write("set_route_operations", { ...frame, operations: { build: { work_center: "CELL-A", predecessors: [] } } });
+  await write("activate_revision", { ...frame, revision_type: "route" });
+  const plan = { plan_id: "QA", revision: 1 };
+  await write("create_inspection_plan_revision", { ...plan, characteristics: { width: { unit: "mm", lower_limit: 1, upper_limit: 2 } } });
+  await write("activate_inspection_plan_revision", plan);
+  const order = { work_order: "WO-E", definition_selection: { item_id: "FRAME", inspection_plan_id: "QA" } };
+  const ready = await invoke("get_release_readiness", order);
+  await write("release_work_order", { ...order, snapshot_fingerprint: ready.definition_snapshot.fingerprint });
+  const receipt = { receipt_id: "RC-1" };
+  const lot = { lot_id: "LOT-1" };
+  await write("create_receipt", { ...receipt, item_id: "WIRE", revision: 1, quantity: "2", requires_inspection: false });
+  await write("assign_receipt_tracking", { ...receipt, ...lot, supplier_lot: "SUP-42", location: "RAW-02" });
+  await write("post_receipt", receipt);
+  const reservation = { reservation_id: "RS-1" };
+  await write("reserve_material", { ...reservation, ...lot, work_order: order.work_order, quantity: "1.5" });
+  await write("pick_material", reservation);
+  await button("搜索工具").click();
+  await page.getByLabel("匹配工具").selectOption("list_reservations");
+  await page.getByLabel("JSON 参数").fill(JSON.stringify(lot));
+  await button("调用工具").click();
+  await expect(status).toContainText('"status": "picked"');
+  const found = JSON.parse(await status.textContent());
+  expect(found.reservations[0]).toMatchObject({ reservation_id: "RS-1", work_order: "WO-E", location: "RAW-02" });
+  await write("unpick_material", reservation);
+  await write("release_reservation", reservation);
+  const stock = await invoke("get_material_availability", { item_id: "WIRE", revision: 1 });
+  expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
+});
