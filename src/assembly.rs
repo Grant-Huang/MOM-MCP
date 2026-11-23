@@ -135,6 +135,8 @@ pub fn spec(action: Action) -> Spec {
 pub struct Setup {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclusive_dispatch: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) issued_report_inputs: bool,
     stock: BTreeMap<String, usize>,
     orders: BTreeMap<String, OrderDefinition>,
     cells: BTreeMap<String, Vec<String>>,
@@ -255,6 +257,12 @@ struct Order {
     delivery: Option<Value>,
 }
 
+impl Order {
+    fn has_build(&self) -> bool {
+        !self.installed.is_empty() || self.build_reports.iter().any(|report| !report.reversed)
+    }
+}
+
 #[derive(Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum Phase {
@@ -348,6 +356,9 @@ fn failure(code: &str) -> Value {
 }
 
 fn required(setup: &Setup, order: &Order) -> BTreeMap<String, usize> {
+    if setup.issued_report_inputs {
+        return BTreeMap::new();
+    }
     if let Some(parts) = &order.released_parts {
         return parts.clone();
     }
@@ -425,8 +436,8 @@ pub fn operations(
         if filter.is_some_and(|filter| filter != id) {
             continue;
         }
-        let built = !order.installed.is_empty()
-            && !matches!(order.phase, Phase::Building | Phase::BuildPaused);
+        let built =
+            order.has_build() && !matches!(order.phase, Phase::Building | Phase::BuildPaused);
         let (build, test) = if order.phase == Phase::Cancelled {
             (("cancelled", None), ("cancelled", None))
         } else {
@@ -671,6 +682,48 @@ pub fn invoke(
     {
         return Ok((failure("INVALID_STATE"), false));
     }
+    let mut issued_inputs = Vec::new();
+    if setup.issued_report_inputs {
+        if action == Action::CancelWorkOrder
+            && crate::mes::has_operation_issue(tx, run, id, "build", false)?
+        {
+            return Ok((failure("ORDER_HAS_EXECUTION"), false));
+        }
+        if matches!(
+            action,
+            Action::StartOperation | Action::ResumeOperation | Action::PostOperationReport
+        ) && let Some(code) = crate::quality::blocking(tx, run, id)?
+        {
+            return Ok((failure(&code), false));
+        }
+        if action == Action::StartOperation
+            && args["operation"] == "build"
+            && order.phase == Phase::Dispatched
+            && !crate::mes::has_operation_issue(tx, run, id, "build", true)?
+        {
+            return Ok((failure("MATERIAL_NOT_ISSUED"), false));
+        }
+        if action == Action::PostOperationReport
+            && args["operation"] == "build"
+            && order.phase == Phase::Building
+            && !order.has_build()
+        {
+            issued_inputs = match crate::mes::report_material_inputs(
+                tx,
+                run,
+                &order.build_reports,
+                id,
+                "build",
+                args,
+            )? {
+                Ok(inputs) => inputs,
+                Err(code) => return Ok((failure(code), false)),
+            };
+            if !matches_frozen_inputs(tx, run, id, &issued_inputs)? {
+                return Ok((failure("ASSEMBLY_MATERIAL_REQUIREMENT_MISMATCH"), false));
+            }
+        }
+    }
     let mut response = apply(
         &mut state,
         setup,
@@ -678,6 +731,7 @@ pub fn invoke(
         id,
         args,
         cursor + 1,
+        issued_inputs,
         simulation,
         rules,
         model,
@@ -702,6 +756,35 @@ pub fn invoke(
     Ok((response, true))
 }
 
+fn matches_frozen_inputs(
+    tx: &Transaction<'_>,
+    run: &str,
+    order: &str,
+    inputs: &[crate::mes::MaterialInput],
+) -> anyhow::Result<bool> {
+    let Ok((_, requested)) = crate::inventory::expanded_order(tx, run, order, 1)? else {
+        return Ok(false);
+    };
+    let mut actual = BTreeMap::new();
+    for input in inputs {
+        let (item, revision): (String, i64) = tx.query_row(
+            "SELECT item,revision FROM stock_receipts WHERE run=?1 AND lot=?2",
+            params![run, input.lot_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let amount =
+            crate::inventory::parse_quantity(&input.quantity).expect("validated material quantity");
+        let total = actual
+            .entry((item, revision, input.unit.clone()))
+            .or_insert(0_i64);
+        let Some(next) = total.checked_add(amount) else {
+            return Ok(false);
+        };
+        *total = next;
+    }
+    Ok(actual == requested.quantities)
+}
+
 fn apply(
     state: &mut State,
     setup: &Setup,
@@ -709,6 +792,7 @@ fn apply(
     id: &str,
     args: &Map<String, Value>,
     ticket: i64,
+    issued_inputs: Vec<crate::mes::MaterialInput>,
     simulation: &mut Simulation,
     rules: &[mom_des::Rule],
     model: &dyn mom_des::Model,
@@ -896,6 +980,7 @@ fn apply(
         }
         Action::AssemblyBuild | Action::PostOperationReport
             if (action == Action::AssemblyBuild
+                && !setup.issued_report_inputs
                 && matches!(order.phase, Phase::Dispatched | Phase::Building))
                 || (action == Action::PostOperationReport && order.phase == Phase::Building) =>
         {
@@ -903,7 +988,7 @@ fn apply(
                 if args["operation"] != "build" {
                     return failure("OPERATION_OUT_OF_SEQUENCE");
                 }
-                let remaining = usize::from(order.installed.is_empty());
+                let remaining = usize::from(!order.has_build());
                 if args["quantity"].as_u64().unwrap() > remaining as u64 {
                     return json!({"ok":false,"code":"REPORT_EXCEEDS_REMAINING","remaining":remaining});
                 }
@@ -928,7 +1013,7 @@ fn apply(
                     reversed: false,
                     serial_numbers: vec![serial.clone()],
                     components: order.installed.clone(),
-                    material_inputs: Vec::new(),
+                    material_inputs: issued_inputs,
                 };
                 let response = json!({"ok":true,"report":report,"serial_numbers":[serial],"reported_quantity":1,"remaining":0});
                 order.build_reports.push(report);
@@ -940,7 +1025,7 @@ fn apply(
             if args["operation"] != "build" {
                 return failure("OPERATION_OUT_OF_SEQUENCE");
             }
-            if order.installed.is_empty() {
+            if !order.has_build() {
                 return json!({"ok":false,"code":"OPERATION_QUANTITY_INCOMPLETE","remaining":1});
             }
             order.phase = Phase::Queued;

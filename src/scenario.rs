@@ -344,6 +344,27 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     );
     let has = |action| definition.capabilities.contains(&action);
     anyhow::ensure!(
+        !definition
+            .assembly
+            .as_ref()
+            .is_some_and(|setup| setup.issued_report_inputs)
+            || ([
+                Action::IssueMaterialToOperation,
+                Action::GetOrderSnapshot,
+                Action::PostOperationReport
+            ]
+            .into_iter()
+            .all(has)
+                && ![
+                    Action::AssemblyKit,
+                    Action::AssemblyBuild,
+                    Action::AssemblySubstitute
+                ]
+                .into_iter()
+                .any(has)),
+        "issued assembly inputs require frozen orders, issue and report capabilities"
+    );
+    anyhow::ensure!(
         !has(Action::AssessEngineeringChange) || has(Action::GetOrderSnapshot),
         "engineering change assessment requires order snapshots"
     );
@@ -595,6 +616,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-stock-transfer-reversal.json"),
             include_str!("../fixtures/cnc-receipt-reversal.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
+            include_str!("../fixtures/assembly-report-inputs.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -940,6 +962,10 @@ impl Scenarios {
         if action == Action::PostOperationReport
             && !definition
                 .manufacturing
+                .as_ref()
+                .is_some_and(|setup| setup.issued_report_inputs)
+            && !definition
+                .assembly
                 .as_ref()
                 .is_some_and(|setup| setup.issued_report_inputs)
         {

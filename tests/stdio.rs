@@ -4275,6 +4275,11 @@ async fn p9c_12_receipt_reversal() {
     operation_issue_scenarios(&[("cnc", 32, "WO-1", "machining", "MACH-01")]).await;
 }
 
+#[tokio::test]
+async fn p9c_14_assembly_issued_inputs() {
+    operation_issue_scenarios(&[("assembly", 27, "WO-E", "build", "CELL-A")]).await;
+}
+
 async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
@@ -4283,6 +4288,7 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
         for &(scenario,version,order,operation,center) in scenarios {
             let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
             assert_eq!(opened["ok"],true,"{opened}");
+            let issued_assembly=scenario=="assembly" && version==27;
             let run=&opened["run_id"];
             let invoke=async |name:&str,args| business(&client,run,name,args).await;
             let cursor=async || call(&client,"get_run",json!({"run_id":run})).await["cursor"].clone();
@@ -4304,7 +4310,7 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
                 ("activate_revision",json!({"revision_type":"item","item_id":"FRAME","revision":1})),
                 ("activate_revision",json!({"revision_type":"item","item_id":"WIRE","revision":1})),
                 ("create_bom_revision",json!({"item_id":"FRAME","revision":1})),
-                ("set_bom_components",json!({"item_id":"FRAME","revision":1,"components":{"WIRE":{"revision":1,"quantity":2,"unit":"m"}}})),
+                ("set_bom_components",json!({"item_id":"FRAME","revision":1,"components":{"WIRE":{"revision":1,"quantity":if issued_assembly {1.5} else {2.0},"unit":"m"}}})),
                 ("activate_revision",json!({"revision_type":"bom","item_id":"FRAME","revision":1})),
                 ("create_route_revision",json!({"item_id":"FRAME","revision":1})),
                 ("set_route_operations",json!({"item_id":"FRAME","revision":1,"operations":{(operation):{"work_center":center,"predecessors":[]}}})),
@@ -4499,6 +4505,9 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(write("issue_material_to_operation","issue",issue.clone()).await["code"],"ISSUE_OPERATION_NOT_ELIGIBLE");
             apply("dispatch_operation","dispatch",json!({"work_order":order,"operation":operation,"work_center":center})).await;
             assert_eq!(write("issue_material_to_operation","issue",json!({"reservation_id":"RS-1","operation":"missing"})).await["code"],"ISSUE_OPERATION_NOT_FOUND");
+            if issued_assembly {
+                assert_eq!(write("start_operation","before-issue",json!({"work_order":order,"operation":operation})).await["code"],"MATERIAL_NOT_ISSUED");
+            }
             let balance=||invoke("get_stock_balance",json!({"item_id":"WIRE","location":"RAW-02"}));
             assert_eq!(balance().await["balance"]["on_hand"],"2");
             assert_eq!(balance().await["balance"]["reserved"],"1.5");
@@ -4513,6 +4522,36 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
+            if issued_assembly {
+                let before = balance().await;
+                assert_eq!(write("cancel_work_order","cancel",json!({"work_order":order,"reason":"cancel"})).await["code"],"ORDER_HAS_EXECUTION");
+                apply("start_operation","start",json!({"work_order":order,"operation":operation})).await;
+                let mut report=json!({"work_order":order,"operation":operation,"quantity":1});
+                assert_eq!(write("post_operation_report","missing",report.clone()).await["code"],"MATERIAL_INPUTS_REQUIRED");
+                report["material_inputs"]=json!({"RS-1":"0.75"});
+                assert_eq!(write("post_operation_report","incomplete",report.clone()).await["code"],"ASSEMBLY_MATERIAL_REQUIREMENT_MISMATCH");
+                report["material_inputs"]=json!({"RS-1":"1.501"});
+                assert_eq!(write("post_operation_report","over",report.clone()).await["code"],"MATERIAL_ISSUE_QUANTITY_EXCEEDED");
+                report["material_inputs"]=json!({"RS-1":"1.5"});
+                report["expected_cursor"]=cursor().await;
+                report["idempotency_key"]=json!("assembly-report");
+                let posted=invoke("post_operation_report",report.clone()).await;
+                assert_eq!(posted["remaining"],0,"{posted}");
+                assert_eq!(posted["report"]["material_inputs"],json!([{"reservation_id":"RS-1","lot_id":"LOT-1","quantity":"1.5","unit":"m"}]));
+                assert_eq!(invoke("post_operation_report",report.clone()).await,posted);
+                assert_eq!(balance().await,before);
+                apply("reverse_operation_report","reverse",json!({"work_order":order,"report_id":posted["report"]["id"],"reason":"correct input"})).await;
+                assert_eq!(balance().await,before);
+                apply("post_operation_report","corrected",report).await;
+                apply("complete_operation","complete",json!({"work_order":order,"operation":operation})).await;
+                let journal=invoke("list_operation_reports",json!({"work_order":order,"operation":operation})).await;
+                assert_eq!(journal["reports"][0]["reversed"],true);
+                assert_eq!(journal["reports"][1]["material_inputs"],posted["report"]["material_inputs"]);
+                assert_eq!(invoke("assembly_start_test",json!({"work_order":order,"idempotency_key":"test"})).await["ok"],true);
+                assert_eq!(write("reverse_operation_report","too-late",json!({"work_order":order,"report_id":journal["reports"][1]["id"],"reason":"after test start"})).await["code"],"REPORT_HAS_DEPENDENCIES");
+                assert_eq!(balance().await,before);
+                continue;
+            }
             if version >= 28 {
                 let descriptor = call(&client, "describe_tool", json!({"run_id":run,"name":"post_operation_report"})).await;
                 assert_eq!(descriptor["tool"]["input"]["properties"]["material_inputs"]["type"], "object", "{descriptor}");

@@ -605,8 +605,8 @@ fn balance(
 }
 
 #[derive(Default)]
-struct Requirements {
-    quantities: std::collections::BTreeMap<(String, i64, String), i64>,
+pub(crate) struct Requirements {
+    pub(crate) quantities: std::collections::BTreeMap<(String, i64, String), i64>,
     visited: usize,
 }
 
@@ -665,7 +665,7 @@ impl Requirements {
     }
 }
 
-fn expanded_order(
+pub(crate) fn expanded_order(
     tx: &Transaction<'_>,
     run: &str,
     order: &str,

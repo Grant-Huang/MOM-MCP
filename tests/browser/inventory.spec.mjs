@@ -151,8 +151,9 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal } of [
+for (const { title, scenario, work_order, operation, work_center, report, assemblyReport, returns, transfer, reverse, receiptReversal } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
+  { title: "P9C-15 Report against issued assembly material", scenario: "assembly@27", work_order: "WO-E", operation: "build", work_center: "CELL-A", report: true, assemblyReport: true },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
   { title: "P9C-09 Post a stock transfer", scenario: "cnc@30", work_order: "WO-1", operation: "machining", work_center: "MACH-01", transfer: true },
@@ -191,7 +192,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     }
     const frame = { item_id: "FRAME", revision: 1 };
     await write("create_bom_revision", frame);
-    await write("set_bom_components", { ...frame, components: { WIRE: { revision: 1, quantity: 2, unit: "m" } } });
+    await write("set_bom_components", { ...frame, components: { WIRE: { revision: 1, quantity: assemblyReport ? 1.5 : 2, unit: "m" } } });
     await write("activate_revision", { ...frame, revision_type: "bom" });
     await write("create_route_revision", frame);
     await write("set_route_operations", { ...frame, operations: { [operation]: { work_center, predecessors: [] } } });
@@ -280,14 +281,14 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       await button("搜索工具").click();
       await page.getByLabel("匹配工具").selectOption("post_operation_report");
       await page.getByLabel("JSON 参数").fill(JSON.stringify({
-        work_order, operation, quantity: 1, material_inputs: { "RS-1": "0.75" },
+        work_order, operation, quantity: 1, material_inputs: { "RS-1": assemblyReport ? "1.5" : "0.75" },
         expected_cursor: cursor, idempotency_key: "partial",
       }));
       await button("调用工具").click();
-      await expect(status).toContainText('"remaining": 9');
+      await expect(status).toContainText(assemblyReport ? '"remaining": 0' : '"remaining": 9');
       const posted = JSON.parse(await status.textContent());
       expect(posted.report.material_inputs).toEqual([
-        { reservation_id: "RS-1", lot_id: "LOT-1", quantity: "0.75", unit: "m" },
+        { reservation_id: "RS-1", lot_id: "LOT-1", quantity: assemblyReport ? "1.5" : "0.75", unit: "m" },
       ]);
       const journal = await invoke("list_operation_reports", { work_order, operation });
       expect(journal.reports).toEqual([posted.report]);

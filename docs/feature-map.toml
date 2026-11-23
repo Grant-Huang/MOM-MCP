@@ -753,3 +753,19 @@ spec = "acceptance/P9C.md"
 features = ["F08", "F09", "F10"]
 layers = ["playwright"]
 tests = { playwright = "P9C-13 Reverse a posted receipt" }
+
+[[case]]
+id = "P9C-14"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9c_14_assembly_issued_inputs" }
+
+[[case]]
+id = "P9C-15"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P9C-15 Report against issued assembly material" }
