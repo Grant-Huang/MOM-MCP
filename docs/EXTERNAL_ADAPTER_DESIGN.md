@@ -201,3 +201,9 @@ MOM-MCP 侧已用 `cargo test --locked --test external_observe one_observe_entry
 独立包名为 `mom-external-adapter`，版本为 `0.1.0`。宿主可用 Git 仓库及完整提交 SHA 固定依赖。包包含工单本体投影、只读 HTTP／MCP 传输和逐请求授权的 `ExternalObserve`。MOM-MCP 继续通过原模块路径导出同一实现。
 
 执行 `bash scripts/check-external-adapter-consumer.sh FULL_COMMIT_SHA [GIT_URL]`。脚本在临时 Cargo 项目中从固定 Git 提交解析 adapter，并连接 AgentNexus 当前采用的 `rusqlite 0.43`。它检查 adapter 的依赖子树，启动空的 adapter 注册表，并通过宿主 SQLite 执行内存查询。省略 URL 时使用当前 Git 仓库的文件传输，正式宿主接线时提供可访问的远端 Git URL 并更新宿主锁文件。
+
+### AgentNexus 整仓依赖复跑
+
+执行 `bash scripts/check-external-adapter-agentnexus.sh ADAPTER_SHA AGENTNEXUS_CHECKOUT HOST_SHA [ADAPTER_GIT_URL]`。两个 SHA 均为完整提交。脚本按宿主 SHA 导出干净源码，在临时项目的 `an-server` 测试依赖中固定 adapter 的 Git revision，并生成该临时项目的锁文件。用同一个宿主工作区执行正式 M3 桩合同及 adapter 的工单投影、HTTP／MCP 传输和逐请求绑定回归。移植测试只调整导入名。来源请求使用回环协议夹具，真实生产凭据及出站接线按宿主方案评审。
+
+本地复跑使用 adapter 提交 `01e9318` 和 AgentNexus `ba9a7c7`。Cargo 在临时宿主锁文件中只新增 `mom-external-adapter 0.1.0`。同一宿主通过正式 M3 桩合同 6 项、工单投影 3 项、连接器传输 5 项和 Observe 绑定 4 项。复跑使用 Git 文件传输。远端发布复核需换用可访问的 Git URL。
