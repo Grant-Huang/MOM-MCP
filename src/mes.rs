@@ -6,7 +6,8 @@ use serde_json::{Map, Value, json};
 
 use crate::catalog::{Action, Spec, object, text};
 
-const ROUTE: [&str; 3] = ["machining", "assembly", "inspection"];
+pub(crate) const MATERIAL_INPUT_OPERATION: &str = "machining";
+const ROUTE: [&str; 3] = [MATERIAL_INPUT_OPERATION, "assembly", "inspection"];
 const LOT: &str = "LOT-1";
 pub(crate) const QUANTITY: usize = 10;
 
@@ -317,6 +318,16 @@ pub fn spec(action: Action) -> Spec {
             json!({"type":"integer","minimum":1,"maximum":QUANTITY}),
         );
     }
+    if action == Action::PostOperationReport {
+        fields.insert(
+            "material_inputs".into(),
+            json!({
+                "type":"object","minProperties":1,"maxProperties":50,
+                "description":"按发料预留编号填写实际投入数量，使用批次的计量单位",
+                "additionalProperties":crate::inventory::quantity_schema()
+            }),
+        );
+    }
     if !read {
         fields.insert(
             "expected_cursor".into(),
@@ -443,7 +454,11 @@ pub fn spec(action: Action) -> Spec {
                 "id":text(),"order":text(),"step":{"type":"integer","minimum":0},
                 "quantity":{"type":"integer","minimum":1},"batch":{"type":["string","null"]},
                 "reversed":{"type":"boolean"},"serial_numbers":{"type":"array","items":text()},
-            "components":{"type":"object","additionalProperties":{"type":"integer","minimum":1}}
+            "components":{"type":"object","additionalProperties":{"type":"integer","minimum":1}},
+                "material_inputs":{"type":"array","items":object(
+                    &["reservation_id","lot_id","quantity","unit"],
+                    json!({"reservation_id":text(),"lot_id":text(),"quantity":crate::inventory::quantity_schema(),"unit":text()})
+                )}
             }),
         );
         let success = match action {
@@ -506,6 +521,11 @@ pub fn spec(action: Action) -> Spec {
                 "MATERIAL_SHORTAGE",
                 "MATERIAL_HELD",
                 "REPORT_EXCEEDS_REMAINING",
+                "MATERIAL_INPUTS_REQUIRED",
+                "MATERIAL_ISSUE_NOT_FOUND",
+                "MATERIAL_ISSUE_QUANTITY_EXCEEDED",
+                "QUALITY_HOLD",
+                "QUALITY_SCRAPPED",
                 "REPORT_NOT_FOUND",
                 "REPORT_HAS_DEPENDENCIES",
                 "RESOURCE_BUSY",
@@ -559,6 +579,8 @@ pub struct Setup {
     pub equipment_events: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub strict_dispatch: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub issued_report_inputs: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub alternate_centers: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -617,6 +639,16 @@ pub(crate) struct Report {
     pub(crate) serial_numbers: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) components: BTreeMap<String, usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) material_inputs: Vec<MaterialInput>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub(crate) struct MaterialInput {
+    reservation_id: String,
+    lot_id: String,
+    quantity: String,
+    unit: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -875,7 +907,8 @@ pub fn operations(
                         Some("QUALITY_HOLD")
                     } else if state.equipment_down && index < 2 {
                         Some("EQUIPMENT_UNAVAILABLE")
-                    } else if index == 0
+                    } else if !setup.issued_report_inputs
+                        && index == 0
                         && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
                     {
                         Some("MATERIAL_SHORTAGE")
@@ -948,6 +981,85 @@ pub fn resource_capability(
         json!({"work_center":center,"operations":operations,"configurations":[],
         "available":available && occupied_by.is_none(),"occupied_by":occupied_by}),
     ))
+}
+
+fn has_operation_issue(tx: &Transaction<'_>, run: &str, order: &str) -> rusqlite::Result<bool> {
+    tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM stock_operation_issues i
+         JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
+         WHERE i.run=?1 AND r.work_order=?2 AND i.operation=?3)",
+        params![run, order, MATERIAL_INPUT_OPERATION],
+        |row| row.get(0),
+    )
+}
+
+fn report_material_inputs(
+    tx: &Transaction<'_>,
+    run: &str,
+    state: &State,
+    order: &str,
+    args: &Map<String, Value>,
+) -> rusqlite::Result<Result<Vec<MaterialInput>, &'static str>> {
+    let Some(inputs) = args.get("material_inputs").and_then(Value::as_object) else {
+        return Ok(Err("MATERIAL_INPUTS_REQUIRED"));
+    };
+    if inputs.is_empty() || inputs.len() > 50 {
+        return Ok(Err("INVALID_ARGUMENT"));
+    }
+    let mut result = Vec::new();
+    for (reservation, value) in inputs {
+        use crate::inventory::{parse_quantity, quantity};
+        let Some(requested) = value.as_str().and_then(parse_quantity) else {
+            return Ok(Err("INVALID_ARGUMENT"));
+        };
+        if !crate::scenario::identifier(reservation) {
+            return Ok(Err("INVALID_ARGUMENT"));
+        }
+        let issue = tx
+            .query_row(
+                "SELECT r.lot,s.unit,r.quantity,EXISTS(
+                 SELECT 1 FROM scenario_holds h WHERE h.run=r.run AND h.batch=r.lot)
+             FROM stock_operation_issues i
+             JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
+             JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
+             WHERE i.run=?1 AND r.work_order=?2 AND i.operation=?3 AND i.reservation=?4
+               AND r.status='issued'",
+                params![run, order, MATERIAL_INPUT_OPERATION, reservation],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, bool>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((lot_id, unit, issued, held)) = issue else {
+            return Ok(Err("MATERIAL_ISSUE_NOT_FOUND"));
+        };
+        if held {
+            return Ok(Err("MATERIAL_HELD"));
+        }
+        let used: i64 = state
+            .reports
+            .iter()
+            .filter(|report| !report.reversed && report.order == order)
+            .flat_map(|report| &report.material_inputs)
+            .filter(|input| input.reservation_id == *reservation)
+            .map(|input| parse_quantity(&input.quantity).expect("validated material quantity"))
+            .sum();
+        if requested > issued - used {
+            return Ok(Err("MATERIAL_ISSUE_QUANTITY_EXCEEDED"));
+        }
+        result.push(MaterialInput {
+            reservation_id: reservation.clone(),
+            lot_id,
+            quantity: quantity(requested),
+            unit,
+        });
+    }
+    Ok(Ok(result))
 }
 
 pub fn invoke(
@@ -1049,10 +1161,15 @@ pub fn invoke(
                 Phase::Dispatched if order.step == 2 && !held => vec!["inspect_units"],
                 Phase::Dispatched if !held => {
                     let mut actions = Vec::new();
-                    if order.step == 0 && state.stock >= QUANTITY {
+                    if !setup.issued_report_inputs && order.step == 0 && state.stock >= QUANTITY {
                         actions.push("issue_material");
                     }
-                    if !state.equipment_down && order.batch.is_some() {
+                    let can_start = if setup.issued_report_inputs {
+                        order.step != 0 || has_operation_issue(tx, run, id)?
+                    } else {
+                        order.batch.is_some()
+                    };
+                    if !state.equipment_down && can_start {
                         actions.push("start_operation");
                     }
                     actions
@@ -1067,7 +1184,10 @@ pub fn invoke(
                 {
                     vec!["complete_operation"]
                 }
-                Phase::Running if !held && (order.step != 0 || state.stock > 0) => {
+                Phase::Running
+                    if !held
+                        && (setup.issued_report_inputs || order.step != 0 || state.stock > 0) =>
+                {
                     vec!["report_operation"]
                 }
                 Phase::Complete if order.inspection.as_deref() == Some("fail") => {
@@ -1165,6 +1285,36 @@ pub fn invoke(
             params![run, LOT],
         )?;
     }
+    if setup.issued_report_inputs
+        && action == Action::CancelWorkOrder
+        && has_operation_issue(tx, run, args["work_order"].as_str().unwrap())?
+    {
+        return Ok((error("ORDER_HAS_EXECUTION"), false));
+    }
+    if setup.issued_report_inputs
+        && matches!(action, Action::StartOperation | Action::PostOperationReport)
+    {
+        let order = args["work_order"].as_str().unwrap();
+        if let Some(code) = crate::quality::blocking(tx, run, order)? {
+            return Ok((error(&code), false));
+        }
+        if args["operation"] == MATERIAL_INPUT_OPERATION {
+            if action == Action::StartOperation && !has_operation_issue(tx, run, order)? {
+                return Ok((error("MATERIAL_NOT_ISSUED"), false));
+            }
+            if action == Action::PostOperationReport {
+                let inputs = match report_material_inputs(tx, run, &state, order, args)? {
+                    Ok(inputs) => inputs,
+                    Err(code) => return Ok((error(code), false)),
+                };
+                let report = state.reports.last_mut().expect("successful report");
+                report.material_inputs = inputs;
+                response["report"] = json!(report);
+            }
+        } else if args.contains_key("material_inputs") {
+            return Ok((error("INVALID_ARGUMENT"), false));
+        }
+    }
     response["cursor"] = (cursor + 1).into();
     store(tx, run, &state)?;
     tx.execute(
@@ -1260,7 +1410,9 @@ fn apply(
             {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
-            if order.step == 0 && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
+            if !setup.issued_report_inputs
+                && order.step == 0
+                && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
             {
                 return error("MATERIAL_SHORTAGE");
             }
@@ -1353,7 +1505,8 @@ fn apply(
                     if state.equipment_down && order.step < 2 {
                         return error("EQUIPMENT_UNAVAILABLE");
                     }
-                    if order.step == 0
+                    if !setup.issued_report_inputs
+                        && order.step == 0
                         && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
                     {
                         return error("MATERIAL_SHORTAGE");
@@ -1411,7 +1564,9 @@ fn apply(
             if state.equipment_down {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
-            if order.step == 0 && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
+            if !setup.issued_report_inputs
+                && order.step == 0
+                && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
             {
                 return error("MATERIAL_SHORTAGE");
             }
@@ -1422,7 +1577,7 @@ fn apply(
             if state.equipment_down {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
-            if order.batch.is_none() {
+            if !setup.issued_report_inputs && order.batch.is_none() {
                 return error("MATERIAL_NOT_ISSUED");
             }
             if held {
@@ -1449,7 +1604,7 @@ fn apply(
             if quantity > remaining {
                 return json!({"ok":false,"code":"REPORT_EXCEEDS_REMAINING","remaining":remaining});
             }
-            if order.step == 0 && state.stock < quantity {
+            if !setup.issued_report_inputs && order.step == 0 && state.stock < quantity {
                 return shortage_for(quantity, state.stock);
             }
             let serial_numbers = if order.step == 0 {
@@ -1474,11 +1629,14 @@ fn apply(
                 reversed: false,
                 serial_numbers,
                 components: BTreeMap::new(),
+                material_inputs: Vec::new(),
             };
             if order.step == 0 {
-                state.stock -= quantity;
                 order.units.extend(report.serial_numbers.iter().cloned());
-                state.ledger.push(json!({"kind":"consumption","report_id":report.id,"batch":LOT,"delta":-(quantity as i64)}));
+                if !setup.issued_report_inputs {
+                    state.stock -= quantity;
+                    state.ledger.push(json!({"kind":"consumption","report_id":report.id,"batch":LOT,"delta":-(quantity as i64)}));
+                }
             }
             let outstanding = remaining - quantity;
             if outstanding == 0 && action == Action::ReportOperation {
@@ -1559,9 +1717,13 @@ fn apply(
             }
             let report = &mut state.reports[index];
             let delta = if report.step == 0 {
-                state.stock += report.quantity;
                 order.units.truncate(order.units.len() - report.quantity);
-                report.quantity
+                if setup.issued_report_inputs {
+                    0
+                } else {
+                    state.stock += report.quantity;
+                    report.quantity
+                }
             } else {
                 0
             };
