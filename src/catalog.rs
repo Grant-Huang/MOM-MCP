@@ -7,6 +7,14 @@ use crate::scenario::Rejection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    ListStockLocations,
+    GetStockBalance,
+    ListLots,
+    GetLot,
+    CreateReceipt,
+    AssignReceiptTracking,
+    PostReceipt,
+    ListInventoryMovements,
     GetOrderSnapshot,
     AssessEngineeringChange,
     CreateRouteRevision,
@@ -158,6 +166,14 @@ pub(crate) fn text() -> Value {
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
+            Self::ListStockLocations,
+            Self::GetStockBalance,
+            Self::ListLots,
+            Self::GetLot,
+            Self::CreateReceipt,
+            Self::AssignReceiptTracking,
+            Self::PostReceipt,
+            Self::ListInventoryMovements,
             Self::GetOrderSnapshot,
             Self::AssessEngineeringChange,
             Self::CreateRouteRevision,
@@ -213,6 +229,14 @@ impl Action {
 
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::ListStockLocations => "list_stock_locations",
+            Self::GetStockBalance => "get_stock_balance",
+            Self::ListLots => "list_lots",
+            Self::GetLot => "get_lot",
+            Self::CreateReceipt => "create_receipt",
+            Self::AssignReceiptTracking => "assign_receipt_tracking",
+            Self::PostReceipt => "post_receipt",
+            Self::ListInventoryMovements => "list_inventory_movements",
             Self::GetOrderSnapshot => "get_order_snapshot",
             Self::AssessEngineeringChange => "assess_engineering_change",
             Self::CreateRouteRevision => "create_route_revision",
@@ -295,6 +319,7 @@ impl Action {
             | Self::PlaceQualityHold
             | Self::DispositionNonconformance
             | Self::ReleaseQualityHold => &["检验", "质量", "inspection", "quality"],
+            action if action.is_receipt_action() => &["库存", "收货", "inventory", "receipt"],
             action if action.is_route_action() => &["工艺路线", "route", "revision"],
             action if action.is_bom_action() => &["物料清单", "bom", "revision"],
             action if action.is_item_action() => &["物料", "版本", "item", "revision"],
@@ -340,7 +365,23 @@ impl Action {
         )
     }
 
+    pub(crate) fn is_receipt_action(self) -> bool {
+        matches!(
+            self,
+            Self::ListStockLocations
+                | Self::GetStockBalance
+                | Self::ListLots
+                | Self::GetLot
+                | Self::CreateReceipt
+                | Self::AssignReceiptTracking
+                | Self::PostReceipt
+                | Self::ListInventoryMovements
+        )
+    }
     pub fn spec(self) -> Spec {
+        if self.is_receipt_action() {
+            return crate::inventory::spec(self);
+        }
         if matches!(self, Self::GetOrderSnapshot | Self::AssessEngineeringChange) {
             return crate::snapshots::spec(self);
         }
@@ -1011,6 +1052,7 @@ pub fn validate(schema: &Value, args: &Map<String, Value>) -> Result<(), Rejecti
         };
         let valid = match rule["type"].as_str().unwrap() {
             "object" => value.is_object(),
+            "boolean" => value.is_boolean(),
             "integer" => value.as_u64().is_some_and(|n| {
                 n >= rule["minimum"].as_u64().unwrap_or(0)
                     && n <= rule["maximum"].as_u64().unwrap_or(u64::MAX)

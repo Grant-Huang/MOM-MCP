@@ -410,6 +410,13 @@ impl Scenarios {
                  demand TEXT NOT NULL, serial TEXT,
                  PRIMARY KEY (run, id)
              );
+             CREATE TABLE IF NOT EXISTS stock_receipts (
+                 run TEXT NOT NULL, receipt TEXT NOT NULL, item TEXT NOT NULL,
+                 revision INTEGER NOT NULL, unit TEXT NOT NULL, quantity INTEGER NOT NULL,
+                 requires_inspection INTEGER NOT NULL, lot TEXT, supplier_lot TEXT,
+                 location TEXT, posted_cursor INTEGER,
+                 PRIMARY KEY (run,receipt), UNIQUE (run,lot)
+             );
              CREATE TABLE IF NOT EXISTS order_definition_snapshots (
                  run TEXT NOT NULL, work_order TEXT NOT NULL, snapshot TEXT NOT NULL,
                  PRIMARY KEY(run,work_order)
@@ -502,6 +509,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-route-revisions.json"),
             include_str!("../fixtures/cnc-order-snapshots.json"),
             include_str!("../fixtures/assembly-order-snapshots.json"),
+            include_str!("../fixtures/cnc-receipts.json"),
+            include_str!("../fixtures/assembly-receipts.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -898,6 +907,9 @@ impl Scenarios {
                 (_, Ok(snapshot)) => definition_snapshot = Some(snapshot),
                 (_, Err(error)) => return Ok(Err(error)),
             }
+        }
+        if action.is_receipt_action() {
+            return crate::inventory::invoke(tx, run, action, parameters, cursor);
         }
         if action.is_route_action()
             || (matches!(action, Action::ActivateRevision | Action::ValidateRevision)

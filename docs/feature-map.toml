@@ -609,3 +609,19 @@ spec = "acceptance/P9A.md"
 features = ["F08", "F09"]
 layers = ["playwright"]
 tests = { playwright = "P9A-09 Freeze a work order definition" }
+
+[[case]]
+id = "P9B-01"
+phase = "P9B"
+spec = "acceptance/P9B.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9b_01_receipt_ledger" }
+
+[[case]]
+id = "P9B-UI"
+phase = "P9B"
+spec = "acceptance/P9B.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P9B-UI Receive and reconcile a lot" }
