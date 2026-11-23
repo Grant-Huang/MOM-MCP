@@ -4053,3 +4053,94 @@ async fn p9b_01_receipt_ledger() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p9b_02_receipt_quality_and_requirements() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("inventory.sqlite3"), "0", true).await;
+    timeout(Duration::from_secs(30), async {
+        for (scenario,version,order,needed) in [("cnc",25,"WO-1","25"),("assembly",24,"WO-E","2.5")] {
+            let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            let cursor=async || call(&client,"get_run",json!({"run_id":run})).await["cursor"].clone();
+            let write=async |name:&str,key:&str,mut args:Value| {
+                args["expected_cursor"]=cursor().await;
+                args["idempotency_key"]=json!(key);
+                invoke(name,args).await
+            };
+            let apply=async |name:&str,key:&str,args| {
+                let result=write(name,key,args).await;
+                assert_eq!(result["ok"],true,"{name}: {result}");
+                result
+            };
+            let item=|id:&str,revision| json!({"item_id":id,"revision":revision});
+            let demand=|| invoke("get_material_requirements",json!({"work_order":order}));
+            assert_eq!(demand().await["code"],"ORDER_SNAPSHOT_NOT_FOUND");
+            for (id,unit) in [("FRAME","each"),("SUB","each"),("WIRE","m")] {
+                apply("create_item",id,json!({"item_id":id,"base_unit":unit})).await;
+                apply("create_item_revision",&format!("draft-{id}"),json!({"item_id":id,"revision":1,"name":id})).await;
+                apply("activate_revision",&format!("active-{id}"),json!({"revision_type":"item","item_id":id,"revision":1})).await;
+            }
+            for (parent,components) in [
+                ("SUB",json!({"WIRE":{"revision":1,"quantity":1.25,"unit":"m"}})),
+                ("FRAME",json!({"SUB":{"revision":1,"quantity":2,"unit":"each","expand_bom":true}})),
+            ] {
+                apply("create_bom_revision",&format!("bom-{parent}"),item(parent,1)).await;
+                apply("set_bom_components",&format!("components-{parent}"),json!({"item_id":parent,"revision":1,"components":components})).await;
+                apply("activate_revision",&format!("active-bom-{parent}"),json!({"revision_type":"bom","item_id":parent,"revision":1})).await;
+            }
+            apply("create_route_revision","route",item("FRAME",1)).await;
+            apply("set_route_operations","operations",json!({"item_id":"FRAME","revision":1,"operations":{"build":{"work_center":"CELL-A","predecessors":[]}}})).await;
+            apply("activate_revision","active-route",json!({"revision_type":"route","item_id":"FRAME","revision":1})).await;
+            apply("create_inspection_plan_revision","plan",json!({"plan_id":"QA","revision":1,"characteristics":{"width":{"unit":"mm","lower_limit":1,"upper_limit":2}}})).await;
+            apply("activate_inspection_plan_revision","active-plan",json!({"plan_id":"QA","revision":1})).await;
+            let mut release=json!({"work_order":order,"definition_selection":{"item_id":"FRAME","inspection_plan_id":"QA"}});
+            let readiness=invoke("get_release_readiness",release.clone()).await;
+            assert_eq!(readiness["ready"],true,"{readiness}");
+            release["snapshot_fingerprint"]=readiness["definition_snapshot"]["fingerprint"].clone();
+            apply("release_work_order","release",release).await;
+            apply("create_item_revision","wire2",json!({"item_id":"WIRE","revision":2,"name":"Wire next"})).await;
+            apply("activate_revision","active-wire2",json!({"revision_type":"item","item_id":"WIRE","revision":2})).await;
+            for (id,lot,revision,quantity,inspect) in [("RC-1","LOT-1",1,"2",true),("RC-2","LOT-2",2,"9",false)] {
+                apply("create_receipt",id,json!({"receipt_id":id,"item_id":"WIRE","revision":revision,
+                    "quantity":quantity,"requires_inspection":inspect})).await;
+                apply("assign_receipt_tracking",lot,json!({"receipt_id":id,"lot_id":lot,"supplier_lot":"SUP-1","location":"RAW-01"})).await;
+                apply("post_receipt",&format!("post-{id}"),json!({"receipt_id":id})).await;
+            }
+            let available=||invoke("get_material_availability",item("WIRE",1));
+            assert_eq!(available().await["balance"]["available"],"0");
+            assert_eq!(demand().await["requirements"][0]["required"],needed);
+            assert_eq!(demand().await["requirements"][0]["shortage"],needed);
+            let inspect=async |id:&str,value| {
+                apply("create_inspection",id,json!({"work_order":order,"inspection_id":id,"specification_version":"QA@1","receipt_id":"RC-1"})).await;
+                apply("record_measurement",&format!("measure-{id}"),json!({"inspection_id":id,"characteristic":"width",
+                    "value":value,"unit":"mm","lower_limit":1,"upper_limit":2})).await;
+                apply("complete_inspection",&format!("finish-{id}"),json!({"inspection_id":id})).await
+            };
+            let disposition=|id:&str|json!({"receipt_id":"RC-1","inspection_id":id});
+            assert_eq!(inspect("bad",3).await["inspection"]["status"],"failed");
+            assert_eq!(write("release_receipt_inspection","release-stock",disposition("bad")).await["code"],"RECEIPT_INSPECTION_NOT_PASSED");
+            assert_eq!(inspect("good",2).await["inspection"]["status"],"passed");
+            apply("create_receipt","rc3",json!({"receipt_id":"RC-3","item_id":"WIRE","revision":2,
+                "quantity":"1","requires_inspection":true})).await;
+            apply("assign_receipt_tracking","track-rc3",json!({"receipt_id":"RC-3","lot_id":"LOT-3",
+                "supplier_lot":"SUP-2","location":"RAW-02"})).await;
+            apply("post_receipt","post-rc3",json!({"receipt_id":"RC-3"})).await;
+            assert_eq!(write("release_receipt_inspection","foreign-evidence",json!({"receipt_id":"RC-3","inspection_id":"good"})).await["code"],"RECEIPT_INSPECTION_NOT_PASSED");
+            let mut approved=disposition("good");
+            approved["expected_cursor"]=cursor().await;
+            approved["idempotency_key"]=json!("release-stock");
+            let first=invoke("release_receipt_inspection",approved.clone()).await;
+            assert_eq!(first["receipt"]["availability"],"available","{first}");
+            assert_eq!(first["receipt"]["released_inspection_id"],"good");
+            assert_eq!(invoke("release_receipt_inspection",approved).await,first);
+            assert_eq!(available().await["balance"]["on_hand"],"2");
+            let requirements=demand().await;
+            assert_eq!(requirements["requirements"][0],json!({"item_id":"WIRE","revision":1,"unit":"m",
+                "required":needed,"available":"2","shortage":if scenario=="cnc" {"23"} else {"0.5"}}),"{requirements}");
+            assert_eq!(invoke("get_lot",json!({"lot_id":"LOT-1"})).await["lot"]["released_cursor"],first["cursor"]);
+        }
+    }).await.unwrap();
+}

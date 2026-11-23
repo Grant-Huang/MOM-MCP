@@ -7,6 +7,9 @@ use crate::scenario::Rejection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    ReleaseReceiptInspection,
+    GetMaterialAvailability,
+    GetMaterialRequirements,
     ListStockLocations,
     GetStockBalance,
     ListLots,
@@ -166,6 +169,9 @@ pub(crate) fn text() -> Value {
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
+            Self::ReleaseReceiptInspection,
+            Self::GetMaterialAvailability,
+            Self::GetMaterialRequirements,
             Self::ListStockLocations,
             Self::GetStockBalance,
             Self::ListLots,
@@ -229,6 +235,9 @@ impl Action {
 
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::ReleaseReceiptInspection => "release_receipt_inspection",
+            Self::GetMaterialAvailability => "get_material_availability",
+            Self::GetMaterialRequirements => "get_material_requirements",
             Self::ListStockLocations => "list_stock_locations",
             Self::GetStockBalance => "get_stock_balance",
             Self::ListLots => "list_lots",
@@ -368,7 +377,10 @@ impl Action {
     pub(crate) fn is_receipt_action(self) -> bool {
         matches!(
             self,
-            Self::ListStockLocations
+            Self::ReleaseReceiptInspection
+                | Self::GetMaterialAvailability
+                | Self::GetMaterialRequirements
+                | Self::ListStockLocations
                 | Self::GetStockBalance
                 | Self::ListLots
                 | Self::GetLot
@@ -574,6 +586,7 @@ impl Action {
                             "PLAN_REVISION_NOT_FOUND",
                             "PLAN_REVISION_NOT_ACTIVE",
                             "INSPECTION_PLAN_SNAPSHOT_MISMATCH",
+                            "RECEIPT_INSPECTION_NOT_PENDING",
                             "REINSPECTION_NOT_ACCEPTABLE",
                             "VERSION_CONFLICT",
                             "IDEMPOTENCY_CONFLICT",
@@ -843,6 +856,7 @@ impl Action {
             output_fields.insert("template_work_order".into(), text());
         }
         if self == Self::GetInspection {
+            output_fields.insert("receipt_id".into(), text());
             output_fields.insert("inspection_plan".into(), crate::quality::plan_schema());
             output_fields.insert(
                 "nonconformance".into(),

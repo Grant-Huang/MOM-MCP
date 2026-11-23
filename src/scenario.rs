@@ -410,6 +410,15 @@ impl Scenarios {
                  demand TEXT NOT NULL, serial TEXT,
                  PRIMARY KEY (run, id)
              );
+             CREATE TABLE IF NOT EXISTS stock_receipt_inspections (
+                 run TEXT NOT NULL, inspection TEXT NOT NULL, receipt TEXT NOT NULL,
+                 PRIMARY KEY (run,inspection)
+             );
+             CREATE TABLE IF NOT EXISTS stock_receipt_releases (
+                 run TEXT NOT NULL, receipt TEXT NOT NULL, inspection TEXT NOT NULL,
+                 released_cursor INTEGER NOT NULL,
+                 PRIMARY KEY (run,receipt)
+             );
              CREATE TABLE IF NOT EXISTS stock_receipts (
                  run TEXT NOT NULL, receipt TEXT NOT NULL, item TEXT NOT NULL,
                  revision INTEGER NOT NULL, unit TEXT NOT NULL, quantity INTEGER NOT NULL,
@@ -511,6 +520,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-order-snapshots.json"),
             include_str!("../fixtures/cnc-receipts.json"),
             include_str!("../fixtures/assembly-receipts.json"),
+            include_str!("../fixtures/cnc-receipt-quality.json"),
+            include_str!("../fixtures/assembly-receipt-quality.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -835,7 +846,7 @@ impl Scenarios {
             .capabilities
             .contains(&Action::CreateRouteRevision);
         let snapshot_enabled = definition.capabilities.contains(&Action::GetOrderSnapshot);
-        let spec = match action {
+        let mut spec = match action {
             Action::GetReleaseReadiness | Action::ReleaseWorkOrder if snapshot_enabled => {
                 crate::snapshots::release_spec(action)
             }
@@ -843,6 +854,13 @@ impl Scenarios {
             Action::ValidateRevision => crate::bom::validation_spec(route_enabled),
             _ => action.spec(),
         };
+        if action == Action::CreateInspection
+            && definition
+                .capabilities
+                .contains(&Action::ReleaseReceiptInspection)
+        {
+            spec.input["properties"]["receipt_id"] = catalog::text();
+        }
         if name == "describe_tool" {
             return Ok(Ok(json!({"ok":true,"tool":spec})));
         }
@@ -907,6 +925,19 @@ impl Scenarios {
                 (_, Ok(snapshot)) => definition_snapshot = Some(snapshot),
                 (_, Err(error)) => return Ok(Err(error)),
             }
+        }
+        if action == Action::GetMaterialRequirements {
+            let quantity = if definition.manufacturing.is_some() {
+                crate::mes::QUANTITY as i64
+            } else {
+                1
+            };
+            return crate::inventory::requirements(
+                &tx,
+                run,
+                parameters["work_order"].as_str().unwrap(),
+                quantity,
+            );
         }
         if action.is_receipt_action() {
             return crate::inventory::invoke(tx, run, action, parameters, cursor);

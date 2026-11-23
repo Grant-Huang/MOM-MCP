@@ -8,7 +8,7 @@ use crate::catalog::{Action, Spec, object, text};
 
 const ROUTE: [&str; 3] = ["machining", "assembly", "inspection"];
 const LOT: &str = "LOT-1";
-const QUANTITY: usize = 10;
+pub(crate) const QUANTITY: usize = 10;
 
 pub const TOOLS: &[(Action, &str, &str, &str)] = &[
     (
