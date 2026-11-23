@@ -11,6 +11,7 @@ mod routes;
 mod scenario;
 mod simulation;
 mod smt;
+mod snapshots;
 mod web;
 
 use clap::{Parser, Subcommand};

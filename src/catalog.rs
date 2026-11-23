@@ -7,6 +7,8 @@ use crate::scenario::Rejection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    GetOrderSnapshot,
+    AssessEngineeringChange,
     CreateRouteRevision,
     GetRouteRevision,
     SetRouteOperations,
@@ -156,6 +158,8 @@ pub(crate) fn text() -> Value {
 impl Action {
     pub fn named(name: &str) -> Option<Self> {
         [
+            Self::GetOrderSnapshot,
+            Self::AssessEngineeringChange,
             Self::CreateRouteRevision,
             Self::GetRouteRevision,
             Self::SetRouteOperations,
@@ -209,6 +213,8 @@ impl Action {
 
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::GetOrderSnapshot => "get_order_snapshot",
+            Self::AssessEngineeringChange => "assess_engineering_change",
             Self::CreateRouteRevision => "create_route_revision",
             Self::GetRouteRevision => "get_route_revision",
             Self::SetRouteOperations => "set_route_operations",
@@ -261,7 +267,9 @@ impl Action {
 
     fn keywords(self) -> &'static [&'static str] {
         match self {
-            Self::GetWorkOrder
+            Self::GetOrderSnapshot
+            | Self::AssessEngineeringChange
+            | Self::GetWorkOrder
             | Self::ListWorkOrders
             | Self::CreateWorkOrder
             | Self::UpdateDraftOrder
@@ -333,6 +341,9 @@ impl Action {
     }
 
     pub fn spec(self) -> Spec {
+        if matches!(self, Self::GetOrderSnapshot | Self::AssessEngineeringChange) {
+            return crate::snapshots::spec(self);
+        }
         if self.is_route_action() {
             return crate::routes::spec(self);
         }
@@ -521,6 +532,7 @@ impl Action {
                             "INSPECTION_ALREADY_EXISTS",
                             "PLAN_REVISION_NOT_FOUND",
                             "PLAN_REVISION_NOT_ACTIVE",
+                            "INSPECTION_PLAN_SNAPSHOT_MISMATCH",
                             "REINSPECTION_NOT_ACCEPTABLE",
                             "VERSION_CONFLICT",
                             "IDEMPOTENCY_CONFLICT",

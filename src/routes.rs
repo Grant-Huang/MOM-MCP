@@ -20,7 +20,7 @@ struct Operation {
 }
 
 #[derive(Serialize)]
-struct Route {
+pub(crate) struct Route {
     item_id: String,
     revision: i64,
     status: String,
@@ -150,7 +150,7 @@ fn execution_order(operations: &BTreeMap<String, Operation>) -> Result<Vec<Strin
     Ok(order)
 }
 
-fn read(
+pub(crate) fn read(
     tx: &Transaction<'_>,
     run: &str,
     item: &str,

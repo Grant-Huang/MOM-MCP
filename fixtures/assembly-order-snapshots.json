@@ -1,0 +1,118 @@
+{
+  "scenario_id": "assembly",
+  "version": 22,
+  "title": "工业设备按单装配 · 工单下达快照",
+  "model": "configure_to_order",
+  "model_parameters": {
+    "test_mean_minutes": 6
+  },
+  "work_orders": [
+    "WO-E",
+    "WO-L"
+  ],
+  "materials": {},
+  "capabilities": [
+    "get_work_order",
+    "assembly_kit",
+    "get_release_readiness",
+    "release_work_order",
+    "hold_work_order",
+    "resume_work_order",
+    "cancel_work_order",
+    "complete_work_order",
+    "close_work_order",
+    "create_work_order",
+    "update_draft_order",
+    "assembly_substitute",
+    "assembly_dispatch",
+    "assembly_priority",
+    "assembly_start_test",
+    "assembly_finish_test",
+    "assembly_repair",
+    "assembly_deliver",
+    "assembly_trace",
+    "list_work_orders",
+    "list_operations",
+    "get_operation",
+    "list_dispatch_queue",
+    "get_resource_capability",
+    "set_dispatch_priority",
+    "dispatch_operation",
+    "reassign_operation",
+    "start_operation",
+    "pause_operation",
+    "resume_operation",
+    "post_operation_report",
+    "list_operation_reports",
+    "reverse_operation_report",
+    "complete_operation",
+    "get_command_result",
+    "create_inspection",
+    "list_inspections",
+    "get_inspection",
+    "record_measurement",
+    "complete_inspection",
+    "open_nonconformance",
+    "place_quality_hold",
+    "disposition_nonconformance",
+    "release_quality_hold",
+    "create_inspection_plan_revision",
+    "activate_inspection_plan_revision",
+    "list_items",
+    "get_item",
+    "create_item",
+    "create_item_revision",
+    "get_item_revision",
+    "activate_revision",
+    "create_bom_revision",
+    "get_bom_revision",
+    "set_bom_components",
+    "validate_revision",
+    "create_route_revision",
+    "get_route_revision",
+    "set_route_operations",
+    "get_order_snapshot",
+    "assess_engineering_change"
+  ],
+  "assembly": {
+    "stock": {
+      "DRIVE-STD": 2,
+      "DRIVE-ALT": 2,
+      "DRIVE-BAD": 2,
+      "FRAME": 2
+    },
+    "bom": {
+      "DRIVE-STD": 1,
+      "FRAME": 1
+    },
+    "substitutes": {
+      "DRIVE-ALT": "QA-DRIVE-017"
+    },
+    "cells": {
+      "CELL-A": [
+        "standard",
+        "rugged"
+      ],
+      "CELL-B": [
+        "rugged"
+      ],
+      "CELL-C": [
+        "standard",
+        "rugged"
+      ]
+    },
+    "orders": {
+      "WO-E": {
+        "configuration": "standard",
+        "serial": "UNIT-E-01",
+        "due_in_minutes": 35
+      },
+      "WO-L": {
+        "configuration": "rugged",
+        "serial": "UNIT-L-01",
+        "due_in_minutes": 75
+      }
+    },
+    "exclusive_dispatch": true
+  }
+}

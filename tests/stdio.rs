@@ -3902,3 +3902,86 @@ async fn p9a_06_route_revision_dependencies() {
         }
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn p9a_08_release_snapshot_and_change_impact() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("master.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        for (scenario,version,order,other) in [("cnc",23,"WO-1","WO-2"),("assembly",22,"WO-E","WO-L")] {
+            let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
+            assert_eq!(opened["ok"],true,"{opened}");
+            let run=&opened["run_id"];
+            let invoke=async |name:&str,args| business(&client,run,name,args).await;
+            let cursor=async || call(&client,"get_run",json!({"run_id":run})).await["cursor"].clone();
+            let write=async |name:&str,key:&str,mut args:Value| {
+                args["expected_cursor"]=cursor().await;
+                args["idempotency_key"]=json!(key);
+                let result=invoke(name,args).await;
+                assert_eq!(result["ok"],true,"{name}: {result}");
+                result
+            };
+            let input=|id:&str| json!({"work_order":id,"definition_selection":{"item_id":"FRAME","inspection_plan_id":"QA"}});
+            let ready=|id:&str| invoke("get_release_readiness",input(id));
+            assert_eq!(ready(order).await["code"],"MASTER_DEFINITION_NOT_ACTIVE");
+            for item in ["FRAME","WIRE"] {
+                write("create_item",&format!("item-{item}"),json!({"item_id":item,"base_unit":"each"})).await;
+            }
+            write("create_item_revision","wire-v1",json!({"item_id":"WIRE","revision":1,"name":"Wire"})).await;
+            write("activate_revision","wire-active",json!({"revision_type":"item","item_id":"WIRE","revision":1})).await;
+            let configure=async |n| {
+                for (name,args) in [
+                    ("create_item_revision",json!({"item_id":"FRAME","revision":n,"name":format!("Frame {n}")})),
+                    ("activate_revision",json!({"revision_type":"item","item_id":"FRAME","revision":n})),
+                    ("create_bom_revision",json!({"item_id":"FRAME","revision":n})),
+                    ("set_bom_components",json!({"item_id":"FRAME","revision":n,"components":{"WIRE":{"revision":1,"quantity":n,"unit":"each"}}})),
+                    ("activate_revision",json!({"revision_type":"bom","item_id":"FRAME","revision":n})),
+                    ("create_route_revision",json!({"item_id":"FRAME","revision":n})),
+                    ("set_route_operations",json!({"item_id":"FRAME","revision":n,"operations":{"build":{"work_center":format!("CELL-{n}"),"predecessors":[]}}})),
+                    ("activate_revision",json!({"revision_type":"route","item_id":"FRAME","revision":n})),
+                    ("create_inspection_plan_revision",json!({"plan_id":"QA","revision":n,"characteristics":{"width":{"unit":"mm","lower_limit":1,"upper_limit":n+1}}})),
+                    ("activate_inspection_plan_revision",json!({"plan_id":"QA","revision":n})),
+                ].into_iter().enumerate().map(|(i,(name,args))| (format!("{n}-{i}"),(name,args))) {
+                    let (tool,body)=args;
+                    write(tool,&name,body).await;
+                }
+            };
+            configure(1).await;
+            let before=ready(order).await;
+            assert_eq!(before["ready"],true,"{before}");
+            let stale=ready(other).await;
+            let mut release=input(order);
+            release["snapshot_fingerprint"]=before["definition_snapshot"]["fingerprint"].clone();
+            release["expected_cursor"]=before["cursor"].clone();
+            release["idempotency_key"]=json!("release-first");
+            let first=invoke("release_work_order",release.clone()).await;
+            assert_eq!(first["status"],"released","{first}");
+            assert_eq!(first["definition_snapshot"],before["definition_snapshot"]);
+            configure(2).await;
+            let mut obsolete=input(other);
+            obsolete["snapshot_fingerprint"]=stale["definition_snapshot"]["fingerprint"].clone();
+            obsolete["expected_cursor"]=cursor().await;
+            obsolete["idempotency_key"]=json!("release-other");
+            let unchanged=cursor().await;
+            assert_eq!(invoke("release_work_order",obsolete.clone()).await["code"],"SNAPSHOT_CHANGED");
+            assert_eq!(cursor().await,unchanged);
+            assert_eq!(invoke("get_order_snapshot",json!({"work_order":other})).await["code"],"ORDER_SNAPSHOT_NOT_FOUND");
+            let fresh=ready(other).await;
+            assert_eq!(fresh["ready"],true,"{fresh}");
+            obsolete["snapshot_fingerprint"]=fresh["definition_snapshot"]["fingerprint"].clone();
+            assert_eq!(invoke("release_work_order",obsolete).await["definition_snapshot"]["item"]["revision"],2);
+            assert_eq!(invoke("release_work_order",release).await,first);
+            let (peer,_child)=connect_mode(&db,"0",true).await;
+            let frozen=business(&peer,run,"get_order_snapshot",json!({"work_order":order})).await;
+            assert_eq!(frozen["snapshot"],first["definition_snapshot"]);
+            let impact=business(&peer,run,"assess_engineering_change",json!({"work_order":order})).await;
+            assert_eq!(impact["changed"],json!(["item","bom","route","inspection_plan"]),"{impact}");
+            let mut inspection=json!({"inspection_id":"QC-OLD","work_order":order,"specification_version":"QA@2",
+                "expected_cursor":cursor().await,"idempotency_key":"inspection"});
+            assert_eq!(invoke("create_inspection",inspection.clone()).await["code"],"INSPECTION_PLAN_SNAPSHOT_MISMATCH");
+            inspection["specification_version"]=json!("QA@1");
+            assert_eq!(invoke("create_inspection",inspection).await["inspection"]["specification_version"],"QA@1");
+        }
+    }).await.unwrap();
+}

@@ -22,7 +22,7 @@ struct Component {
 }
 
 #[derive(Serialize)]
-struct Bom {
+pub(crate) struct Bom {
     item_id: String,
     revision: i64,
     status: String,
@@ -150,7 +150,12 @@ pub(crate) fn spec(action: Action) -> Spec {
     }
 }
 
-fn read(tx: &Transaction<'_>, run: &str, item: &str, revision: i64) -> anyhow::Result<Option<Bom>> {
+pub(crate) fn read(
+    tx: &Transaction<'_>,
+    run: &str,
+    item: &str,
+    revision: i64,
+) -> anyhow::Result<Option<Bom>> {
     let row = tx
         .query_row(
             "SELECT status,components FROM master_boms WHERE run=?1 AND item=?2 AND revision=?3",
