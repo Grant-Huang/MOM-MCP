@@ -657,3 +657,19 @@ spec = "acceptance/P9C.md"
 features = ["F08", "F09", "F10"]
 layers = ["playwright"]
 tests = { playwright = "P9C-UI Reserve and pick an eligible lot" }
+
+[[case]]
+id = "P9C-02"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9c_02_issue_to_operation" }
+
+[[case]]
+id = "P9C-03"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P9C-03 Issue picked stock to an operation" }
