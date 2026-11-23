@@ -94,7 +94,7 @@ pub(crate) fn spec(action: Action) -> Spec {
                 "requirements":{"type":"array","items":object(
                     &["item_id","revision","unit","required","available","shortage"],
                     json!({"item_id":id_schema(),"revision":revision_schema(),"unit":text(),
-                        "required":quantity_schema(),"available":quantity_schema(),"shortage":quantity_schema(),"reserved":quantity_schema()}))}}),
+                        "required":quantity_schema(),"available":quantity_schema(),"shortage":quantity_schema(),"reserved":quantity_schema(),"issued":quantity_schema()}))}}),
             )
         }
         Action::GetStockBalance | Action::GetMaterialAvailability => {
@@ -156,6 +156,10 @@ pub(crate) fn spec(action: Action) -> Spec {
         Action::PostReceipt => ("收货过账并登记库存", json!({"receipt":receipt_schema()})),
         _ => unreachable!("receipt action"),
     };
+    if action == Action::ListInventoryMovements {
+        fields["movement_type"] = json!({"type":"string","enum":["receipt","issue"]});
+        fields["after_movement_id"] = id_schema();
+    }
     output["ok"] = json!({"const":true});
     output["run_id"] = text();
     if write {
@@ -167,14 +171,22 @@ pub(crate) fn spec(action: Action) -> Spec {
         .keys()
         .map(String::as_str)
         .collect();
+    let mut output_schema = json!({"oneOf":[object(&output_required,output.clone()),
+        object(&["ok","code","field"],json!({"ok":{"const":false},"code":text(),"field":text()}))]});
+    if action == Action::ListInventoryMovements {
+        output_schema["oneOf"].as_array_mut().unwrap().push(object(
+            &["ok","run_id","movements","next_after_movement_id"],
+            json!({"ok":{"const":true},"run_id":text(),"movements":{"type":"array","items":crate::reservations::row_schema()},
+                "next_after_movement_id":{"type":["string","null"]}}),
+        ));
+    }
     Spec {
         name: action.name(),
         description,
         domain: "inventory",
         effect: if write { "write" } else { "read" },
         input: object(&required, fields),
-        output: json!({"oneOf":[object(&output_required,output.clone()),
-            object(&["ok","code","field"],json!({"ok":{"const":false},"code":text(),"field":text()}))]}),
+        output: output_schema,
         preconditions: &["run_open", "tool_enabled_in_scenario"],
         side_effect: if write { action.name() } else { "none" },
         errors: &[
@@ -281,6 +293,21 @@ fn query(
     action: Action,
     args: &Map<String, Value>,
 ) -> anyhow::Result<Result<Value, Rejection>> {
+    if action == Action::ListInventoryMovements {
+        let movement_type = args
+            .get("movement_type")
+            .and_then(Value::as_str)
+            .unwrap_or("receipt");
+        if movement_type == "issue" {
+            if args.contains_key("after_receipt_id") {
+                return Ok(Err(Rejection::invalid("after_receipt_id")));
+            }
+            return Ok(Ok(crate::reservations::issue_movements(tx, run, args)?));
+        }
+        if args.contains_key("after_movement_id") {
+            return Ok(Err(Rejection::invalid("after_movement_id")));
+        }
+    }
     let item = args.get("item_id").and_then(Value::as_str);
     let revision = args.get("revision").and_then(Value::as_i64);
     let location = args.get("location").and_then(Value::as_str);
@@ -376,6 +403,7 @@ pub(crate) fn invoke(
         "supplier_lot",
         "location",
         "after_receipt_id",
+        "after_movement_id",
     ] {
         if args
             .get(field)
@@ -530,7 +558,8 @@ fn balance(
     location: Option<&str>,
 ) -> rusqlite::Result<(i64, i64, i64)> {
     tx.query_row(
-        "SELECT COALESCE(SUM(s.quantity),0),
+        "SELECT COALESCE(SUM(s.quantity - COALESCE((SELECT SUM(x.quantity) FROM stock_reservations x
+             WHERE x.run=s.run AND x.lot=s.lot AND x.status='issued'),0)),0),
          COALESCE(SUM(CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END),0),
          COALESCE(SUM((SELECT SUM(x.quantity) FROM stock_reservations x
              WHERE x.run=s.run AND x.lot=s.lot AND x.status IN ('reserved','picked'))),0)
@@ -661,11 +690,17 @@ pub(crate) fn requirements(
     for ((item, revision, unit), required) in expansion.quantities {
         let (on_hand, pending, reserved) = balance(tx, run, &item, Some(revision), None)?;
         let available = on_hand - pending - reserved;
-        let assigned = crate::reservations::order_reserved(tx, run, order, &item, revision)?;
+        let assigned =
+            crate::reservations::order_quantity_by_state(tx, run, order, &item, revision, false)?;
+        let issued =
+            crate::reservations::order_quantity_by_state(tx, run, order, &item, revision, true)?;
         let mut line = json!({"item_id":item,"revision":revision,"unit":unit,"required":quantity(required),
-            "available":quantity(available),"shortage":quantity((required-assigned-available).max(0))});
+            "available":quantity(available),"shortage":quantity((required-assigned-issued-available).max(0))});
         if assigned > 0 {
             line["reserved"] = json!(quantity(assigned));
+        }
+        if issued > 0 {
+            line["issued"] = json!(quantity(issued));
         }
         requirements.push(line);
     }

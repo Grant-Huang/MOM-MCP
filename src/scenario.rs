@@ -419,6 +419,11 @@ impl Scenarios {
                  released_cursor INTEGER NOT NULL,
                  PRIMARY KEY (run,receipt)
              );
+             CREATE TABLE IF NOT EXISTS stock_operation_issues (
+                 run TEXT NOT NULL, reservation TEXT NOT NULL,
+                 operation TEXT NOT NULL, work_center TEXT NOT NULL, issued_cursor INTEGER NOT NULL,
+                 PRIMARY KEY(run,reservation)
+             );
              CREATE TABLE IF NOT EXISTS stock_reservations (
                  run TEXT NOT NULL, reservation TEXT NOT NULL, work_order TEXT NOT NULL,
                  lot TEXT NOT NULL, quantity INTEGER NOT NULL, status TEXT NOT NULL,
@@ -531,6 +536,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-receipt-quality.json"),
             include_str!("../fixtures/cnc-reservations.json"),
             include_str!("../fixtures/assembly-reservations.json"),
+            include_str!("../fixtures/cnc-operation-issues.json"),
+            include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -945,7 +952,7 @@ impl Scenarios {
                 Action::ReserveMaterial => {
                     Some(parameters["work_order"].as_str().unwrap().to_owned())
                 }
-                Action::PickMaterial => tx
+                Action::PickMaterial | Action::IssueMaterialToOperation => tx
                     .query_row(
                         "SELECT work_order FROM stock_reservations WHERE run=?1 AND reservation=?2",
                         params![run, parameters["reservation_id"].as_str().unwrap()],
@@ -965,8 +972,44 @@ impl Scenarios {
             } else {
                 true
             };
+            let issue = if action == Action::IssueMaterialToOperation
+                && let Some(order) = &order
+            {
+                let operation = parameters["operation"].as_str().unwrap();
+                let rows = if let Some(setup) = &definition.assembly {
+                    crate::assembly::operations(&tx, run, setup, Some(order))?
+                } else if let Some(setup) = &definition.manufacturing {
+                    crate::mes::operations(&tx, run, setup, &definition.work_orders, Some(order))?
+                } else {
+                    Vec::new()
+                };
+                let snapshot = crate::snapshots::load(&tx, run, order)?;
+                let center = snapshot.as_ref().and_then(|snapshot| {
+                    snapshot["route"]["operations"][operation]["work_center"].as_str()
+                });
+                let actual = rows.iter().find(|row| row.operation == operation);
+                if let Some(code) = crate::quality::blocking(&tx, run, order)? {
+                    Err(if code == "QUALITY_SCRAPPED" {
+                        "QUALITY_SCRAPPED"
+                    } else {
+                        "QUALITY_HOLD"
+                    })
+                } else if center.is_none() || actual.is_none() {
+                    Err("ISSUE_OPERATION_NOT_FOUND")
+                } else if let Some(actual) = actual
+                    && matches!(actual.status, "dispatched" | "running")
+                    && actual.blocking.is_none()
+                    && actual.work_center.as_deref() == center
+                {
+                    Ok(actual.work_center.clone())
+                } else {
+                    Err("ISSUE_OPERATION_NOT_ELIGIBLE")
+                }
+            } else {
+                Ok(None)
+            };
             return crate::reservations::invoke(
-                tx, run, action, parameters, cursor, quantity, eligible,
+                tx, run, action, parameters, cursor, quantity, eligible, issue,
             );
         }
         if action == Action::GetMaterialRequirements {

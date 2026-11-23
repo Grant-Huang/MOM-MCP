@@ -7,7 +7,7 @@ use crate::{
     scenario::{Rejection, identifier, reject},
 };
 
-fn row_schema() -> Value {
+pub(crate) fn row_schema() -> Value {
     object(
         &[
             "reservation_id",
@@ -23,7 +23,7 @@ fn row_schema() -> Value {
         json!({
         "reservation_id":id_schema(),"work_order":id_schema(),"lot_id":id_schema(),"item_id":id_schema(),
         "revision":{"type":"integer","minimum":1},"location":id_schema(),"quantity":quantity_schema(),"unit":text(),
-        "status":{"enum":["reserved","picked","released"]}}),
+        "status":{"enum":["reserved","picked","released","issued"]},"operation":id_schema(),"work_center":id_schema(),"issued_cursor":{"type":"integer","minimum":1}}),
     )
 }
 
@@ -45,6 +45,11 @@ pub(crate) fn spec(action: Action) -> Spec {
             fields = json!({"work_order":id_schema(),"lot_id":id_schema(),"after_reservation_id":id_schema(),
                 "limit":{"type":"integer","minimum":1,"maximum":100}});
             "分页查询工单或批次预留"
+        }
+        Action::IssueMaterialToOperation => {
+            required.push("operation");
+            fields["operation"] = id_schema();
+            "将已拣料批次发至指定工序"
         }
         Action::PickMaterial => "将已预留的物料标记为拣料",
         Action::UnpickMaterial => "撤销拣料并恢复预留",
@@ -89,6 +94,10 @@ pub(crate) fn spec(action: Action) -> Spec {
             "RESERVATION_ALREADY_EXISTS",
             "RESERVATION_NOT_FOUND",
             "RESERVATION_STATE_INVALID",
+            "ISSUE_OPERATION_NOT_FOUND",
+            "ISSUE_OPERATION_NOT_ELIGIBLE",
+            "QUALITY_HOLD",
+            "QUALITY_SCRAPPED",
             "VERSION_CONFLICT",
             "IDEMPOTENCY_CONFLICT",
         ],
@@ -97,16 +106,52 @@ pub(crate) fn spec(action: Action) -> Spec {
 }
 
 const RECORDS: &str = "SELECT r.reservation,r.work_order,r.lot,r.quantity,r.status,
-    s.item,s.revision,s.unit,s.location FROM stock_reservations r
-    JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot";
+    s.item,s.revision,s.unit,s.location,i.operation,i.work_center,i.issued_cursor FROM stock_reservations r
+    JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
+    LEFT JOIN stock_operation_issues i ON i.run=r.run AND i.reservation=r.reservation";
 
 fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
-    Ok(
-        json!({"reservation_id":row.get::<_,String>(0)?,"work_order":row.get::<_,String>(1)?,
+    let mut result = json!({"reservation_id":row.get::<_,String>(0)?,"work_order":row.get::<_,String>(1)?,
         "lot_id":row.get::<_,String>(2)?,"quantity":quantity(row.get(3)?),"status":row.get::<_,String>(4)?,
         "item_id":row.get::<_,String>(5)?,"revision":row.get::<_,i64>(6)?,"unit":row.get::<_,String>(7)?,
-        "location":row.get::<_,String>(8)?}),
-    )
+        "location":row.get::<_,String>(8)?});
+    if let Some(operation) = row.get::<_, Option<String>>(9)? {
+        result["operation"] = json!(operation);
+        result["work_center"] = json!(row.get::<_, String>(10)?);
+        result["issued_cursor"] = json!(row.get::<_, i64>(11)?);
+    }
+    Ok(result)
+}
+
+pub(crate) fn issue_movements(
+    tx: &Transaction<'_>,
+    run: &str,
+    args: &Map<String, Value>,
+) -> rusqlite::Result<Value> {
+    let after = args
+        .get("after_movement_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let item = args.get("item_id").and_then(Value::as_str);
+    let revision = args.get("revision").and_then(Value::as_i64);
+    let location = args.get("location").and_then(Value::as_str);
+    let limit = args.get("limit").and_then(Value::as_i64).unwrap_or(20);
+    let mut query=tx.prepare(&format!("{RECORDS} WHERE r.run=?1 AND r.reservation>?2
+        AND i.reservation IS NOT NULL AND (?3 IS NULL OR s.item=?3) AND (?4 IS NULL OR s.revision=?4)
+        AND (?5 IS NULL OR s.location=?5) ORDER BY r.reservation LIMIT ?6"))?;
+    let mut rows = query
+        .query_map(
+            params![run, after, item, revision, location, limit + 1],
+            record,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let next = if rows.len() > limit as usize {
+        rows.pop();
+        rows.last().map(|row| row["reservation_id"].clone())
+    } else {
+        None
+    };
+    Ok(json!({"ok":true,"run_id":run,"movements":rows,"next_after_movement_id":next}))
 }
 
 fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Value>> {
@@ -118,19 +163,20 @@ fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Va
     .optional()
 }
 
-pub(crate) fn order_reserved(
+pub(crate) fn order_quantity_by_state(
     tx: &Transaction<'_>,
     run: &str,
     order: &str,
     item: &str,
     revision: i64,
+    issued: bool,
 ) -> rusqlite::Result<i64> {
     tx.query_row(
         "SELECT COALESCE(SUM(r.quantity),0) FROM stock_reservations r
          JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
          WHERE r.run=?1 AND r.work_order=?2 AND s.item=?3 AND s.revision=?4
-         AND r.status IN ('reserved','picked')",
-        params![run, order, item, revision],
+         AND ((?5 AND r.status='issued') OR (NOT ?5 AND r.status IN ('reserved','picked'))) ",
+        params![run, order, item, revision, issued],
         |row| row.get(0),
     )
 }
@@ -143,12 +189,14 @@ pub(crate) fn invoke(
     cursor: i64,
     order_quantity: i64,
     eligible: bool,
+    issue: Result<Option<String>, &'static str>,
 ) -> anyhow::Result<Result<Value, Rejection>> {
     for field in [
         "reservation_id",
         "work_order",
         "lot_id",
         "after_reservation_id",
+        "operation",
     ] {
         if args
             .get(field)
@@ -246,12 +294,14 @@ pub(crate) fn invoke(
         if required == 0 {
             return Ok(Err(reject("MATERIAL_NOT_REQUIRED", "lot_id")));
         }
-        if amount > required - order_reserved(&tx, run, order, &item, revision)? {
+        let reserved = order_quantity_by_state(&tx, run, order, &item, revision, false)?;
+        let issued = order_quantity_by_state(&tx, run, order, &item, revision, true)?;
+        if amount > required - reserved - issued {
             return Ok(Err(reject("ORDER_REQUIREMENT_EXCEEDED", "quantity")));
         }
         let held: i64 = tx.query_row(
             "SELECT COALESCE(SUM(quantity),0) FROM stock_reservations
-            WHERE run=?1 AND lot=?2 AND status IN ('reserved','picked')",
+            WHERE run=?1 AND lot=?2 AND status IN ('reserved','picked','issued')",
             params![run, lot],
             |r| r.get(0),
         )?;
@@ -271,6 +321,16 @@ pub(crate) fn invoke(
             return Ok(Err(reject("WORK_ORDER_NOT_RESERVABLE", "work_order")));
         }
         let status = match (action, row["status"].as_str()) {
+            (Action::IssueMaterialToOperation, Some("picked")) => {
+                let center = match issue {
+                    Ok(Some(center)) if eligible => center,
+                    Err(code) => return Ok(Err(reject(code, "operation"))),
+                    _ => return Ok(Err(reject("ISSUE_OPERATION_NOT_ELIGIBLE", "operation"))),
+                };
+                tx.execute("INSERT INTO stock_operation_issues (run,reservation,operation,work_center,issued_cursor)
+                    VALUES (?1,?2,?3,?4,?5)",params![run,id,args["operation"].as_str().unwrap(),center,cursor+1])?;
+                "issued"
+            }
             (Action::PickMaterial, Some("reserved")) => "picked",
             (Action::UnpickMaterial, Some("picked")) => "reserved",
             (Action::ReleaseReservation, Some("reserved")) => "released",
