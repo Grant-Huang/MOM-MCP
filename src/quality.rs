@@ -200,6 +200,15 @@ pub(crate) fn nonconformance_schema() -> Value {
     )
 }
 
+fn receiving_target(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<String>> {
+    tx.query_row(
+        "SELECT receipt FROM stock_receipt_inspections WHERE run=?1 AND inspection=?2",
+        params![run, id],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
 fn nonconformance(tx: &Transaction<'_>, run: &str, id: &str) -> anyhow::Result<Option<Value>> {
     let state: Option<String> = tx
         .query_row(
@@ -223,7 +232,9 @@ pub(crate) fn blocking(
          FROM quality_inspections i
          JOIN quality_inspection_results r ON r.run=i.run AND r.inspection=i.id
          LEFT JOIN quality_nonconformances n ON n.run=i.run AND n.inspection=i.id
-         WHERE i.run=?1 AND i.work_order=?2 AND r.status='failed' AND (
+         WHERE i.run=?1 AND i.work_order=?2 AND r.status='failed'
+         AND NOT EXISTS(SELECT 1 FROM stock_receipt_inspections a WHERE a.run=i.run AND a.inspection=i.id)
+         AND (
              coalesce(json_extract(n.state,'$.status'),'open') <> 'released'
              OR json_extract(n.state,'$.history[2].decision') = 'scrap')
          ORDER BY code DESC LIMIT 1",
@@ -274,6 +285,8 @@ fn transition(
                     JOIN quality_inspection_results failed ON failed.run=i.run AND failed.inspection=?3
                     WHERE i.run=?1 AND i.id=?2 AND r.status='passed' AND r.rowid>failed.rowid
                     AND i.work_order=?4 AND i.specification_version=?5
+                    AND (SELECT receipt FROM stock_receipt_inspections WHERE run=?1 AND inspection=?2)
+                        IS (SELECT receipt FROM stock_receipt_inspections WHERE run=?1 AND inspection=?3)
                     AND NOT EXISTS (
                         SELECT 1 FROM quality_measurements original
                         WHERE original.run=?1 AND original.inspection=?3 AND NOT original.passed
@@ -410,6 +423,9 @@ pub(crate) fn invoke(
         let measurements = measurements(&tx, run, id)?;
         let plan = inspection_plan(&tx, run, &inspection.specification_version)?;
         let mut response = json!({"ok":true,"run_id":run,"inspection":inspection});
+        if let Some(receipt) = receiving_target(&tx, run, id)? {
+            response["receipt_id"] = json!(receipt);
+        }
         if let Some(plan) = plan {
             response["inspection_plan"] = json!(plan);
         }
@@ -456,6 +472,15 @@ pub(crate) fn invoke(
             return Ok(Err(Rejection::invalid("specification_version")));
         }
         let work_order = work_order.unwrap();
+        let receipt = arguments.get("receipt_id").and_then(Value::as_str);
+        if let Some(receipt) = receipt {
+            if !identifier(receipt) {
+                return Ok(Err(Rejection::invalid("receipt_id")));
+            }
+            if !crate::inventory::pending_receipt(&tx, run, receipt)? {
+                return Ok(Err(reject("RECEIPT_INSPECTION_NOT_PENDING", "receipt_id")));
+            }
+        }
         let reinspection_of = arguments.get("reinspection_of").and_then(Value::as_str);
         if versioned_plans {
             let Some(plan) = inspection_plan(&tx, run, specification)? else {
@@ -464,7 +489,11 @@ pub(crate) fn invoke(
                     "specification_version",
                 )));
             };
-            let frozen = crate::snapshots::load(&tx, run, work_order)?;
+            let frozen = if receipt.is_none() {
+                crate::snapshots::load(&tx, run, work_order)?
+            } else {
+                None
+            };
             if frozen.as_ref().is_some_and(|snapshot| {
                 snapshot["inspection_plan"]["specification_version"] != specification
             }) {
@@ -479,7 +508,7 @@ pub(crate) fn invoke(
                         && previous.work_order == work_order
                         && previous.specification_version == specification
                 });
-                if !valid {
+                if !valid || receiving_target(&tx, run, original)?.as_deref() != receipt {
                     return Ok(Err(reject(
                         "REINSPECTION_NOT_ACCEPTABLE",
                         "reinspection_of",
@@ -502,6 +531,12 @@ pub(crate) fn invoke(
         if inserted == 0 {
             return Ok(Err(reject("INSPECTION_ALREADY_EXISTS", "inspection_id")));
         }
+        if let Some(receipt) = receipt {
+            tx.execute(
+                "INSERT INTO stock_receipt_inspections (run,inspection,receipt) VALUES (?1,?2,?3)",
+                params![run, id, receipt],
+            )?;
+        }
         json!({"inspection":{"inspection_id":id,"work_order":work_order,
             "specification_version":specification,"status":"pending"}})
     } else {
@@ -520,6 +555,14 @@ pub(crate) fn invoke(
                 Err(error) => return Ok(Err(error)),
             }
         } else {
+            if let Some(receipt) = receiving_target(&tx, run, id)?
+                && !crate::inventory::pending_receipt(&tx, run, &receipt)?
+            {
+                return Ok(Err(reject(
+                    "RECEIPT_INSPECTION_NOT_PENDING",
+                    "inspection_id",
+                )));
+            }
             if inspection.status != "pending" {
                 return Ok(Err(reject("INSPECTION_COMPLETED", "inspection_id")));
             }

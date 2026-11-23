@@ -43,7 +43,8 @@ fn receipt_schema() -> Value {
             "status":{"enum":["draft","tracked","posted"]},"lot_id":{"type":["string","null"]},
             "supplier_lot":{"type":["string","null"]},"location":{"type":["string","null"]},
             "posted_cursor":{"type":["integer","null"],"minimum":1},
-            "availability":{"enum":[null,"pending_inspection","available"]}}),
+            "availability":{"enum":[null,"pending_inspection","available"]},
+            "released_inspection_id":id_schema(),"released_cursor":{"type":"integer","minimum":1}}),
     )
 }
 
@@ -52,7 +53,10 @@ pub(crate) fn spec(action: Action) -> Spec {
     let mut required = Vec::new();
     let write = matches!(
         action,
-        Action::CreateReceipt | Action::AssignReceiptTracking | Action::PostReceipt
+        Action::CreateReceipt
+            | Action::AssignReceiptTracking
+            | Action::PostReceipt
+            | Action::ReleaseReceiptInspection
     );
     if write {
         required.extend(["receipt_id", "expected_cursor", "idempotency_key"]);
@@ -62,7 +66,10 @@ pub(crate) fn spec(action: Action) -> Spec {
     }
     if matches!(
         action,
-        Action::GetStockBalance | Action::ListLots | Action::ListInventoryMovements
+        Action::GetStockBalance
+            | Action::GetMaterialAvailability
+            | Action::ListLots
+            | Action::ListInventoryMovements
     ) {
         fields["item_id"] = id_schema();
         fields["revision"] = revision_schema();
@@ -77,8 +84,24 @@ pub(crate) fn spec(action: Action) -> Spec {
             "查询库存库位",
             json!({"locations":{"type":"array","items":id_schema()}}),
         ),
-        Action::GetStockBalance => {
+        Action::GetMaterialRequirements => {
+            required.push("work_order");
+            fields["work_order"] = id_schema();
+            (
+                "按冻结 BOM 展开物料需求",
+                json!({
+                "work_order":id_schema(),"snapshot_fingerprint":text(),
+                "requirements":{"type":"array","items":object(
+                    &["item_id","revision","unit","required","available","shortage"],
+                    json!({"item_id":id_schema(),"revision":revision_schema(),"unit":text(),
+                        "required":quantity_schema(),"available":quantity_schema(),"shortage":quantity_schema()}))}}),
+            )
+        }
+        Action::GetStockBalance | Action::GetMaterialAvailability => {
             required.push("item_id");
+            if action == Action::GetMaterialAvailability {
+                required.push("revision");
+            }
             (
                 "按物料及可选版本、库位查询库存余额",
                 json!({"balance":object(
@@ -122,6 +145,14 @@ pub(crate) fn spec(action: Action) -> Spec {
                 json!({"receipt":receipt_schema()}),
             )
         }
+        Action::ReleaseReceiptInspection => {
+            required.push("inspection_id");
+            fields["inspection_id"] = id_schema();
+            (
+                "按合格来料检验放行收货",
+                json!({"receipt":receipt_schema()}),
+            )
+        }
         Action::PostReceipt => ("收货过账并登记库存", json!({"receipt":receipt_schema()})),
         _ => unreachable!("receipt action"),
     };
@@ -160,6 +191,11 @@ pub(crate) fn spec(action: Action) -> Spec {
             "LOT_NOT_FOUND",
             "VERSION_CONFLICT",
             "IDEMPOTENCY_CONFLICT",
+            "RECEIPT_INSPECTION_NOT_PENDING",
+            "RECEIPT_INSPECTION_NOT_PASSED",
+            "ORDER_SNAPSHOT_NOT_FOUND",
+            "BOM_QUANTITY_UNSUPPORTED",
+            "BOM_EXPANSION_LIMIT",
         ],
         visibility: "run",
     }
@@ -206,23 +242,29 @@ fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
     } else {
         "draft"
     };
+    let released: Option<String> = row.get(10)?;
     let availability = posted.map(|_| {
-        if inspection {
+        if inspection && released.is_none() {
             "pending_inspection"
         } else {
             "available"
         }
     });
-    Ok(
-        json!({"receipt_id":row.get::<_,String>(0)?,"item_id":row.get::<_,String>(1)?,
+    let mut response = json!({"receipt_id":row.get::<_,String>(0)?,"item_id":row.get::<_,String>(1)?,
         "revision":row.get::<_,i64>(2)?,"unit":row.get::<_,String>(3)?,"quantity":quantity(row.get(4)?),
         "requires_inspection":inspection,"lot_id":lot,"supplier_lot":row.get::<_,Option<String>>(7)?,
         "location":row.get::<_,Option<String>>(8)?,"posted_cursor":posted,"status":status,
-        "availability":availability}),
-    )
+        "availability":availability});
+    if let Some(released) = released {
+        response["released_inspection_id"] = json!(released);
+        response["released_cursor"] = json!(row.get::<_, i64>(11)?);
+    }
+    Ok(response)
 }
 
-const RECEIPT_COLUMNS: &str = "receipt,item,revision,unit,quantity,requires_inspection,lot,supplier_lot,location,posted_cursor";
+const RECEIPT_COLUMNS: &str = "receipt,item,revision,unit,quantity,requires_inspection,lot,supplier_lot,location,posted_cursor,
+    (SELECT inspection FROM stock_receipt_releases r WHERE r.run=stock_receipts.run AND r.receipt=stock_receipts.receipt),
+    (SELECT released_cursor FROM stock_receipt_releases r WHERE r.run=stock_receipts.run AND r.receipt=stock_receipts.receipt)";
 
 fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Value>> {
     tx.query_row(
@@ -260,7 +302,7 @@ fn query(
             };
             json!({"lot":lot})
         }
-        Action::GetStockBalance => {
+        Action::GetStockBalance | Action::GetMaterialAvailability => {
             let unit: Option<String> = tx
                 .query_row(
                     "SELECT unit FROM master_items WHERE run=?1 AND item=?2",
@@ -276,12 +318,7 @@ fn query(
             {
                 return Ok(Err(reject("ITEM_REVISION_NOT_FOUND", "revision")));
             }
-            let (on_hand,pending):(i64,i64) = tx.query_row(
-                "SELECT COALESCE(SUM(quantity),0), COALESCE(SUM(CASE WHEN requires_inspection THEN quantity ELSE 0 END),0)
-                 FROM stock_receipts WHERE run=?1 AND item=?2 AND posted_cursor IS NOT NULL
-                   AND (?3 IS NULL OR revision=?3) AND (?4 IS NULL OR location=?4)",
-                params![run,item,revision,location],|row|Ok((row.get(0)?,row.get(1)?)),
-            )?;
+            let (on_hand, pending) = balance(tx, run, item.unwrap(), revision, location)?;
             json!({"balance":{"item_id":item,"revision":revision,"location":location,"unit":unit,
                 "on_hand":quantity(on_hand),"pending_inspection":quantity(pending),"available":quantity(on_hand-pending)}})
         }
@@ -334,6 +371,7 @@ pub(crate) fn invoke(
     for field in [
         "item_id",
         "receipt_id",
+        "inspection_id",
         "lot_id",
         "supplier_lot",
         "location",
@@ -356,7 +394,10 @@ pub(crate) fn invoke(
     }
     if !matches!(
         action,
-        Action::CreateReceipt | Action::AssignReceiptTracking | Action::PostReceipt
+        Action::CreateReceipt
+            | Action::AssignReceiptTracking
+            | Action::PostReceipt
+            | Action::ReleaseReceiptInspection
     ) {
         return query(&tx, run, action, args);
     }
@@ -381,7 +422,31 @@ pub(crate) fn invoke(
         return Ok(Err(reject("VERSION_CONFLICT", "expected_cursor")));
     }
     let receipt = args["receipt_id"].as_str().unwrap();
-    if action == Action::CreateReceipt {
+    if action == Action::ReleaseReceiptInspection {
+        if !pending_receipt(&tx, run, receipt)? {
+            return Ok(Err(reject("RECEIPT_INSPECTION_NOT_PENDING", "receipt_id")));
+        }
+        let inspection = args["inspection_id"].as_str().unwrap();
+        let passed: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM stock_receipt_inspections link
+             JOIN quality_inspection_results q ON q.run=link.run AND q.inspection=link.inspection
+             WHERE link.run=?1 AND link.receipt=?2 AND link.inspection=?3 AND q.status='passed'
+             AND NOT EXISTS(
+                 SELECT 1 FROM stock_receipt_inspections newer
+                 JOIN quality_inspection_results result ON result.run=newer.run AND result.inspection=newer.inspection
+                 WHERE newer.run=link.run AND newer.receipt=link.receipt AND result.status='failed' AND result.rowid>q.rowid
+             ))",
+            params![run,receipt,inspection],|row| row.get(0),
+        )?;
+        if !passed {
+            return Ok(Err(reject(
+                "RECEIPT_INSPECTION_NOT_PASSED",
+                "inspection_id",
+            )));
+        }
+        tx.execute("INSERT INTO stock_receipt_releases (run,receipt,inspection,released_cursor) VALUES (?1,?2,?3,?4)",
+            params![run,receipt,inspection,cursor+1])?;
+    } else if action == Action::CreateReceipt {
         let item = args["item_id"].as_str().unwrap();
         let revision = args["revision"].as_i64().unwrap();
         let Some((unit, status)) = crate::bom::item_revision(&tx, run, item, revision)? else {
@@ -442,4 +507,130 @@ pub(crate) fn invoke(
     )?;
     tx.commit()?;
     Ok(Ok(response))
+}
+
+pub(crate) fn pending_receipt(
+    tx: &Transaction<'_>,
+    run: &str,
+    receipt: &str,
+) -> rusqlite::Result<bool> {
+    tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM stock_receipts s WHERE s.run=?1 AND s.receipt=?2
+         AND s.posted_cursor IS NOT NULL AND s.requires_inspection
+         AND NOT EXISTS(SELECT 1 FROM stock_receipt_releases r WHERE r.run=s.run AND r.receipt=s.receipt))",
+        params![run,receipt],|row|row.get(0),
+    )
+}
+
+fn balance(
+    tx: &Transaction<'_>,
+    run: &str,
+    item: &str,
+    revision: Option<i64>,
+    location: Option<&str>,
+) -> rusqlite::Result<(i64, i64)> {
+    tx.query_row(
+        "SELECT COALESCE(SUM(s.quantity),0),
+         COALESCE(SUM(CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END),0)
+         FROM stock_receipts s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
+         WHERE s.run=?1 AND s.item=?2 AND s.posted_cursor IS NOT NULL
+         AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)",
+        params![run,item,revision,location],|row|Ok((row.get(0)?,row.get(1)?)),
+    )
+}
+
+#[derive(Default)]
+struct Requirements {
+    quantities: std::collections::BTreeMap<(String, i64, String), i64>,
+    visited: usize,
+}
+
+impl Requirements {
+    fn expand(
+        &mut self,
+        tx: &Transaction<'_>,
+        run: &str,
+        bom: &Value,
+        factor: i64,
+        depth: u8,
+    ) -> anyhow::Result<Result<(), Rejection>> {
+        for (id, component) in bom["components"].as_object().expect("published components") {
+            self.visited += 1;
+            if self.visited > 1000 || depth > 64 {
+                return Ok(Err(reject("BOM_EXPANSION_LIMIT", "work_order")));
+            }
+            let revision = component["revision"]
+                .as_i64()
+                .expect("published component revision");
+            let unit = component["unit"]
+                .as_str()
+                .expect("published component unit");
+            let Some(per_parent) = parse_quantity(&component["quantity"].to_string()) else {
+                return Ok(Err(reject("BOM_QUANTITY_UNSUPPORTED", "work_order")));
+            };
+            let product = i128::from(factor) * i128::from(per_parent);
+            if product % i128::from(QUANTITY_SCALE) != 0 {
+                return Ok(Err(reject("BOM_QUANTITY_UNSUPPORTED", "work_order")));
+            }
+            let Ok(needed) = i64::try_from(product / i128::from(QUANTITY_SCALE)) else {
+                return Ok(Err(reject("BOM_QUANTITY_UNSUPPORTED", "work_order")));
+            };
+            if unit == "each" && needed % QUANTITY_SCALE != 0 {
+                return Ok(Err(reject("BOM_QUANTITY_UNSUPPORTED", "work_order")));
+            }
+            if component["expand_bom"] == true {
+                let child = crate::bom::read(tx, run, id, revision)?.expect("published child BOM");
+                if let Err(error) =
+                    self.expand(tx, run, &serde_json::to_value(child)?, needed, depth + 1)?
+                {
+                    return Ok(Err(error));
+                }
+            } else {
+                let entry = self
+                    .quantities
+                    .entry((id.clone(), revision, unit.into()))
+                    .or_default();
+                let Some(total) = entry.checked_add(needed) else {
+                    return Ok(Err(reject("BOM_QUANTITY_UNSUPPORTED", "work_order")));
+                };
+                *entry = total;
+            }
+        }
+        Ok(Ok(()))
+    }
+}
+
+pub(crate) fn requirements(
+    tx: &Transaction<'_>,
+    run: &str,
+    order: &str,
+    order_quantity: i64,
+) -> anyhow::Result<Result<Value, Rejection>> {
+    if !identifier(order) {
+        return Ok(Err(Rejection::invalid("work_order")));
+    }
+    let Some(snapshot) = crate::snapshots::load(tx, run, order)? else {
+        return Ok(Err(reject("ORDER_SNAPSHOT_NOT_FOUND", "work_order")));
+    };
+    let mut expansion = Requirements::default();
+    if let Err(error) = expansion.expand(
+        tx,
+        run,
+        &snapshot["bom"],
+        order_quantity * QUANTITY_SCALE,
+        0,
+    )? {
+        return Ok(Err(error));
+    }
+    let mut requirements = Vec::with_capacity(expansion.quantities.len());
+    for ((item, revision, unit), required) in expansion.quantities {
+        let (on_hand, pending) = balance(tx, run, &item, Some(revision), None)?;
+        let available = on_hand - pending;
+        requirements.push(
+            json!({"item_id":item,"revision":revision,"unit":unit,"required":quantity(required),
+            "available":quantity(available),"shortage":quantity((required-available).max(0))}),
+        );
+    }
+    Ok(Ok(json!({"ok":true,"run_id":run,"work_order":order,
+        "snapshot_fingerprint":snapshot["fingerprint"],"requirements":requirements})))
 }
