@@ -424,6 +424,10 @@ impl Scenarios {
                  lot TEXT NOT NULL, quantity INTEGER NOT NULL, status TEXT NOT NULL,
                  PRIMARY KEY(run,reservation)
              );
+             CREATE TABLE IF NOT EXISTS stock_operation_issues (
+                 run TEXT NOT NULL, reservation TEXT NOT NULL, operation TEXT NOT NULL, issued_cursor INTEGER NOT NULL,
+                 PRIMARY KEY(run,reservation)
+             );
              CREATE INDEX IF NOT EXISTS stock_reservation_lot ON stock_reservations (run,lot,status);
              CREATE INDEX IF NOT EXISTS stock_reservation_order ON stock_reservations (run,work_order,status);
              CREATE TABLE IF NOT EXISTS stock_receipts (
@@ -530,6 +534,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-receipt-quality.json"),
             include_str!("../fixtures/assembly-receipt-quality.json"),
             include_str!("../fixtures/cnc-reservations.json"),
+            include_str!("../fixtures/cnc-operation-issues.json"),
+            include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-reservations.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
@@ -935,6 +941,15 @@ impl Scenarios {
                 (_, Err(error)) => return Ok(Err(error)),
             }
         }
+        if action == Action::CancelWorkOrder {
+            let issued: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM stock_reservations WHERE run=?1 AND work_order=?2 AND status='issued')",
+                params![run,parameters["work_order"].as_str().unwrap()], |row| row.get(0),
+            )?;
+            if issued {
+                return Ok(Err(reject("ORDER_HAS_EXECUTION", "work_order")));
+            }
+        }
         if action.is_reservation_action() {
             let quantity = if definition.manufacturing.is_some() {
                 crate::mes::QUANTITY as i64
@@ -945,7 +960,7 @@ impl Scenarios {
                 Action::ReserveMaterial => {
                     Some(parameters["work_order"].as_str().unwrap().to_owned())
                 }
-                Action::PickMaterial => tx
+                Action::PickMaterial | Action::IssueMaterialToOperation => tx
                     .query_row(
                         "SELECT work_order FROM stock_reservations WHERE run=?1 AND reservation=?2",
                         params![run, parameters["reservation_id"].as_str().unwrap()],
@@ -954,7 +969,33 @@ impl Scenarios {
                     .optional()?,
                 _ => None,
             };
-            let eligible = if let Some(order) = &order {
+            let eligible = if action == Action::IssueMaterialToOperation {
+                if let Some(order) = &order {
+                    let rows = if let Some(setup) = &definition.assembly {
+                        crate::assembly::operations(&tx, run, setup, Some(order))?
+                    } else if let Some(setup) = &definition.manufacturing {
+                        crate::mes::operations(
+                            &tx,
+                            run,
+                            setup,
+                            &definition.work_orders,
+                            Some(order),
+                        )?
+                    } else {
+                        Vec::new()
+                    };
+                    rows.iter().any(|row| {
+                        Some(row.operation) == parameters["operation"].as_str()
+                            && matches!(row.status, "dispatched" | "running")
+                            && !matches!(
+                                row.blocking,
+                                Some("QUALITY_HOLD" | "EQUIPMENT_UNAVAILABLE")
+                            )
+                    })
+                } else {
+                    false
+                }
+            } else if let Some(order) = &order {
                 read_work_order(&tx, run, &definition, order)?.is_some_and(|order| {
                     order["completion_confirmed"] != true
                         && !matches!(

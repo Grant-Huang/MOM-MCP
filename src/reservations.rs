@@ -23,7 +23,8 @@ fn row_schema() -> Value {
         json!({
         "reservation_id":id_schema(),"work_order":id_schema(),"lot_id":id_schema(),"item_id":id_schema(),
         "revision":{"type":"integer","minimum":1},"location":id_schema(),"quantity":quantity_schema(),"unit":text(),
-        "status":{"enum":["reserved","picked","released"]}}),
+        "status":{"enum":["reserved","picked","released","issued"]},
+        "operation":id_schema(),"issued_cursor":{"type":"integer","minimum":1}}),
     )
 }
 
@@ -47,6 +48,12 @@ pub(crate) fn spec(action: Action) -> Spec {
             "分页查询工单或批次预留"
         }
         Action::PickMaterial => "将已预留的物料标记为拣料",
+        Action::IssueMaterialToOperation => {
+            required.push("operation");
+            fields["operation"] = id_schema();
+            "将已拣批次发料至工单工序"
+        }
+
         Action::UnpickMaterial => "撤销拣料并恢复预留",
         Action::ReleaseReservation => "释放尚未拣料的预留",
         _ => unreachable!("reservation action"),
@@ -89,6 +96,9 @@ pub(crate) fn spec(action: Action) -> Spec {
             "RESERVATION_ALREADY_EXISTS",
             "RESERVATION_NOT_FOUND",
             "RESERVATION_STATE_INVALID",
+            "OPERATION_NOT_ISSUABLE",
+            "QUALITY_HOLD",
+            "QUALITY_SCRAPPED",
             "VERSION_CONFLICT",
             "IDEMPOTENCY_CONFLICT",
         ],
@@ -97,16 +107,20 @@ pub(crate) fn spec(action: Action) -> Spec {
 }
 
 const RECORDS: &str = "SELECT r.reservation,r.work_order,r.lot,r.quantity,r.status,
-    s.item,s.revision,s.unit,s.location FROM stock_reservations r
-    JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot";
+    s.item,s.revision,s.unit,s.location,i.operation,i.issued_cursor FROM stock_reservations r
+    JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
+    LEFT JOIN stock_operation_issues i ON i.run=r.run AND i.reservation=r.reservation";
 
 fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
-    Ok(
-        json!({"reservation_id":row.get::<_,String>(0)?,"work_order":row.get::<_,String>(1)?,
+    let mut result = json!({"reservation_id":row.get::<_,String>(0)?,"work_order":row.get::<_,String>(1)?,
         "lot_id":row.get::<_,String>(2)?,"quantity":quantity(row.get(3)?),"status":row.get::<_,String>(4)?,
         "item_id":row.get::<_,String>(5)?,"revision":row.get::<_,i64>(6)?,"unit":row.get::<_,String>(7)?,
-        "location":row.get::<_,String>(8)?}),
-    )
+        "location":row.get::<_,String>(8)?});
+    if let Some(operation) = row.get::<_, Option<String>>(9)? {
+        result["operation"] = json!(operation);
+        result["issued_cursor"] = json!(row.get::<_, i64>(10)?);
+    }
+    Ok(result)
 }
 
 fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Value>> {
@@ -124,13 +138,14 @@ pub(crate) fn order_reserved(
     order: &str,
     item: &str,
     revision: i64,
+    include_issued: bool,
 ) -> rusqlite::Result<i64> {
     tx.query_row(
         "SELECT COALESCE(SUM(r.quantity),0) FROM stock_reservations r
          JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
          WHERE r.run=?1 AND r.work_order=?2 AND s.item=?3 AND s.revision=?4
-         AND r.status IN ('reserved','picked')",
-        params![run, order, item, revision],
+         AND (r.status IN ('reserved','picked') OR (?5 AND r.status='issued'))",
+        params![run, order, item, revision, include_issued],
         |row| row.get(0),
     )
 }
@@ -149,6 +164,7 @@ pub(crate) fn invoke(
         "work_order",
         "lot_id",
         "after_reservation_id",
+        "operation",
     ] {
         if args
             .get(field)
@@ -215,7 +231,8 @@ pub(crate) fn invoke(
         let lot = args["lot_id"].as_str().unwrap();
         let order = args["work_order"].as_str().unwrap();
         let stock=tx.query_row(
-            "SELECT s.item,s.revision,s.unit,s.quantity,s.requires_inspection AND q.receipt IS NULL
+            "SELECT s.item,s.revision,s.unit,s.quantity-COALESCE((SELECT SUM(r.quantity) FROM stock_reservations r
+                WHERE r.run=s.run AND r.lot=s.lot AND r.status='issued'),0),s.requires_inspection AND q.receipt IS NULL
              FROM stock_receipts s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
              WHERE s.run=?1 AND s.lot=?2 AND s.posted_cursor IS NOT NULL",params![run,lot],
             |r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,
@@ -246,7 +263,7 @@ pub(crate) fn invoke(
         if required == 0 {
             return Ok(Err(reject("MATERIAL_NOT_REQUIRED", "lot_id")));
         }
-        if amount > required - order_reserved(&tx, run, order, &item, revision)? {
+        if amount > required - order_reserved(&tx, run, order, &item, revision, true)? {
             return Ok(Err(reject("ORDER_REQUIREMENT_EXCEEDED", "quantity")));
         }
         let held: i64 = tx.query_row(
@@ -272,6 +289,33 @@ pub(crate) fn invoke(
         }
         let status = match (action, row["status"].as_str()) {
             (Action::PickMaterial, Some("reserved")) => "picked",
+            (Action::IssueMaterialToOperation, Some("picked")) => {
+                let operation = args["operation"].as_str().unwrap();
+                if !eligible {
+                    return Ok(Err(reject("OPERATION_NOT_ISSUABLE", "operation")));
+                }
+                let order = row["work_order"].as_str().unwrap();
+                if let Some(code) = crate::quality::blocking(&tx, run, order)? {
+                    return Ok(Err(reject(
+                        if code == "QUALITY_SCRAPPED" {
+                            "QUALITY_SCRAPPED"
+                        } else {
+                            "QUALITY_HOLD"
+                        },
+                        "work_order",
+                    )));
+                }
+                let Some(snapshot) = crate::snapshots::load(&tx, run, order)? else {
+                    return Ok(Err(reject("ORDER_SNAPSHOT_NOT_FOUND", "work_order")));
+                };
+                if snapshot["route"]["operations"].get(operation).is_none() {
+                    return Ok(Err(reject("OPERATION_NOT_ISSUABLE", "operation")));
+                }
+                tx.execute("INSERT INTO stock_operation_issues (run,reservation,operation,issued_cursor) VALUES (?1,?2,?3,?4)",
+                    params![run,id,operation,cursor+1])?;
+                "issued"
+            }
+
             (Action::UnpickMaterial, Some("picked")) => "reserved",
             (Action::ReleaseReservation, Some("reserved")) => "released",
             _ => return Ok(Err(reject("RESERVATION_STATE_INVALID", "reservation_id"))),

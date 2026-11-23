@@ -11,6 +11,7 @@ pub enum Action {
     ListReservations,
     ReleaseReservation,
     PickMaterial,
+    IssueMaterialToOperation,
     UnpickMaterial,
     ReleaseReceiptInspection,
     GetMaterialAvailability,
@@ -178,6 +179,7 @@ impl Action {
             Self::ListReservations,
             Self::ReleaseReservation,
             Self::PickMaterial,
+            Self::IssueMaterialToOperation,
             Self::UnpickMaterial,
             Self::ReleaseReceiptInspection,
             Self::GetMaterialAvailability,
@@ -249,6 +251,7 @@ impl Action {
             Self::ListReservations => "list_reservations",
             Self::ReleaseReservation => "release_reservation",
             Self::PickMaterial => "pick_material",
+            Self::IssueMaterialToOperation => "issue_material_to_operation",
             Self::UnpickMaterial => "unpick_material",
             Self::ReleaseReceiptInspection => "release_receipt_inspection",
             Self::GetMaterialAvailability => "get_material_availability",
@@ -413,6 +416,7 @@ impl Action {
                 | Self::ListReservations
                 | Self::ReleaseReservation
                 | Self::PickMaterial
+                | Self::IssueMaterialToOperation
                 | Self::UnpickMaterial
         )
     }

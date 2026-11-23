@@ -92,7 +92,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
   await button("加载场景").click();
-  await page.getByLabel("已发布场景").selectOption("assembly@25");
+  await page.getByLabel("已发布场景").selectOption("assembly@26");
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   const { run_id } = JSON.parse(await status.textContent());
@@ -149,4 +149,12 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   await write("release_reservation", reservation);
   const stock = await invoke("get_material_availability", { item_id: "WIRE", revision: 1 });
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
+  const issuedReservation = { reservation_id: "RS-2" };
+  await write("reserve_material", { ...issuedReservation, ...lot, work_order: order.work_order, quantity: "1.5" });
+  await write("pick_material", issuedReservation);
+  await write("dispatch_operation", { work_order: order.work_order, operation: "build", work_center: "CELL-A" });
+  const issued = await write("issue_material_to_operation", { ...issuedReservation, operation: "build" });
+  expect(issued.reservation).toMatchObject({ status: "issued", operation: "build", location: "RAW-02", lot_id: "LOT-1" });
+  const remaining = await invoke("get_material_availability", { item_id: "WIRE", revision: 1 });
+  expect(remaining.balance).toMatchObject({ on_hand: "0.5", reserved: "0", available: "0.5" });
 });
