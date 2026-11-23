@@ -157,8 +157,7 @@ pub(crate) fn spec(action: Action) -> Spec {
         _ => unreachable!("receipt action"),
     };
     if action == Action::ListInventoryMovements {
-        fields["movement_type"] =
-            json!({"type":"string","enum":["receipt","issue","return","transfer"]});
+        fields["movement_type"] = json!({"type":"string","enum":["receipt","issue","return","transfer","receipt_reversal"]});
         fields["after_movement_id"] = id_schema();
     }
     output["ok"] = json!({"const":true});
@@ -188,6 +187,11 @@ pub(crate) fn spec(action: Action) -> Spec {
         output_schema["oneOf"].as_array_mut().unwrap().push(object(
             &["ok","run_id","movements","next_after_movement_id"],
             json!({"ok":{"const":true},"run_id":text(),"movements":{"type":"array","items":crate::transfers::row_schema()},
+                "next_after_movement_id":{"type":["string","null"]}}),
+        ));
+        output_schema["oneOf"].as_array_mut().unwrap().push(object(
+            &["ok","run_id","movements","next_after_movement_id"],
+            json!({"ok":{"const":true},"run_id":text(),"movements":{"type":"array","items":crate::receipt_reversals::row_schema()},
                 "next_after_movement_id":{"type":["string","null"]}}),
         ));
         output_schema["anyOf"] = output_schema
@@ -314,14 +318,18 @@ fn query(
             .get("movement_type")
             .and_then(Value::as_str)
             .unwrap_or("receipt");
-        if matches!(movement_type, "issue" | "return" | "transfer") {
+        if matches!(
+            movement_type,
+            "issue" | "return" | "transfer" | "receipt_reversal"
+        ) {
             if args.contains_key("after_receipt_id") {
                 return Ok(Err(Rejection::invalid("after_receipt_id")));
             }
             return Ok(Ok(match movement_type {
                 "issue" => crate::reservations::issue_movements(tx, run, args)?,
                 "return" => crate::reservations::return_movements(tx, run, args)?,
-                _ => crate::transfers::list(tx, run, args)?,
+                "transfer" => crate::transfers::list(tx, run, args)?,
+                _ => crate::receipt_reversals::list(tx, run, args)?,
             }));
         }
         if args.contains_key("after_movement_id") {
@@ -337,7 +345,7 @@ fn query(
             let lot = tx
                 .query_row(
                     &format!(
-                        "SELECT {RECEIPT_COLUMNS} FROM stock_current_lots AS stock_receipts
+                        "SELECT {RECEIPT_COLUMNS} FROM stock_active_lots AS stock_receipts
                 WHERE run=?1 AND lot=?2 AND posted_cursor IS NOT NULL"
                     ),
                     params![run, args["lot_id"].as_str().unwrap()],
@@ -376,7 +384,7 @@ fn query(
                 .unwrap_or_default();
             let limit = args.get("limit").and_then(Value::as_i64).unwrap_or(20);
             let source = if action == Action::ListLots {
-                "stock_current_lots"
+                "stock_active_lots"
             } else {
                 "stock_receipts"
             };
@@ -568,7 +576,7 @@ pub(crate) fn pending_receipt(
     receipt: &str,
 ) -> rusqlite::Result<bool> {
     tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM stock_receipts s WHERE s.run=?1 AND s.receipt=?2
+        "SELECT EXISTS(SELECT 1 FROM stock_active_lots s WHERE s.run=?1 AND s.receipt=?2
          AND s.posted_cursor IS NOT NULL AND s.requires_inspection
          AND NOT EXISTS(SELECT 1 FROM stock_receipt_releases r WHERE r.run=s.run AND r.receipt=s.receipt))",
         params![run,receipt],|row|row.get(0),
@@ -589,7 +597,7 @@ fn balance(
          COALESCE(SUM(CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END),0),
          COALESCE(SUM((SELECT SUM(x.quantity) FROM stock_reservations x
              WHERE x.run=s.run AND x.lot=s.lot AND x.status IN ('reserved','picked'))),0)
-         FROM stock_current_lots s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
+         FROM stock_active_lots s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
          WHERE s.run=?1 AND s.item=?2 AND s.posted_cursor IS NOT NULL
          AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)",
         params![run,item,revision,location],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),

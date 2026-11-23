@@ -4270,6 +4270,11 @@ async fn p9c_10_stock_transfer_reversal() {
     operation_issue_scenarios(&[("cnc", 31, "WO-1", "machining", "MACH-01")]).await;
 }
 
+#[tokio::test]
+async fn p9c_12_receipt_reversal() {
+    operation_issue_scenarios(&[("cnc", 32, "WO-1", "machining", "MACH-01")]).await;
+}
+
 async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
@@ -4319,6 +4324,65 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             apply("assign_receipt_tracking","track",json!({"receipt_id":"RC-1","lot_id":"LOT-1","supplier_lot":"SUP","location":"RAW-02"})).await;
             apply("post_receipt","post",json!({"receipt_id":"RC-1"})).await;
             let reserve=json!({"reservation_id":"RS-1","work_order":order,"lot_id":"LOT-1","quantity":"1.5"});
+            if version == 32 {
+                let described=call(&client,"describe_tool",json!({"run_id":run,"name":"reverse_inventory_movement"})).await;
+                assert_eq!(described["tool"]["input"]["properties"]["movement_type"]["enum"],json!(["transfer","receipt"]));
+                let mut request=json!({"movement_type":"receipt","movement_id":"RC-1","reversal_id":"REV-1","reason":"receipt entry error"});
+                let history=invoke("list_inventory_movements",json!({"movement_type":"receipt"})).await;
+                let stock=||invoke("get_stock_balance",json!({"item_id":"WIRE","location":"RAW-02"}));
+                assert_eq!(stock().await["balance"]["on_hand"],"2");
+                apply("create_stock_transfer","draft",json!({"transfer_id":"TR-1","lot_id":"LOT-1",
+                    "source_location":"RAW-02","destination_location":"RAW-01","reason":"reposition"})).await;
+                apply("reserve_material","reserved",reserve.clone()).await;
+                let before=cursor().await;
+                assert_eq!(write("reverse_inventory_movement","in-use",request.clone()).await["code"],"RECEIPT_HAS_DEPENDENCIES");
+                assert_eq!(cursor().await,before);
+                apply("release_reservation","release",json!({"reservation_id":"RS-1"})).await;
+                request["expected_cursor"]=cursor().await;
+                request["idempotency_key"]=json!("reverse-receipt");
+                let result=invoke("reverse_inventory_movement",request.clone()).await;
+                assert_eq!(result["ok"],true,"{result}");
+                assert_eq!(result["receipt_reversal"]["quantity"],"2");
+                assert_eq!(result["receipt_reversal"]["location"],"RAW-02");
+                assert_eq!(invoke("reverse_inventory_movement",request.clone()).await,result);
+                assert_eq!(write("reverse_inventory_movement","duplicate",request.clone()).await["code"],"RECEIPT_ALREADY_REVERSED");
+                assert_eq!(stock().await["balance"]["on_hand"],"0");
+                assert_eq!(stock().await["balance"]["available"],"0");
+                assert_eq!(invoke("get_lot",json!({"lot_id":"LOT-1"})).await["code"],"LOT_NOT_FOUND");
+                assert_eq!(invoke("list_lots",json!({})).await["lots"],json!([]));
+                assert_eq!(invoke("list_inventory_movements",json!({"movement_type":"receipt"})).await,history);
+                assert_eq!(write("post_stock_transfer","post-after-reverse",json!({"transfer_id":"TR-1"})).await["code"],"LOT_NOT_FOUND");
+                let mut attempted=reserve;
+                attempted["reservation_id"]=json!("RS-2");
+                assert_eq!(write("reserve_material","reserve-after-reverse",attempted).await["code"],"LOT_NOT_FOUND");
+                apply("create_receipt","pending-receipt",json!({"receipt_id":"RC-2","item_id":"WIRE","revision":1,"quantity":"1","requires_inspection":true})).await;
+                request["movement_id"]=json!("RC-2");
+                assert_eq!(write("reverse_inventory_movement","unposted",request.clone()).await["code"],"RECEIPT_NOT_POSTED");
+                apply("assign_receipt_tracking","pending-track",json!({"receipt_id":"RC-2","lot_id":"LOT-2","supplier_lot":"SUP","location":"RAW-02"})).await;
+                apply("post_receipt","pending-post",json!({"receipt_id":"RC-2"})).await;
+                assert_eq!(stock().await["balance"]["pending_inspection"],"1");
+                assert_eq!(write("reverse_inventory_movement","id-taken",request.clone()).await["code"],"REVERSAL_ID_ALREADY_EXISTS");
+                request["reversal_id"]=json!("REV-2");
+                apply("reverse_inventory_movement","pending-reverse",request).await;
+                assert_eq!(stock().await["balance"]["pending_inspection"],"0");
+                let (peer,_child)=connect_mode(&db,"0",true).await;
+                let page=business(&peer,run,"list_inventory_movements",json!({"movement_type":"receipt_reversal","limit":1,"location":"RAW-02"})).await;
+                assert_eq!(page["movements"],json!([result["receipt_reversal"]]));
+                assert_eq!(page["next_after_movement_id"],"REV-1");
+                let next=invoke("list_inventory_movements",json!({"movement_type":"receipt_reversal","after_movement_id":"REV-1"})).await;
+                assert_eq!(next["movements"][0]["reversal_id"],"REV-2");
+                assert!(next["next_after_movement_id"].is_null());
+                apply("create_receipt","inspected-receipt",json!({"receipt_id":"RC-3","item_id":"WIRE","revision":1,"quantity":"1","requires_inspection":true})).await;
+                apply("assign_receipt_tracking","inspected-track",json!({"receipt_id":"RC-3","lot_id":"LOT-3","supplier_lot":"SUP","location":"RAW-02"})).await;
+                apply("post_receipt","inspected-post",json!({"receipt_id":"RC-3"})).await;
+                apply("create_inspection","receipt-inspection",json!({"work_order":order,"inspection_id":"IN-1","specification_version":"QA@1","receipt_id":"RC-3"})).await;
+                let before=cursor().await;
+                assert_eq!(write("reverse_inventory_movement","inspection-blocked",json!({"movement_type":"receipt","movement_id":"RC-3","reversal_id":"REV-3","reason":"correct entry"})).await["code"],"RECEIPT_HAS_DEPENDENCIES");
+                assert_eq!(cursor().await,before);
+                assert_eq!(stock().await["balance"]["pending_inspection"],"1");
+
+                continue;
+            }
             if version >= 30 {
                 let search=call(&client,"search_tools",json!({"run_id":run})).await;
                 for name in ["create_stock_transfer","post_stock_transfer"] {

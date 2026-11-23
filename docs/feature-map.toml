@@ -737,3 +737,19 @@ spec = "acceptance/P9C.md"
 features = ["F08", "F09", "F10"]
 layers = ["playwright"]
 tests = { playwright = "P9C-11 Reverse a posted stock transfer" }
+
+[[case]]
+id = "P9C-12"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9c_12_receipt_reversal" }
+
+[[case]]
+id = "P9C-13"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P9C-13 Reverse a posted receipt" }

@@ -8,6 +8,7 @@ mod mes;
 mod operations;
 mod probe;
 mod quality;
+mod receipt_reversals;
 mod reservations;
 mod routes;
 mod scenario;
