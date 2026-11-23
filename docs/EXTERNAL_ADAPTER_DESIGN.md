@@ -2,6 +2,8 @@
 
 状态为待评审。首个切片验证 AgentNexus 对三种异构生产来源执行同一工单读取意图。需求见 [双主轴需求](FEATURES.md#双主轴需求与验收目标)，执行状态见 [外部适配器实施计划](IMPLEMENTATION_PLAN.md#外部适配器实施计划)。
 
+本文定义短期只读切片。中期沿同一 Adapter 边界逐步扩大三源业务覆盖。连接器按来源版本登记，通用层维护业务意图、能力、规范对象及结构化错误。每项能力记录源入口、映射版本、查询/执行/核验支持、限制与真实调用证据。ERP/CRM 扩展从有可核验依据的订单关系开始。独立 MCP 客户端的首期工具入口在联审确认。中期末段开始 Mock 联调，后期验证新增 MES 和 Mock 两项接入。 [两线阶段与准出](IMPLEMENTATION_PLAN.md#双主轴路线与准出)
+
 ## 职责与调用边界
 
 AgentNexus 的 MOM／World Adapter 负责服务端绑定、租户与站点范围、调用身份、能力发现及用户侧错误。MOM-MCP 外部适配层负责调用站点配置选定的数据源，并把响应转换为版本化的生产观测。外部系统保有业务数据权威性。首期对接 World Adapter 的 Observe 路径，具体传输与认证方式在设计联审时冻结。已有模拟 run 和公开 MCP 工具按现有契约运行。 [World Adapter 设计](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/43014db/docs/mom/WORLD_ADAPTER.md) · [上游 M3 计划](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/43014db/docs/mom/WORLD_ADAPTER_PLAN.md)

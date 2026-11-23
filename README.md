@@ -2,6 +2,8 @@
 
 面向 AgentNexus 的离散制造模拟 MCP 项目。当前覆盖 CNC、SMT、按单装配、钣金和线束。启动与接入见 [五行业基线](docs/RELEASE.md)，业务能力覆盖与取舍见 [MES 能力边界](docs/MES_SCOPE.md)。
 
+项目按两条主线推进：异构 MES/MOM 通用 Adapter 与语义本体，以及由 DES 驱动的 Mock MOM-MCP。阶段目标、联合设计审查和联调时点见 [双主轴路线与准出](docs/IMPLEMENTATION_PLAN.md#双主轴路线与准出)。
+
 ## 启动验收台
 
 使用仓库固定的 Rust 工具链，在仓库根目录运行：
