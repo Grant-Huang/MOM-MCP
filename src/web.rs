@@ -127,6 +127,7 @@ async fn document(Path(path): Path<String>) -> impl IntoResponse {
         "acceptance/P8D.md" => include_str!("../docs/acceptance/P8D.md"),
         "acceptance/P9A.md" => include_str!("../docs/acceptance/P9A.md"),
         "acceptance/P9B.md" => include_str!("../docs/acceptance/P9B.md"),
+        "acceptance/P9C.md" => include_str!("../docs/acceptance/P9C.md"),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     ([("content-type", "text/plain; charset=utf-8")], text).into_response()

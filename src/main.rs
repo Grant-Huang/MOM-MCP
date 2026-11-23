@@ -8,6 +8,7 @@ mod mes;
 mod operations;
 mod probe;
 mod quality;
+mod reservations;
 mod routes;
 mod scenario;
 mod simulation;
