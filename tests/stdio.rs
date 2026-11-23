@@ -4243,14 +4243,24 @@ async fn p9c_01_reservation_contention_and_picking() {
 
 #[tokio::test]
 async fn p9c_02_issue_to_operation() {
+    operation_issue_scenarios(&[
+        ("cnc", 27, "WO-1", "machining", "MACH-01"),
+        ("assembly", 26, "WO-E", "build", "CELL-A"),
+    ])
+    .await;
+}
+
+#[tokio::test]
+async fn p9c_04_record_issued_report_inputs() {
+    operation_issue_scenarios(&[("cnc", 28, "WO-1", "machining", "MACH-01")]).await;
+}
+
+async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
     let (client, _child) = connect_mode(&db, "0", true).await;
     timeout(Duration::from_secs(30), async {
-        for (scenario,version,orders,operation,center) in [
-            ("cnc",27,["WO-1"],"machining","MACH-01"),
-            ("assembly",26,["WO-E"],"build","CELL-A"),
-        ] {
+        for &(scenario,version,order,operation,center) in scenarios {
             let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
             assert_eq!(opened["ok"],true,"{opened}");
             let run=&opened["run_id"];
@@ -4284,15 +4294,12 @@ async fn p9c_02_issue_to_operation() {
             ].into_iter().enumerate().map(|(i,(name,args))| (format!("setup-{i}"),(name,args))) {
                 apply(args.0,&name,args.1).await;
             }
-            for order in orders {
-                let mut args=json!({"work_order":order,"definition_selection":{"item_id":"FRAME","inspection_plan_id":"QA"}});
-                let readiness=invoke("get_release_readiness",args.clone()).await;
-                assert_eq!(readiness["ready"],true,"{readiness}");
-                args["snapshot_fingerprint"]=readiness["definition_snapshot"]["fingerprint"].clone();
-                apply("release_work_order",order,args).await;
-            }
+            let mut args=json!({"work_order":order,"definition_selection":{"item_id":"FRAME","inspection_plan_id":"QA"}});
+            let readiness=invoke("get_release_readiness",args.clone()).await;
+            assert_eq!(readiness["ready"],true,"{readiness}");
+            args["snapshot_fingerprint"]=readiness["definition_snapshot"]["fingerprint"].clone();
+            apply("release_work_order",order,args).await;
 
-            let order=orders[0];
             apply("create_receipt","receipt",json!({"receipt_id":"RC-1","item_id":"WIRE","revision":1,"quantity":"2","requires_inspection":false})).await;
             apply("assign_receipt_tracking","track",json!({"receipt_id":"RC-1","lot_id":"LOT-1","supplier_lot":"SUP","location":"RAW-02"})).await;
             apply("post_receipt","post",json!({"receipt_id":"RC-1"})).await;
@@ -4318,6 +4325,42 @@ async fn p9c_02_issue_to_operation() {
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
+            if version == 28 {
+                let descriptor = call(&client, "describe_tool", json!({"run_id":run,"name":"post_operation_report"})).await;
+                assert_eq!(descriptor["tool"]["input"]["properties"]["material_inputs"]["type"], "object", "{descriptor}");
+                assert_eq!(write("cancel_work_order","cancel",json!({"work_order":order,"reason":"cancel"})).await["code"],"ORDER_HAS_EXECUTION");
+                apply("start_operation","start",json!({"work_order":order,"operation":operation})).await;
+                let mut report = json!({"work_order":order,"operation":operation,"quantity":1});
+                let before = cursor().await;
+                assert_eq!(write("post_operation_report","missing",report.clone()).await["code"],"MATERIAL_INPUTS_REQUIRED");
+                report["material_inputs"] = json!({"other-run":"0.5"});
+                assert_eq!(write("post_operation_report","unissued",report.clone()).await["code"],"MATERIAL_ISSUE_NOT_FOUND");
+                assert_eq!(cursor().await,before);
+                report["material_inputs"] = json!({"RS-1":"1.125"});
+                report["idempotency_key"] = json!("partial");
+                report["expected_cursor"] = before;
+                let first_report = invoke("post_operation_report",report.clone()).await;
+                assert_eq!(first_report["ok"],true,"{first_report}");
+                assert_eq!(first_report["report"]["material_inputs"],json!([{
+                    "reservation_id":"RS-1","lot_id":"LOT-1","quantity":"1.125","unit":"m"
+                }]));
+                assert_eq!(first_report["remaining"],9);
+                assert_eq!(invoke("post_operation_report",report.clone()).await,first_report);
+                report["material_inputs"] = json!({"RS-1":"0.376"});
+                let after = cursor().await;
+                assert_eq!(write("post_operation_report","excess",report.clone()).await["code"],"MATERIAL_ISSUE_QUANTITY_EXCEEDED");
+                assert_eq!(cursor().await,after);
+                report["material_inputs"] = json!({"RS-1":"0.375"});
+                let second = apply("post_operation_report","second",report.clone()).await;
+                assert_eq!(second["reported_quantity"],2);
+                apply("reverse_operation_report","reverse",json!({"work_order":order,"report_id":second["report"]["id"],"reason":"correct input"})).await;
+                apply("post_operation_report","corrected",report).await;
+                assert_eq!(balance().await["balance"]["on_hand"],"0.5");
+                let reports=invoke("list_operation_reports",json!({"work_order":order,"operation":operation})).await;
+                assert_eq!(reports["reports"].as_array().unwrap().len(),3);
+                assert_eq!(reports["reports"][1]["reversed"],true);
+                assert_eq!(reports["reports"][1]["material_inputs"],second["report"]["material_inputs"]);
+            }
             let counts=invoke("get_material_requirements",json!({"work_order":order})).await;
             assert_eq!(counts["requirements"][0]["issued"],"1.5");
             assert_eq!(counts["requirements"][0]["shortage"],if scenario=="cnc" {"18"} else {"0"});

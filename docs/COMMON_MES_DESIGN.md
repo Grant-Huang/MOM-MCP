@@ -32,7 +32,7 @@ P8D 提供外部检验规格引用与质量门禁。规格版本与收货检验�
 |---|---|---|---|
 | P9A | 物料与版本 | `list_items`、`get_item`、`create_item`、`create_item_revision`、`get_item_revision`、`create_bom_revision`、`get_bom_revision`、`set_bom_components`、`create_route_revision`、`get_route_revision`、`set_route_operations`、`validate_revision`、`activate_revision`、`get_order_snapshot`、`assess_engineering_change`、`create_inspection_plan_revision`、`activate_inspection_plan_revision` | 单位和引用校验，BOM/BOP 回路拒绝，生效点不冲突。同张已下达工单仍可复查原快照。 |
 | P9B | 库位、收货及可用性 | `list_stock_locations`、`get_stock_balance`、`list_lots`、`get_lot`、`create_receipt`、`assign_receipt_tracking`、`post_receipt`、`get_material_availability`、`get_material_requirements`、`list_inventory_movements` | 物料、版本、库位、批次和单位可查。待检、冻结、预留和可用数量可对账。 |
-| P9C | 预留、领退及转储 | `reserve_material`、`list_reservations`、`release_reservation`、`pick_material`、`unpick_material`、`issue_material_to_operation`、`return_unused_material`、`create_stock_transfer`、`post_stock_transfer`、`reverse_inventory_movement` | 两张工单争料不会超额。领料绑定实际批次和工序。退料及冲销能恢复原库位，且保留原事务。 |
+| P9C | 预留、领退及转储 | `reserve_material`、`list_reservations`、`release_reservation`、`pick_material`、`unpick_material`、`issue_material_to_operation`、`return_unused_material`、`create_stock_transfer`、`post_stock_transfer`、`reverse_inventory_movement` | 两张工单争料不会超额。领料绑定实际批次和工序；部分报工按发料记录分摊实际投入。退料及冲销能恢复原库位，且保留原事务。 |
 | P9D | WIP、质量联动、谱系 | `get_wip`、`move_wip`、`split_wip_lot`、`merge_wip_lots`、`record_operation_output`、`trace_lot_forward`、`trace_serial_backward`、`list_genealogy_edges`、`receive_work_order_output`、`reconcile_work_order` | 跨批部分报工后，投入、产出、废品和剩余量可对账。工序谱系保留有效记录与纠正链。 |
 
 初始目录共 **83 项候选业务契约**，P8B–P8D 36 项，P9A–P9D 47 项。候选包含现有能力的统一迁移与新增能力。上线数量以可发现且通过契约验收的目录为准。8 个 AgentNexus 直挂入口继续复用。

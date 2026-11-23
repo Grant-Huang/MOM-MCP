@@ -537,6 +537,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-reservations.json"),
             include_str!("../fixtures/assembly-reservations.json"),
             include_str!("../fixtures/cnc-operation-issues.json"),
+            include_str!("../fixtures/cnc-report-inputs.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
@@ -877,6 +878,17 @@ impl Scenarios {
         {
             spec.input["properties"]["receipt_id"] = catalog::text();
         }
+        if action == Action::PostOperationReport
+            && !definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| setup.issued_report_inputs)
+        {
+            spec.input["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove("material_inputs");
+        }
         if name == "describe_tool" {
             return Ok(Ok(json!({"ok":true,"tool":spec})));
         }
@@ -996,6 +1008,13 @@ impl Scenarios {
                     })
                 } else if center.is_none() || actual.is_none() {
                     Err("ISSUE_OPERATION_NOT_FOUND")
+                } else if definition
+                    .manufacturing
+                    .as_ref()
+                    .is_some_and(|setup| setup.issued_report_inputs)
+                    && operation != crate::mes::MATERIAL_INPUT_OPERATION
+                {
+                    Err("ISSUE_OPERATION_NOT_ELIGIBLE")
                 } else if let Some(actual) = actual
                     && matches!(actual.status, "dispatched" | "running")
                     && actual.blocking.is_none()
