@@ -157,7 +157,7 @@ pub(crate) fn spec(action: Action) -> Spec {
         _ => unreachable!("receipt action"),
     };
     if action == Action::ListInventoryMovements {
-        fields["movement_type"] = json!({"type":"string","enum":["receipt","issue","return","transfer","receipt_reversal"]});
+        fields["movement_type"] = json!({"type":"string","enum":["receipt","issue","return","transfer","receipt_reversal","operation_reversal"]});
         fields["after_movement_id"] = id_schema();
     }
     output["ok"] = json!({"const":true});
@@ -192,6 +192,11 @@ pub(crate) fn spec(action: Action) -> Spec {
         output_schema["oneOf"].as_array_mut().unwrap().push(object(
             &["ok","run_id","movements","next_after_movement_id"],
             json!({"ok":{"const":true},"run_id":text(),"movements":{"type":"array","items":crate::receipt_reversals::row_schema()},
+                "next_after_movement_id":{"type":["string","null"]}}),
+        ));
+        output_schema["oneOf"].as_array_mut().unwrap().push(object(
+            &["ok","run_id","movements","next_after_movement_id"],
+            json!({"ok":{"const":true},"run_id":text(),"movements":{"type":"array","items":crate::operation_reversals::row_schema()},
                 "next_after_movement_id":{"type":["string","null"]}}),
         ));
         output_schema["anyOf"] = output_schema
@@ -320,7 +325,7 @@ fn query(
             .unwrap_or("receipt");
         if matches!(
             movement_type,
-            "issue" | "return" | "transfer" | "receipt_reversal"
+            "issue" | "return" | "transfer" | "receipt_reversal" | "operation_reversal"
         ) {
             if args.contains_key("after_receipt_id") {
                 return Ok(Err(Rejection::invalid("after_receipt_id")));
@@ -329,7 +334,8 @@ fn query(
                 "issue" => crate::reservations::issue_movements(tx, run, args)?,
                 "return" => crate::reservations::return_movements(tx, run, args)?,
                 "transfer" => crate::transfers::list(tx, run, args)?,
-                _ => crate::receipt_reversals::list(tx, run, args)?,
+                "receipt_reversal" => crate::receipt_reversals::list(tx, run, args)?,
+                _ => crate::operation_reversals::list(tx, run, args)?,
             }));
         }
         if args.contains_key("after_movement_id") {
@@ -592,7 +598,7 @@ fn balance(
 ) -> rusqlite::Result<(i64, i64, i64)> {
     tx.query_row(
         "SELECT COALESCE(SUM(s.quantity - COALESCE((SELECT SUM(x.quantity-COALESCE(t.quantity,0)) FROM stock_reservations x
-             LEFT JOIN stock_return_totals t ON t.run=x.run AND t.reservation=x.reservation
+             LEFT JOIN stock_effective_return_totals t ON t.run=x.run AND t.reservation=x.reservation
              WHERE x.run=s.run AND x.lot=s.lot AND x.status='issued'),0)),0),
          COALESCE(SUM(CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END),0),
          COALESCE(SUM((SELECT SUM(x.quantity) FROM stock_reservations x

@@ -199,6 +199,20 @@ pub(crate) fn invoke(
     if args["expected_cursor"].as_i64() != Some(cursor) {
         return Ok(Err(reject("VERSION_CONFLICT", "expected_cursor")));
     }
+    if action == Action::ReverseInventoryMovement
+        && matches!(args["movement_type"].as_str(), Some("issue" | "return"))
+    {
+        return match crate::operation_reversals::reverse(&tx, run, id, args, cursor)? {
+            Ok(row) => crate::reservations::finish_write(
+                tx,
+                run,
+                key,
+                &request,
+                json!({"ok":true,"run_id":run,"cursor":cursor+1,"operation_reversal":row}),
+            ),
+            Err(error) => Ok(Err(error)),
+        };
+    }
     if action == Action::ReverseInventoryMovement && args["movement_type"] == "receipt" {
         return match crate::receipt_reversals::reverse(&tx, run, id, args, cursor)? {
             Ok(row) => crate::reservations::finish_write(
@@ -370,7 +384,7 @@ fn transferable_quantity(
     let lot_stock = tx.query_row(
         "SELECT s.location,s.quantity,s.requires_inspection AND q.receipt IS NULL,
             EXISTS(SELECT 1 FROM scenario_holds h WHERE h.run=s.run AND h.batch=s.lot),
-            EXISTS(SELECT 1 FROM stock_reservations r LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
+            EXISTS(SELECT 1 FROM stock_reservations r LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
                 WHERE r.run=s.run AND r.lot=s.lot AND (r.status IN ('reserved','picked')
                     OR (r.status='issued' AND r.quantity>COALESCE(t.quantity,0))))
         FROM stock_active_lots s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt

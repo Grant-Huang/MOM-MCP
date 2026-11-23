@@ -4275,6 +4275,11 @@ async fn p9c_12_receipt_reversal() {
     operation_issue_scenarios(&[("cnc", 32, "WO-1", "machining", "MACH-01")]).await;
 }
 
+#[tokio::test]
+async fn p9c_14_operation_material_reversals() {
+    operation_issue_scenarios(&[("cnc", 33, "WO-1", "machining", "MACH-01")]).await;
+}
+
 async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
@@ -4383,7 +4388,7 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
 
                 continue;
             }
-            if version >= 30 {
+            if (30..=31).contains(&version) {
                 let search=call(&client,"search_tools",json!({"run_id":run})).await;
                 for name in ["create_stock_transfer","post_stock_transfer"] {
                     assert!(search["tools"].as_array().unwrap().iter().any(|tool|tool["name"]==name));
@@ -4513,6 +4518,53 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
+            if version == 33 {
+                let issue_reversal=json!({"movement_type":"issue","movement_id":"RS-1","reversal_id":"REV-ISSUE","reason":"incorrect issue"});
+                apply("start_operation","start",json!({"work_order":order,"operation":operation})).await;
+                let report=json!({"work_order":order,"operation":operation,"quantity":1,"material_inputs":{"RS-1":"0.25"}});
+                let reported=apply("post_operation_report","report",report.clone()).await;
+                assert_eq!(write("reverse_inventory_movement","report-dependent",issue_reversal.clone()).await["code"],"MOVEMENT_HAS_DEPENDENCIES");
+                apply("reverse_operation_report","undo-report",json!({"work_order":order,"report_id":reported["report"]["id"],"reason":"correct issue"})).await;
+                let returned=apply("return_unused_material","return-stock",json!({"movement_id":"RET-1","reservation_id":"RS-1","quantity":"0.5","reason":"unused"})).await;
+                assert_eq!(balance().await["balance"]["on_hand"],"1");
+                assert_eq!(write("reverse_inventory_movement","return-dependent",issue_reversal.clone()).await["code"],"MOVEMENT_HAS_DEPENDENCIES");
+                apply("reserve_material","reserve-returned",json!({"reservation_id":"RS-2","work_order":order,"lot_id":"LOT-1","quantity":"0.75"})).await;
+                let mut return_reversal=json!({"movement_type":"return","movement_id":"RET-1","reversal_id":"REV-RETURN","reason":"incorrect return"});
+                let before=cursor().await;
+                assert_eq!(write("reverse_inventory_movement","stock-committed",return_reversal.clone()).await["code"],"LOT_AVAILABLE_QUANTITY_EXCEEDED");
+                assert_eq!(cursor().await,before);
+                apply("release_reservation","release-returned",json!({"reservation_id":"RS-2"})).await;
+                apply("create_receipt","replacement-receipt",json!({"receipt_id":"RC-2","item_id":"WIRE","revision":1,"quantity":"19","requires_inspection":false})).await;
+                apply("assign_receipt_tracking","replacement-track",json!({"receipt_id":"RC-2","lot_id":"LOT-2","supplier_lot":"SUP","location":"RAW-01"})).await;
+                apply("post_receipt","replacement-post",json!({"receipt_id":"RC-2"})).await;
+                apply("reserve_material","replacement-reservation",json!({"reservation_id":"RS-3","work_order":order,"lot_id":"LOT-2","quantity":"19"})).await;
+                assert_eq!(write("reverse_inventory_movement","over-order",return_reversal.clone()).await["code"],"ORDER_REQUIREMENT_EXCEEDED");
+                apply("release_reservation","release-replacement",json!({"reservation_id":"RS-3"})).await;
+
+                return_reversal["expected_cursor"]=cursor().await;
+                return_reversal["idempotency_key"]=json!("reverse-return");
+                let undo_return=invoke("reverse_inventory_movement",return_reversal.clone()).await;
+                assert_eq!(undo_return["operation_reversal"]["quantity"],"0.5","{undo_return}");
+                assert_eq!(invoke("reverse_inventory_movement",return_reversal.clone()).await,undo_return);
+                assert_eq!(write("reverse_inventory_movement","duplicate-return",return_reversal).await["code"],"MOVEMENT_ALREADY_REVERSED");
+                assert_eq!(balance().await["balance"]["on_hand"],"0.5");
+                assert_eq!(invoke("get_material_requirements",json!({"work_order":order})).await["requirements"][0]["issued"],"1.5");
+                let undo_issue=apply("reverse_inventory_movement","reverse-issue",issue_reversal.clone()).await;
+                assert_eq!(undo_issue["operation_reversal"]["quantity"],"1.5");
+                assert_eq!(write("reverse_inventory_movement","duplicate-issue",issue_reversal).await["code"],"MOVEMENT_ALREADY_REVERSED");
+                assert_eq!(balance().await["balance"]["on_hand"],"2");
+                assert!(invoke("get_material_requirements",json!({"work_order":order})).await["requirements"][0]["issued"].is_null());
+                assert_eq!(write("post_operation_report","after-correction",report).await["code"],"MATERIAL_ISSUE_NOT_FOUND");
+                assert_eq!(invoke("list_inventory_movements",json!({"movement_type":"issue"})).await["movements"],json!([first["reservation"]]));
+                assert_eq!(invoke("list_inventory_movements",json!({"movement_type":"return"})).await["movements"],json!([returned["movement"]]));
+                let (peer,_child)=connect_mode(&db,"0",true).await;
+                let list=business(&peer,run,"list_inventory_movements",json!({"movement_type":"operation_reversal","location":"RAW-02","limit":1})).await;
+                assert_eq!(list["movements"],json!([undo_issue["operation_reversal"]]));
+                assert_eq!(list["next_after_movement_id"],"REV-ISSUE");
+                let next=invoke("list_inventory_movements",json!({"movement_type":"operation_reversal","after_movement_id":"REV-ISSUE"})).await;
+                assert_eq!(next["movements"],json!([undo_return["operation_reversal"]]));
+                continue;
+            }
             if version >= 28 {
                 let descriptor = call(&client, "describe_tool", json!({"run_id":run,"name":"post_operation_report"})).await;
                 assert_eq!(descriptor["tool"]["input"]["properties"]["material_inputs"]["type"], "object", "{descriptor}");

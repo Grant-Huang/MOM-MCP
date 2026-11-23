@@ -151,13 +151,14 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
   { title: "P9C-09 Post a stock transfer", scenario: "cnc@30", work_order: "WO-1", operation: "machining", work_center: "MACH-01", transfer: true },
   { title: "P9C-11 Reverse a posted stock transfer", scenario: "cnc@31", work_order: "WO-1", operation: "machining", work_center: "MACH-01", transfer: true, reverse: true },
   { title: "P9C-13 Reverse a posted receipt", scenario: "cnc@32", work_order: "WO-1", operation: "machining", work_center: "MACH-01", receiptReversal: true },
+  { title: "P9C-15 Reverse issue and return movements", scenario: "cnc@33", work_order: "WO-1", operation: "machining", work_center: "MACH-01", operationReversal: true },
 ]) {
   test(title, async ({ page }) => {
     await page.goto("/scenarios");
@@ -274,6 +275,27 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     const ledger = await invoke("list_inventory_movements", { movement_type: "issue" });
     expect(ledger.movements).toHaveLength(1);
     expect(ledger.movements[0]).toMatchObject({ lot_id: "LOT-1", operation, work_order, quantity: "1.5" });
+    if (operationReversal) {
+      cursor = JSON.parse(await status.textContent()).cursor;
+      await write("return_unused_material", { ...reservation, movement_id: "RET-1", quantity: "0.5", reason: "unused" });
+      await button("搜索工具").click();
+      await page.getByLabel("匹配工具").selectOption("reverse_inventory_movement");
+      await page.getByLabel("JSON 参数").fill(JSON.stringify({
+        movement_type: "return", movement_id: "RET-1", reversal_id: "REV-RETURN", reason: "incorrect return",
+        expected_cursor: cursor, idempotency_key: "reverse-return",
+      }));
+      await button("调用工具").click();
+      await expect(status).toContainText('"reversal_id": "REV-RETURN"');
+      cursor = JSON.parse(await status.textContent()).cursor;
+      await write("reverse_inventory_movement", {
+        movement_type: "issue", movement_id: "RS-1", reversal_id: "REV-ISSUE", reason: "incorrect issue",
+      });
+      const corrections = await invoke("list_inventory_movements", { movement_type: "operation_reversal" });
+      expect(corrections.movements.map(({ movement_type, quantity }) => [movement_type, quantity])).toEqual([["issue", "1.5"], ["return", "0.5"]]);
+      const finalStock = await invoke("get_stock_balance", { item_id: "WIRE", location: "RAW-02" });
+      expect(finalStock.balance).toMatchObject({ on_hand: "2", available: "2" });
+      return;
+    }
     if (report) {
       cursor = JSON.parse(await status.textContent()).cursor;
       await write("start_operation", { work_order, operation });

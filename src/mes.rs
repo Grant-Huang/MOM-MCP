@@ -992,9 +992,9 @@ fn has_operation_issue(
     tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM stock_operation_issues i
          JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
-         LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
+         LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
          WHERE i.run=?1 AND r.work_order=?2 AND i.operation=?3
-         AND (NOT ?4 OR r.quantity > COALESCE(t.quantity,0)))",
+         AND r.status='issued' AND (NOT ?4 OR r.quantity > COALESCE(t.quantity,0)))",
         params![run, order, MATERIAL_INPUT_OPERATION, require_remaining],
         |row| row.get(0),
     )
@@ -1060,7 +1060,7 @@ fn report_material_inputs(
              FROM stock_operation_issues i
              JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
              JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
-             LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
+             LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
              WHERE i.run=?1 AND r.work_order=?2 AND i.operation=?3 AND i.reservation=?4
                AND r.status='issued'",
                 params![run, order, MATERIAL_INPUT_OPERATION, reservation],
