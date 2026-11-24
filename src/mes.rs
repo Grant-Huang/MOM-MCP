@@ -455,6 +455,8 @@ pub fn spec(action: Action) -> Spec {
                 "quantity":{"type":"integer","minimum":1},"batch":{"type":["string","null"]},
                 "reversed":{"type":"boolean"},"serial_numbers":{"type":"array","items":text()},
             "components":{"type":"object","additionalProperties":{"type":"integer","minimum":1}},
+                "wip_move":crate::wip::movement_schema(),
+                "wip_inputs":crate::wip::inputs_schema(),
                 "material_inputs":{"type":"array","items":object(
                     &["reservation_id","lot_id","quantity","unit"],
                     json!({"reservation_id":text(),"lot_id":text(),"quantity":crate::inventory::quantity_schema(),"unit":text()})
@@ -521,6 +523,10 @@ pub fn spec(action: Action) -> Spec {
                 "MATERIAL_SHORTAGE",
                 "MATERIAL_HELD",
                 "REPORT_EXCEEDS_REMAINING",
+                "WIP_INPUTS_REQUIRED",
+                "WIP_NOT_AT_OPERATION",
+                "WIP_ALREADY_CONSUMED",
+                "WIP_QUANTITY_MISMATCH",
                 "MATERIAL_INPUTS_REQUIRED",
                 "MATERIAL_INPUTS_INCOMPLETE",
                 "MATERIAL_ISSUE_NOT_FOUND",
@@ -582,6 +588,8 @@ pub struct Setup {
     pub strict_dispatch: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub issued_report_inputs: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wip_movements: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub alternate_centers: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -642,6 +650,10 @@ pub(crate) struct Report {
     pub(crate) components: BTreeMap<String, usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) material_inputs: Vec<MaterialInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) wip_move: Option<crate::wip::Movement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) wip_inputs: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1221,8 +1233,13 @@ pub fn invoke(
                         actions.push("issue_material");
                     }
                     let can_start = if setup.issued_report_inputs {
-                        order.step != 0
-                            || has_operation_issue(tx, run, id, MATERIAL_INPUT_OPERATION, true)?
+                        match order.step {
+                            0 => has_operation_issue(tx, run, id, MATERIAL_INPUT_OPERATION, true)?,
+                            1 if setup.wip_movements => {
+                                crate::wip::has_available(tx, run, &state.reports, id)?
+                            }
+                            _ => true,
+                        }
                     } else {
                         order.batch.is_some()
                     };
@@ -1298,7 +1315,28 @@ pub fn invoke(
             false,
         ));
     }
-    let mut response = if action == Action::ReviseRoute {
+    let mut response = if action == Action::MoveWip {
+        let order_id = args["work_order"].as_str().unwrap();
+        let Some(order) = state.orders.get(order_id) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        if !matches!(
+            order.phase,
+            Phase::Ready | Phase::Dispatched | Phase::Running | Phase::Paused
+        ) || order.step != 1
+        {
+            return Ok((error("WIP_DESTINATION_NOT_ELIGIBLE"), false));
+        }
+        crate::wip::move_lot(
+            tx,
+            run,
+            order_id,
+            order.hold_reason.is_some(),
+            &mut state.reports,
+            args,
+            cursor + 1,
+        )?
+    } else if action == Action::ReviseRoute {
         let version = args["route_version"].as_str().unwrap();
         if state.work_centers.is_some()
             && (version == state.route_version
@@ -1377,6 +1415,36 @@ pub fn invoke(
                 response["report"] = json!(report);
             }
         } else if args.contains_key("material_inputs") {
+            return Ok((error("INVALID_ARGUMENT"), false));
+        }
+    }
+    if setup.wip_movements && matches!(action, Action::StartOperation | Action::PostOperationReport)
+    {
+        let order = args["work_order"].as_str().unwrap();
+        if args["operation"] == crate::wip::DESTINATION {
+            if action == Action::StartOperation {
+                if !crate::wip::has_available(tx, run, &state.reports, order)? {
+                    return Ok((error("WIP_NOT_AT_OPERATION"), false));
+                }
+            } else {
+                let quantity = args["quantity"].as_u64().unwrap() as usize;
+                let (inputs, serials) = match crate::wip::select_inputs(
+                    tx,
+                    run,
+                    &state.reports,
+                    order,
+                    args,
+                    quantity,
+                )? {
+                    Ok(inputs) => inputs,
+                    Err(code) => return Ok((error(code), false)),
+                };
+                let report = state.reports.last_mut().expect("successful report");
+                report.wip_inputs = inputs;
+                report.serial_numbers = serials;
+                response["report"] = json!(report);
+            }
+        } else if args.contains_key("wip_inputs") {
             return Ok((error("INVALID_ARGUMENT"), false));
         }
     }
@@ -1695,6 +1763,8 @@ fn apply(
                 serial_numbers,
                 components: BTreeMap::new(),
                 material_inputs: Vec::new(),
+                wip_move: None,
+                wip_inputs: Vec::new(),
             };
             if order.step == 0 {
                 order.units.extend(report.serial_numbers.iter().cloned());
@@ -1774,7 +1844,11 @@ fn apply(
             let later_report = state.reports[index + 1..]
                 .iter()
                 .any(|later| later.order == id && later.step == report.step && !later.reversed);
-            if report.reversed || !(same_step || previous_step) || later_report {
+            if report.reversed
+                || report.wip_move.is_some()
+                || !(same_step || previous_step)
+                || later_report
+            {
                 return error("REPORT_HAS_DEPENDENCIES");
             }
             if reverse_busy {

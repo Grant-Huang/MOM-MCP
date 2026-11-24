@@ -21,6 +21,7 @@ pub enum Action {
     GetMaterialAvailability,
     GetMaterialRequirements,
     GetWip,
+    MoveWip,
     ListStockLocations,
     GetStockBalance,
     ListLots,
@@ -194,6 +195,7 @@ impl Action {
             Self::GetMaterialAvailability,
             Self::GetMaterialRequirements,
             Self::GetWip,
+            Self::MoveWip,
             Self::ListStockLocations,
             Self::GetStockBalance,
             Self::ListLots,
@@ -269,6 +271,7 @@ impl Action {
             Self::UnpickMaterial => "unpick_material",
             Self::ReleaseReceiptInspection => "release_receipt_inspection",
             Self::GetMaterialAvailability => "get_material_availability",
+            Self::MoveWip => "move_wip",
             Self::GetWip => "get_wip",
             Self::GetMaterialRequirements => "get_material_requirements",
             Self::ListStockLocations => "list_stock_locations",
@@ -437,6 +440,9 @@ impl Action {
         )
     }
     pub fn spec(self) -> Spec {
+        if self == Self::MoveWip {
+            return crate::wip::move_spec();
+        }
         if self == Self::GetWip {
             return crate::wip::spec();
         }

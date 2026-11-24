@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -162,6 +162,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9C-17 Reconcile issued material in assembly", scenario: "assembly@27", work_order: "WO-E", operation: "build", work_center: "CELL-A", assemblyLedger: true },
   { title: "P9C-19 Transfer and reverse a partial lot", scenario: "cnc@34", work_order: "WO-1", operation: "machining", work_center: "MACH-01", partial: true },
   { title: "P9D-UI Find actual output in work in process", scenario: "cnc@35", work_order: "WO-1", operation: "machining", work_center: "MACH-01", wip: true },
+  { title: "P9D-03 Move and consume a WIP lot", scenario: "cnc@36", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true },
 ]) {
   test(title, async ({ page }) => {
     await page.goto("/scenarios");
@@ -198,7 +199,9 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     await write("set_bom_components", { ...frame, components: { WIRE: { revision: 1, quantity: 2, unit: "m" } } });
     await write("activate_revision", { ...frame, revision_type: "bom" });
     await write("create_route_revision", frame);
-    await write("set_route_operations", { ...frame, operations: { [operation]: { work_center, predecessors: [] } } });
+    const route = { [operation]: { work_center, predecessors: [] } };
+    if (moveWip) route.assembly = { work_center: "ASM-01", predecessors: ["machining"] };
+    await write("set_route_operations", { ...frame, operations: route });
     await write("activate_revision", { ...frame, revision_type: "route" });
     const plan = { plan_id: "QA", revision: 1 };
     await write("create_inspection_plan_revision", { ...plan, characteristics: { width: { unit: "mm", lower_limit: 1, upper_limit: 2 } } });
@@ -298,6 +301,28 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     const ledger = await invoke("list_inventory_movements", { movement_type: "issue" });
     expect(ledger.movements).toHaveLength(1);
     expect(ledger.movements[0]).toMatchObject({ lot_id: "LOT-1", operation, work_order, quantity: assemblyLedger ? "2" : "1.5" });
+    if (moveWip) {
+      cursor = JSON.parse(await status.textContent()).cursor;
+      await write("start_operation", { work_order, operation });
+      const source = await write("post_operation_report", { work_order, operation, quantity: 10, material_inputs: { "RS-1": "1.5" } });
+      await write("complete_operation", { work_order, operation });
+      await button("搜索工具").click();
+      await page.getByLabel("匹配工具").selectOption("move_wip");
+      await page.getByLabel("JSON 参数").fill(JSON.stringify({
+        work_order, wip_id: source.report.id, destination_operation: "assembly", reason: "handoff",
+        expected_cursor: cursor, idempotency_key: "move",
+      }));
+      await button("调用工具").click();
+      await expect(status).toContainText('"destination_operation": "assembly"');
+      cursor = JSON.parse(await status.textContent()).cursor;
+      await write("dispatch_operation", { work_order, operation: "assembly", work_center: "ASM-01" });
+      await write("start_operation", { work_order, operation: "assembly" });
+      const output = await write("post_operation_report", { work_order, operation: "assembly", quantity: 10, wip_inputs: [source.report.id] });
+      const current = await invoke("get_wip", { work_order, wip_id: source.report.id });
+      expect(current.lots[0]).toMatchObject({ status: "consumed", consumed_by: output.report.id });
+      expect(output.report.serial_numbers).toEqual(source.report.serial_numbers);
+      return;
+    }
     if (wip) {
       cursor = JSON.parse(await status.textContent()).cursor;
       await write("start_operation", { work_order, operation });

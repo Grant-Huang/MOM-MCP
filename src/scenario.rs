@@ -364,6 +364,20 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                     .contains(&Action::PostOperationReport)),
         "work in process requires recorded operation output"
     );
+    anyhow::ensure!(
+        definition.capabilities.contains(&Action::MoveWip)
+            == definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| setup.wip_movements),
+        "work in process movement must be enabled with downstream input validation"
+    );
+    anyhow::ensure!(
+        !definition.capabilities.contains(&Action::MoveWip)
+            || (definition.capabilities.contains(&Action::GetWip)
+                && definition.capabilities.contains(&Action::GetOrderSnapshot)),
+        "work in process movement requires a frozen operation route"
+    );
 
     anyhow::ensure!(
         !definition
@@ -669,6 +683,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-operation-material-reversals.json"),
             include_str!("../fixtures/cnc-partial-lot-transfers.json"),
             include_str!("../fixtures/cnc-wip-output.json"),
+            include_str!("../fixtures/cnc-wip-movement.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
@@ -1027,6 +1042,11 @@ impl Scenarios {
                 .as_object_mut()
                 .unwrap()
                 .remove("material_inputs");
+        }
+        if action == Action::PostOperationReport
+            && definition.capabilities.contains(&Action::MoveWip)
+        {
+            spec.input["properties"]["wip_inputs"] = crate::wip::inputs_schema();
         }
         if name == "describe_tool" {
             return Ok(Ok(json!({"ok":true,"tool":spec})));
@@ -1689,7 +1709,9 @@ impl Scenarios {
             }
             return Ok(Ok(response));
         }
-        if action == Action::GetWip || crate::mes::TOOLS.iter().any(|tool| tool.0 == action) {
+        if matches!(action, Action::GetWip | Action::MoveWip)
+            || crate::mes::TOOLS.iter().any(|tool| tool.0 == action)
+        {
             let Some(setup) = &definition.manufacturing else {
                 return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
             };

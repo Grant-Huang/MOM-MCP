@@ -4729,6 +4729,155 @@ async fn reported_wip_output(
     );
 }
 
+#[tokio::test]
+async fn p9d_02_move_and_consume_wip() {
+    operation_issue_scenarios(&[("cnc", 36, "WO-1", "machining", "MACH-01")]).await;
+}
+
+async fn move_and_consume_wip(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+    operation: &str,
+) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["idempotency_key"] = json!(key);
+        args["expected_cursor"] = cursor().await;
+        invoke(name, args).await
+    };
+    let apply = async |name: &str, key: &str, args| {
+        let result = write(name, key, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    };
+    let prep = json!({"work_order":order,"operation":operation});
+    let assembly = json!({"work_order":order,"operation":"assembly"});
+    apply("start_operation", "start-source", prep.clone()).await;
+    let machining_report = |quantity, amount| json!({"work_order":order,"operation":operation,"quantity":quantity,"material_inputs":{"RS-1":amount}});
+    let first = apply(
+        "post_operation_report",
+        "source1",
+        machining_report(4, "0.5"),
+    )
+    .await;
+    let first_id = &first["report"]["id"];
+    let mut movement = json!({"work_order":order,"wip_id":first_id,"destination_operation":"assembly","reason":"handoff"});
+    assert_eq!(
+        write("move_wip", "early", movement.clone()).await["code"],
+        "WIP_DESTINATION_NOT_ELIGIBLE"
+    );
+    let second = apply("post_operation_report", "source2", machining_report(6, "1")).await;
+    let second_id = &second["report"]["id"];
+    apply("complete_operation", "complete-source", prep).await;
+    apply(
+        "dispatch_operation",
+        "dispatch-destination",
+        json!({"work_order":order,"operation":"assembly","work_center":"ASM-01"}),
+    )
+    .await;
+    let before = cursor().await;
+    assert_eq!(
+        write("start_operation", "no-wip", assembly.clone()).await["code"],
+        "WIP_NOT_AT_OPERATION"
+    );
+    assert_eq!(cursor().await, before);
+    let mut wrong = movement.clone();
+    wrong["destination_operation"] = json!("inspection");
+    assert_eq!(
+        write("move_wip", "skip", wrong).await["code"],
+        "WIP_DESTINATION_NOT_ELIGIBLE"
+    );
+    apply(
+        "hold_work_order",
+        "hold",
+        json!({"work_order":order,"reason":"supervisor hold"}),
+    )
+    .await;
+    assert_eq!(
+        write("move_wip", "held", movement.clone()).await["code"],
+        "WORK_ORDER_HELD"
+    );
+    apply("resume_work_order", "resume", json!({"work_order":order})).await;
+    movement["expected_cursor"] = cursor().await;
+    movement["idempotency_key"] = json!("move-first");
+    let moved = invoke("move_wip", movement.clone()).await;
+    assert_eq!(moved["ok"], true, "{moved}");
+    assert_eq!(invoke("move_wip", movement.clone()).await, moved);
+    assert_eq!(
+        write("move_wip", "duplicate", movement.clone()).await["code"],
+        "WIP_NOT_AVAILABLE"
+    );
+    assert_eq!(
+        write(
+            "reverse_operation_report",
+            "reverse-source",
+            json!({"work_order":order,"report_id":first_id,"reason":"incorrect source"})
+        )
+        .await["code"],
+        "REPORT_HAS_DEPENDENCIES"
+    );
+    apply("start_operation", "start-destination", assembly.clone()).await;
+    let mut report = json!({"work_order":order,"operation":"assembly","quantity":4});
+    assert_eq!(
+        write("post_operation_report", "missing", report.clone()).await["code"],
+        "WIP_INPUTS_REQUIRED"
+    );
+    report["wip_inputs"] = json!([first_id, first_id]);
+    assert_eq!(
+        write("post_operation_report", "duplicates", report.clone()).await["code"],
+        "INVALID_ARGUMENT"
+    );
+    report["wip_inputs"] = json!([second_id]);
+    assert_eq!(
+        write("post_operation_report", "not-moved", report.clone()).await["code"],
+        "WIP_NOT_AT_OPERATION"
+    );
+    report["wip_inputs"] = json!([first_id]);
+    report["quantity"] = json!(3);
+    assert_eq!(
+        write("post_operation_report", "wrong-quantity", report.clone()).await["code"],
+        "WIP_QUANTITY_MISMATCH"
+    );
+    report["quantity"] = json!(4);
+    let consumed = apply("post_operation_report", "consume", report.clone()).await;
+    assert_eq!(
+        consumed["report"]["serial_numbers"],
+        first["report"]["serial_numbers"]
+    );
+    assert_eq!(
+        write("post_operation_report", "consumed-again", report.clone()).await["code"],
+        "WIP_ALREADY_CONSUMED"
+    );
+    let read = || invoke("get_wip", json!({"work_order":order,"wip_id":first_id}));
+    assert_eq!(
+        read().await["lots"][0]["consumed_by"],
+        consumed["report"]["id"]
+    );
+    apply("reverse_operation_report","reverse-assembly",json!({"work_order":order,"report_id":consumed["report"]["id"],"reason":"incorrect report"})).await;
+    assert_eq!(read().await["lots"][0]["status"], "moved");
+    let reconsumed = apply("post_operation_report", "consume-again", report.clone()).await;
+    assert_eq!(
+        reconsumed["report"]["serial_numbers"],
+        consumed["report"]["serial_numbers"]
+    );
+    movement["wip_id"] = second_id.clone();
+    apply("move_wip", "move-second", movement).await;
+    report["quantity"] = json!(6);
+    report["wip_inputs"] = json!([second_id]);
+    apply("post_operation_report", "consume-second", report).await;
+    apply("complete_operation", "complete-assembly", assembly).await;
+    assert_eq!(
+        invoke(
+            "get_stock_balance",
+            json!({"item_id":"WIRE","location":"RAW-02"})
+        )
+        .await["balance"]["on_hand"],
+        "0.5"
+    );
+}
+
 async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
@@ -4750,6 +4899,10 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
                 assert_eq!(result["ok"],true,"{name}: {result}");
                 result
             };
+            let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
+            if version == 36 {
+                route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
+            }
             for (name,args) in [
                 ("create_item",json!({"item_id":"FRAME","base_unit":"each"})),
                 ("create_item",json!({"item_id":"WIRE","base_unit":"m"})),
@@ -4761,7 +4914,7 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
                 ("set_bom_components",json!({"item_id":"FRAME","revision":1,"components":{"WIRE":{"revision":1,"quantity":2,"unit":"m"}}})),
                 ("activate_revision",json!({"revision_type":"bom","item_id":"FRAME","revision":1})),
                 ("create_route_revision",json!({"item_id":"FRAME","revision":1})),
-                ("set_route_operations",json!({"item_id":"FRAME","revision":1,"operations":{(operation):{"work_center":center,"predecessors":[]}}})),
+                ("set_route_operations",json!({"item_id":"FRAME","revision":1,"operations":route})),
                 ("activate_revision",json!({"revision_type":"route","item_id":"FRAME","revision":1})),
                 ("create_inspection_plan_revision",json!({"plan_id":"QA","revision":1,"characteristics":{"width":{"unit":"mm","lower_limit":1,"upper_limit":2}}})),
                 ("activate_inspection_plan_revision",json!({"plan_id":"QA","revision":1})),
@@ -4975,6 +5128,15 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
+            if version == 36 {
+                Box::pin(move_and_consume_wip(&client,run,order,operation)).await;
+                let (peer,_child)=connect_mode(&db,"0",true).await;
+                let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
+                let lots=lots["lots"].as_array().unwrap();
+                assert_eq!(lots.len(),2);
+                assert!(lots.iter().all(|lot|lot["status"]=="consumed"));
+                continue;
+            }
             if version == 35 {
                 Box::pin(reported_wip_output(&client,run,order,operation)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
