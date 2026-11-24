@@ -3,7 +3,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     catalog::{Action, Spec, object, text},
-    inventory::{LOCATIONS, id_schema, quantity, quantity_schema},
+    inventory::{LOCATIONS, QUANTITY_SCALE, id_schema, parse_quantity, quantity, quantity_schema},
     scenario::{Rejection, identifier, reject},
 };
 
@@ -26,7 +26,7 @@ pub(crate) fn row_schema() -> Value {
             "revision":{"type":"integer","minimum":1},"unit":text(),"source_location":id_schema(),
             "destination_location":id_schema(),"reason":text(),"status":{"enum":["draft","posted"]},
             "quantity":{"anyOf":[quantity_schema(),{"type":"null"}]},
-            "posted_cursor":{"type":["integer","null"],"minimum":1},"reverses_transfer_id":id_schema()}),
+            "posted_cursor":{"type":["integer","null"],"minimum":1},"reverses_transfer_id":id_schema(),"child_lot_id":id_schema(),"requested_quantity":quantity_schema()}),
     )
 }
 
@@ -94,6 +94,9 @@ pub(crate) fn spec(action: Action) -> Spec {
             "LOT_PENDING_INSPECTION",
             "MATERIAL_HELD",
             "LOT_COMMITTED",
+            "LOT_AVAILABLE_QUANTITY_EXCEEDED",
+            "LOT_SPLIT_NOT_ALLOWED",
+            "LOT_ALREADY_ASSIGNED",
             "VERSION_CONFLICT",
             "IDEMPOTENCY_CONFLICT",
         ],
@@ -101,9 +104,29 @@ pub(crate) fn spec(action: Action) -> Spec {
     }
 }
 
-const RECORDS: &str = "SELECT t.transfer,t.lot,s.item,s.revision,s.unit,t.source,t.destination,t.reason,t.quantity,t.posted_cursor,r.original
-    FROM stock_transfers t JOIN stock_receipts s ON s.run=t.run AND s.lot=t.lot
-    LEFT JOIN stock_transfer_reversals r ON r.run=t.run AND r.reversal=t.transfer";
+pub(crate) fn partial_spec() -> Spec {
+    let mut spec = spec(Action::CreateStockTransfer);
+    spec.description = "创建整批或部分批次库存库位转储单";
+    spec.input["properties"]["child_lot_id"] = id_schema();
+    spec.input["properties"]["quantity"] = quantity_schema();
+    spec.errors = &[
+        "INVALID_ARGUMENT",
+        "LOCATION_NOT_FOUND",
+        "LOT_NOT_FOUND",
+        "TRANSFER_ALREADY_EXISTS",
+        "TRANSFER_SOURCE_CHANGED",
+        "LOT_ALREADY_ASSIGNED",
+        "LOT_SPLIT_NOT_ALLOWED",
+        "VERSION_CONFLICT",
+        "IDEMPOTENCY_CONFLICT",
+    ];
+    spec
+}
+
+const RECORDS: &str = "SELECT t.transfer,t.lot,s.item,s.revision,s.unit,t.source,t.destination,t.reason,t.quantity,t.posted_cursor,r.original,p.child,p.amount
+    FROM stock_transfers t JOIN stock_lot_origins s ON s.run=t.run AND s.lot=t.lot
+    LEFT JOIN stock_transfer_reversals r ON r.run=t.run AND r.reversal=t.transfer
+    LEFT JOIN stock_lot_splits p ON p.run=t.run AND p.transfer=COALESCE(r.original,t.transfer)";
 
 fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
     let cursor: Option<i64> = row.get(9)?;
@@ -114,6 +137,10 @@ fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
         "status":if cursor.is_some() {"posted"} else {"draft"},"posted_cursor":cursor});
     if let Some(original) = row.get::<_, Option<String>>(10)? {
         result["reverses_transfer_id"] = json!(original);
+    }
+    if let Some(child) = row.get::<_, Option<String>>(11)? {
+        result["child_lot_id"] = json!(child);
+        result["requested_quantity"] = json!(quantity(row.get(12)?));
     }
     Ok(result)
 }
@@ -166,6 +193,7 @@ pub(crate) fn invoke(
         "lot_id",
         "source_location",
         "destination_location",
+        "child_lot_id",
     ] {
         if args
             .get(field)
@@ -288,15 +316,44 @@ fn create_or_post(
             return Ok(Err(Rejection::invalid("destination_location")));
         }
         let lot = args["lot_id"].as_str().unwrap();
-        let current: Option<String> = tx.query_row(
-            "SELECT location FROM stock_active_lots WHERE run=?1 AND lot=?2 AND posted_cursor IS NOT NULL",
-            params![run,lot],|row| row.get(0)).optional()?;
-        match current.as_deref() {
-            None => return Ok(Err(reject("LOT_NOT_FOUND", "lot_id"))),
-            Some(location) if location != source => {
-                return Ok(Err(reject("TRANSFER_SOURCE_CHANGED", "source_location")));
+        let current = tx.query_row(
+            "SELECT location,unit,parent_lot IS NOT NULL FROM stock_available_lots WHERE run=?1 AND lot=?2 AND posted_cursor IS NOT NULL",
+            params![run,lot],|row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,bool>(2)?))).optional()?;
+        let Some((location, unit, is_child)) = current else {
+            return Ok(Err(reject("LOT_NOT_FOUND", "lot_id")));
+        };
+        if location != source {
+            return Ok(Err(reject("TRANSFER_SOURCE_CHANGED", "source_location")));
+        }
+        match (args.get("quantity"), args.get("child_lot_id")) {
+            (Some(value), Some(child)) => {
+                if is_child {
+                    return Ok(Err(reject("LOT_SPLIT_NOT_ALLOWED", "lot_id")));
+                }
+                let child = child.as_str().unwrap();
+                let Some(amount) = value
+                    .as_str()
+                    .and_then(parse_quantity)
+                    .filter(|amount| unit != "each" || amount % QUANTITY_SCALE == 0)
+                else {
+                    return Ok(Err(Rejection::invalid("quantity")));
+                };
+                let occupied: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM stock_receipts WHERE run=?1 AND lot=?2)
+                     OR EXISTS(SELECT 1 FROM stock_lot_splits WHERE run=?1 AND child=?2)",
+                    params![run, child],
+                    |row| row.get(0),
+                )?;
+                if occupied {
+                    return Ok(Err(reject("LOT_ALREADY_ASSIGNED", "child_lot_id")));
+                }
+                tx.execute(
+                    "INSERT INTO stock_lot_splits (run,transfer,child,amount) VALUES (?1,?2,?3,?4)",
+                    params![run, id, child, amount],
+                )?;
             }
-            _ => {}
+            (None, None) => {}
+            _ => return Ok(Err(Rejection::invalid("child_lot_id"))),
         }
         tx.execute("INSERT INTO stock_transfers (run,transfer,lot,source,destination,reason) VALUES (?1,?2,?3,?4,?5,?6)",
             params![run,id,lot,source,destination,args["reason"].as_str().unwrap()])?;
@@ -307,7 +364,14 @@ fn create_or_post(
         if posted.is_some() {
             return Ok(Err(reject("TRANSFER_ALREADY_POSTED", "transfer_id")));
         }
-        let amount = match transferable_quantity(tx, run, &lot, &source)? {
+        let requested: Option<i64> = tx
+            .query_row(
+                "SELECT amount FROM stock_lot_splits WHERE run=?1 AND transfer=?2",
+                params![run, id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let amount = match transferable_quantity(tx, run, &lot, &source, requested)? {
             Ok(amount) => amount,
             Err(error) => return Ok(Err(error)),
         };
@@ -358,16 +422,29 @@ fn reverse(
     if duplicate {
         return Ok(Err(reject("TRANSFER_ALREADY_EXISTS", "reversal_id")));
     }
+    let child: Option<String> = tx
+        .query_row(
+            "SELECT child FROM stock_lot_splits WHERE run=?1 AND transfer=?2",
+            params![run, original],
+            |row| row.get(0),
+        )
+        .optional()?;
     let dependent: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM stock_transfers WHERE run=?1 AND lot=?2 AND posted_cursor>?3)
+        "SELECT EXISTS(SELECT 1 FROM stock_transfers WHERE run=?1 AND lot IN (?2,?4) AND posted_cursor>?3)
          OR EXISTS(SELECT 1 FROM stock_operation_issues i JOIN stock_reservations r
-             ON r.run=i.run AND r.reservation=i.reservation WHERE i.run=?1 AND r.lot=?2 AND i.issued_cursor>?3)",
-        params![run,lot,posted], |row| row.get(0),
+             ON r.run=i.run AND r.reservation=i.reservation WHERE i.run=?1 AND r.lot IN (?2,?4) AND i.issued_cursor>?3)",
+        params![run,lot,posted,child], |row| row.get(0),
     )?;
     if dependent {
         return Ok(Err(reject("TRANSFER_HAS_DEPENDENCIES", "movement_id")));
     }
-    let amount = match transferable_quantity(tx, run, &lot, &destination)? {
+    let amount = match transferable_quantity(
+        tx,
+        run,
+        child.as_deref().unwrap_or(&lot),
+        &destination,
+        None,
+    )? {
         Ok(amount) => amount,
         Err(error) => return Ok(Err(error)),
     };
@@ -388,14 +465,15 @@ fn transferable_quantity(
     run: &str,
     lot: &str,
     source: &str,
+    requested: Option<i64>,
 ) -> rusqlite::Result<Result<i64, Rejection>> {
     let lot_stock = tx.query_row(
         "SELECT s.location,s.quantity,s.requires_inspection AND q.receipt IS NULL,
-            EXISTS(SELECT 1 FROM scenario_holds h WHERE h.run=s.run AND h.batch=s.lot),
+            EXISTS(SELECT 1 FROM stock_lot_holds h WHERE h.run=s.run AND h.batch=s.lot),
             EXISTS(SELECT 1 FROM stock_reservations r LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
                 WHERE r.run=s.run AND r.lot=s.lot AND (r.status IN ('reserved','picked')
                     OR (r.status='issued' AND r.quantity>COALESCE(t.quantity,0))))
-        FROM stock_active_lots s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
+        FROM stock_available_lots s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
         WHERE s.run=?1 AND s.lot=?2",
         params![run,lot],|row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,
             row.get::<_,bool>(2)?,row.get::<_,bool>(3)?,row.get::<_,bool>(4)?))).optional()?;
@@ -408,11 +486,20 @@ fn transferable_quantity(
     for (blocked, code) in [
         (pending, "LOT_PENDING_INSPECTION"),
         (held, "MATERIAL_HELD"),
-        (committed, "LOT_COMMITTED"),
+        (committed && requested.is_none(), "LOT_COMMITTED"),
     ] {
         if blocked {
             return Ok(Err(reject(code, "lot_id")));
         }
+    }
+    if let Some(requested) = requested {
+        if requested >= amount {
+            return Ok(Err(reject("LOT_SPLIT_NOT_ALLOWED", "quantity")));
+        }
+        if requested > amount - crate::reservations::lot_committed_quantity(tx, run, lot)? {
+            return Ok(Err(reject("LOT_AVAILABLE_QUANTITY_EXCEEDED", "quantity")));
+        }
+        return Ok(Ok(requested));
     }
     Ok(Ok(amount))
 }

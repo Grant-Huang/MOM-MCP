@@ -646,10 +646,10 @@ pub(crate) struct Report {
 
 #[derive(Deserialize, Serialize)]
 pub(crate) struct MaterialInput {
-    reservation_id: String,
+    pub(crate) reservation_id: String,
     pub(crate) lot_id: String,
     pub(crate) quantity: String,
-    unit: String,
+    pub(crate) unit: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1057,10 +1057,10 @@ pub(crate) fn report_material_inputs(
         let issue = tx
             .query_row(
                 "SELECT r.lot,s.unit,r.quantity-COALESCE(t.quantity,0),EXISTS(
-                 SELECT 1 FROM scenario_holds h WHERE h.run=r.run AND h.batch=r.lot)
+                 SELECT 1 FROM stock_lot_holds h WHERE h.run=r.run AND h.batch=r.lot)
              FROM stock_operation_issues i
              JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
-             JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
+             JOIN stock_lot_origins s ON s.run=r.run AND s.lot=r.lot
              LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
              WHERE i.run=?1 AND r.work_order=?2 AND i.operation=?3 AND i.reservation=?4
                AND r.status='issued'",
@@ -1108,6 +1108,26 @@ pub fn invoke(
     cursor: i64,
 ) -> anyhow::Result<(Value, bool)> {
     let mut state = load(tx, run, setup, orders)?;
+    if action == Action::GetWip {
+        let order = args["work_order"].as_str().unwrap();
+        if !crate::scenario::identifier(order) {
+            return Ok((error("INVALID_ARGUMENT"), false));
+        }
+        let Some(current) = state.orders.get(order) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        return Ok((
+            crate::wip::read(
+                tx,
+                run,
+                order,
+                current.hold_reason.is_some(),
+                &state.reports,
+                args,
+            )?,
+            false,
+        ));
+    }
     if action == Action::ListOperationReports {
         let order = args["work_order"].as_str().unwrap();
         if !state.orders.contains_key(order) {

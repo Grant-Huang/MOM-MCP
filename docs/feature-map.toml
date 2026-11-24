@@ -785,3 +785,35 @@ spec = "acceptance/P9C.md"
 features = ["F08", "F09", "F10"]
 layers = ["playwright"]
 tests = { playwright = "P9C-17 Reconcile issued material in assembly" }
+
+[[case]]
+id = "P9C-18"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9c_18_partial_lot_transfers" }
+
+[[case]]
+id = "P9C-19"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P9C-19 Transfer and reverse a partial lot" }
+
+[[case]]
+id = "P9D-01"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9d_01_reported_wip_output" }
+
+[[case]]
+id = "P9D-UI"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["playwright"]
+tests = { playwright = "P9D-UI Find actual output in work in process" }
