@@ -12,29 +12,38 @@ async fn check() -> Result<(), &'static str> {
         return Err("Sample IDs must differ");
     }
     let token = env::var("MOM_SAMPLE_TOKEN").map_err(|_| "Missing MOM_SAMPLE_TOKEN")?;
+    let witness_token = env::var("MOM_ODOO_WITNESS_TOKEN").ok();
+    if let Some(witness) = &witness_token {
+        if vendor != "odoo" || witness.trim().is_empty() || witness == &token {
+            return Err("Odoo witness requires a distinct, nonempty read-only token");
+        }
+    }
     let database = env::var("MOM_ODOO_DATABASE").unwrap_or_default();
     let company = env::var("MOM_CARBON_COMPANY").unwrap_or_default();
     let project_key = env::var("MOM_CARBON_PROJECT_KEY").unwrap_or_default();
-    let kind = match vendor.as_str() {
-        "odoo" => HttpSourceKind::Odoo {
-            database: &database,
-        },
-        "openmes" => HttpSourceKind::OpenMes,
-        "carbon-rest" => HttpSourceKind::CarbonRest {
-            company: &company,
-            project_key: &project_key,
-        },
-        _ => return Err("Expected odoo, openmes or carbon-rest"),
+    let reader = |token| {
+        let kind = match vendor.as_str() {
+            "odoo" => HttpSourceKind::Odoo {
+                database: &database,
+            },
+            "openmes" => HttpSourceKind::OpenMes,
+            "carbon-rest" => HttpSourceKind::CarbonRest {
+                company: &company,
+                project_key: &project_key,
+            },
+            _ => return Err("Expected odoo, openmes or carbon-rest"),
+        };
+        HttpOrderReader::new(HttpSource {
+            kind,
+            base_url: endpoint,
+            token,
+            tenant: "sample-tenant",
+            site: "sample-site",
+            instance: vendor,
+        })
+        .map_err(|_| "Invalid sample connection")
     };
-    let source = HttpOrderReader::new(HttpSource {
-        kind,
-        base_url: endpoint,
-        token: &token,
-        tenant: "sample-tenant",
-        site: "sample-site",
-        instance: vendor,
-    })
-    .map_err(|_| "Invalid sample connection")?;
+    let source = reader(token.as_str())?;
     let order = source
         .read_order(visible)
         .await
@@ -52,7 +61,15 @@ async fn check() -> Result<(), &'static str> {
     if source.read_order(hidden).await != Err(ReadError::NotVisible) {
         return Err("Out-of-scope fixture did not return NotVisible");
     }
-    println!("{vendor}: visible record projected, out-of-scope record not visible");
+    if let Some(witness) = witness_token.as_deref() {
+        reader(witness)?
+            .read_order(hidden)
+            .await
+            .map_err(|_| "Odoo witness could not confirm the out-of-scope record")?;
+        println!("odoo: visible record projected, scope isolation independently confirmed");
+    } else {
+        println!("{vendor}: visible record projected, out-of-scope record not visible");
+    }
     Ok(())
 }
 
