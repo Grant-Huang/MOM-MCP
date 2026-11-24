@@ -41,6 +41,8 @@ pub struct Definition {
     receipt_reversals: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     operation_material_reversals: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    partial_lot_transfers: bool,
 }
 
 impl Definition {
@@ -470,25 +472,53 @@ impl Scenarios {
                  posted_cursor INTEGER, quantity INTEGER,
                  PRIMARY KEY(run,transfer)
              );
+             CREATE TABLE IF NOT EXISTS stock_lot_splits (
+                 run TEXT NOT NULL, transfer TEXT NOT NULL, child TEXT NOT NULL, amount INTEGER NOT NULL,
+                 PRIMARY KEY(run,transfer), UNIQUE(run,child)
+             );
+             CREATE VIEW IF NOT EXISTS stock_lot_origins AS
+                 SELECT run,receipt,item,revision,unit,quantity,requires_inspection,lot,supplier_lot,location,posted_cursor,
+                     NULL AS parent_lot FROM stock_receipts
+                 UNION ALL
+                 SELECT t.run,s.receipt,s.item,s.revision,s.unit,p.amount,s.requires_inspection,p.child,s.supplier_lot,
+                     t.destination,s.posted_cursor,s.lot
+                 FROM stock_lot_splits p JOIN stock_transfers t ON t.run=p.run AND t.transfer=p.transfer
+                 JOIN stock_receipts s ON s.run=t.run AND s.lot=t.lot WHERE t.posted_cursor IS NOT NULL;
+             CREATE VIEW IF NOT EXISTS stock_position_lots AS
+                 SELECT o.run,o.receipt,o.item,o.revision,o.unit,
+                     o.quantity-COALESCE((SELECT SUM(p.amount) FROM stock_lot_splits p
+                       JOIN stock_transfers t ON t.run=p.run AND t.transfer=p.transfer
+                       WHERE t.run=o.run AND t.lot=o.lot AND t.posted_cursor IS NOT NULL
+                       AND NOT EXISTS(SELECT 1 FROM stock_transfer_reversals r WHERE r.run=t.run AND r.original=t.transfer)),0) AS quantity,
+                     o.requires_inspection,o.lot,o.supplier_lot,
+                     COALESCE((SELECT t.destination FROM stock_whole_transfers t WHERE t.run=o.run AND t.lot=o.lot
+                       AND t.posted_cursor IS NOT NULL
+                       ORDER BY t.posted_cursor DESC LIMIT 1),o.location) AS location,o.posted_cursor,o.parent_lot
+                 FROM stock_lot_origins o;
+             CREATE VIEW IF NOT EXISTS stock_available_lots AS
+                 SELECT s.* FROM stock_position_lots s WHERE NOT EXISTS(
+                     SELECT 1 FROM stock_receipt_reversals r WHERE r.run=s.run AND r.receipt=s.receipt)
+                 AND NOT EXISTS(SELECT 1 FROM stock_lot_splits p JOIN stock_transfer_reversals r
+                     ON r.run=p.run AND r.original=p.transfer WHERE p.run=s.run AND p.child=s.lot);
+             CREATE VIEW IF NOT EXISTS stock_whole_transfers AS
+                 SELECT t.* FROM stock_transfers t WHERE NOT EXISTS(SELECT 1 FROM stock_lot_splits p
+                   WHERE p.run=t.run AND (p.transfer=t.transfer OR EXISTS(SELECT 1 FROM stock_transfer_reversals r
+                      WHERE r.run=t.run AND r.reversal=t.transfer AND r.original=p.transfer)));
+             CREATE VIEW IF NOT EXISTS stock_lot_holds AS
+                 SELECT run,batch FROM scenario_holds
+                 UNION
+                 SELECT o.run,o.lot FROM stock_lot_origins o JOIN scenario_holds h
+                     ON h.run=o.run AND h.batch=o.parent_lot;
              CREATE TABLE IF NOT EXISTS stock_receipt_reversals (
                  run TEXT NOT NULL, receipt TEXT NOT NULL, reversal TEXT NOT NULL,
                  reason TEXT NOT NULL, reversed_cursor INTEGER NOT NULL,
                  PRIMARY KEY(run,receipt), UNIQUE(run,reversal)
              );
-             CREATE VIEW IF NOT EXISTS stock_active_lots AS
-                 SELECT s.* FROM stock_current_lots s WHERE NOT EXISTS(
-                     SELECT 1 FROM stock_receipt_reversals r WHERE r.run=s.run AND r.receipt=s.receipt);
              CREATE TABLE IF NOT EXISTS stock_transfer_reversals (
                  run TEXT NOT NULL, original TEXT NOT NULL, reversal TEXT NOT NULL,
                  PRIMARY KEY(run,original), UNIQUE(run,reversal)
              );
              CREATE INDEX IF NOT EXISTS stock_transfer_history ON stock_transfers(run,lot,posted_cursor);
-             CREATE VIEW IF NOT EXISTS stock_current_lots AS
-                 SELECT s.run,s.receipt,s.item,s.revision,s.unit,s.quantity,s.requires_inspection,s.lot,s.supplier_lot,
-                        COALESCE((SELECT t.destination FROM stock_transfers t WHERE t.run=s.run
-                            AND t.lot=s.lot AND t.posted_cursor IS NOT NULL ORDER BY t.posted_cursor DESC LIMIT 1),s.location) AS location,
-                        s.posted_cursor
-                 FROM stock_receipts s;
              CREATE TABLE IF NOT EXISTS stock_operation_returns (
                  run TEXT NOT NULL, movement TEXT NOT NULL, reservation TEXT NOT NULL,
                  quantity INTEGER NOT NULL, reason TEXT NOT NULL, returned_cursor INTEGER NOT NULL,
@@ -625,8 +655,10 @@ impl Scenarios {
             include_str!("../fixtures/cnc-stock-transfer-reversal.json"),
             include_str!("../fixtures/cnc-receipt-reversal.json"),
             include_str!("../fixtures/cnc-operation-material-reversals.json"),
+            include_str!("../fixtures/cnc-partial-lot-transfers.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
+            include_str!("../fixtures/assembly-partial-lot-transfers.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -962,6 +994,9 @@ impl Scenarios {
             }
             Action::ReverseInventoryMovement if definition.receipt_reversals => {
                 crate::receipt_reversals::extend_spec(action.spec())
+            }
+            Action::CreateStockTransfer if definition.partial_lot_transfers => {
+                crate::transfers::partial_spec()
             }
             Action::ActivateRevision => crate::items::spec(action, bom_enabled, route_enabled),
             Action::ValidateRevision => crate::bom::validation_spec(route_enabled),

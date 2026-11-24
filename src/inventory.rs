@@ -44,7 +44,7 @@ fn receipt_schema() -> Value {
             "supplier_lot":{"type":["string","null"]},"location":{"type":["string","null"]},
             "posted_cursor":{"type":["integer","null"],"minimum":1},
             "availability":{"enum":[null,"pending_inspection","available"]},
-            "released_inspection_id":id_schema(),"released_cursor":{"type":"integer","minimum":1}}),
+            "released_inspection_id":id_schema(),"released_cursor":{"type":"integer","minimum":1},"parent_lot_id":id_schema()}),
     )
 }
 
@@ -165,12 +165,21 @@ pub(crate) fn spec(action: Action) -> Spec {
     if write {
         output["cursor"] = json!({"type":"integer","minimum":0});
     }
+    if action == Action::ListLots {
+        fields["include_split_lots"] = json!({"type":"boolean"});
+        fields["after_lot_id"] = id_schema();
+        output["next_after_lot_id"] = json!({"type":["string","null"]});
+    }
     let output_required: Vec<_> = output
         .as_object()
         .unwrap()
         .keys()
         .map(String::as_str)
         .collect();
+    let mut output_required = output_required;
+    if action == Action::ListLots {
+        output_required.retain(|field| *field != "next_after_lot_id");
+    }
     let mut output_schema = json!({"oneOf":[object(&output_required,output.clone()),
         object(&["ok","code","field"],json!({"ok":{"const":false},"code":text(),"field":text()}))]});
     if action == Action::ListInventoryMovements {
@@ -312,6 +321,14 @@ fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Va
     .optional()
 }
 
+fn lot_record(row: &Row<'_>) -> rusqlite::Result<Value> {
+    let mut lot = record(row)?;
+    if let Some(parent) = row.get::<_, Option<String>>(12)? {
+        lot["parent_lot_id"] = json!(parent);
+    }
+    Ok(lot)
+}
+
 fn query(
     tx: &Transaction<'_>,
     run: &str,
@@ -351,11 +368,11 @@ fn query(
             let lot = tx
                 .query_row(
                     &format!(
-                        "SELECT {RECEIPT_COLUMNS} FROM stock_active_lots AS stock_receipts
+                        "SELECT {RECEIPT_COLUMNS},parent_lot FROM stock_available_lots AS stock_receipts
                 WHERE run=?1 AND lot=?2 AND posted_cursor IS NOT NULL"
                     ),
                     params![run, args["lot_id"].as_str().unwrap()],
-                    record,
+                    lot_record,
                 )
                 .optional()?;
             let Some(lot) = lot else {
@@ -384,35 +401,64 @@ fn query(
                 "on_hand":quantity(on_hand),"pending_inspection":quantity(pending),"reserved":quantity(reserved),"available":quantity(on_hand-pending-reserved)}})
         }
         _ => {
+            let by_lot = action == Action::ListLots
+                && args.get("include_split_lots").and_then(Value::as_bool) == Some(true);
+            if (by_lot && args.contains_key("after_receipt_id"))
+                || (!by_lot && args.contains_key("after_lot_id"))
+            {
+                return Ok(Err(Rejection::invalid(if by_lot {
+                    "after_receipt_id"
+                } else {
+                    "after_lot_id"
+                })));
+            }
+            let cursor_field = if by_lot {
+                "after_lot_id"
+            } else {
+                "after_receipt_id"
+            };
+            let sort_column = if by_lot { "lot" } else { "receipt" };
             let after = args
-                .get("after_receipt_id")
+                .get(cursor_field)
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             let limit = args.get("limit").and_then(Value::as_i64).unwrap_or(20);
             let source = if action == Action::ListLots {
-                "stock_active_lots"
+                "stock_available_lots"
             } else {
                 "stock_receipts"
             };
+            let parent = if action == Action::ListLots {
+                "parent_lot"
+            } else {
+                "NULL"
+            };
             let mut statement = tx.prepare(&format!(
-                "SELECT {RECEIPT_COLUMNS} FROM {source} AS stock_receipts
-                WHERE run=?1 AND receipt>?2 AND posted_cursor IS NOT NULL
+                "SELECT {RECEIPT_COLUMNS},{parent} FROM {source} AS stock_receipts
+                WHERE run=?1 AND {sort_column}>?2 AND posted_cursor IS NOT NULL
                 AND (?3 IS NULL OR item=?3) AND (?4 IS NULL OR revision=?4)
-                AND (?5 IS NULL OR location=?5) ORDER BY receipt LIMIT ?6"
+                AND (?5 IS NULL OR location=?5) AND (?7 OR {parent} IS NULL)
+                ORDER BY {sort_column} LIMIT ?6"
             ))?;
             let mut rows = statement
                 .query_map(
-                    params![run, after, item, revision, location, limit + 1],
-                    record,
+                    params![run, after, item, revision, location, limit + 1, by_lot],
+                    lot_record,
                 )?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             let next = if rows.len() > limit as usize {
                 rows.pop();
-                rows.last().map(|row| row["receipt_id"].clone())
+                let id = if by_lot { "lot_id" } else { "receipt_id" };
+                rows.last().map(|row| row[id].clone())
             } else {
                 None
             };
-            let mut result = json!({"next_after_receipt_id":next});
+            let mut result = json!({"next_after_receipt_id":null});
+            result[if by_lot {
+                "next_after_lot_id"
+            } else {
+                "next_after_receipt_id"
+            }] = json!(next);
             result[if action == Action::ListLots {
                 "lots"
             } else {
@@ -543,7 +589,7 @@ pub(crate) fn invoke(
             let lot = args["lot_id"].as_str().unwrap();
             let assigned: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM stock_receipts
-                WHERE run=?1 AND lot=?2 AND receipt<>?3)",
+                WHERE run=?1 AND lot=?2 AND receipt<>?3) OR EXISTS(SELECT 1 FROM stock_lot_splits WHERE run=?1 AND child=?2)",
                 params![run, lot, receipt],
                 |row| row.get(0),
             )?;
@@ -582,7 +628,7 @@ pub(crate) fn pending_receipt(
     receipt: &str,
 ) -> rusqlite::Result<bool> {
     tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM stock_active_lots s WHERE s.run=?1 AND s.receipt=?2
+        "SELECT EXISTS(SELECT 1 FROM stock_available_lots s WHERE s.run=?1 AND s.receipt=?2
          AND s.posted_cursor IS NOT NULL AND s.requires_inspection
          AND NOT EXISTS(SELECT 1 FROM stock_receipt_releases r WHERE r.run=s.run AND r.receipt=s.receipt))",
         params![run,receipt],|row|row.get(0),
@@ -603,7 +649,7 @@ fn balance(
          COALESCE(SUM(CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END),0),
          COALESCE(SUM((SELECT SUM(x.quantity) FROM stock_reservations x
              WHERE x.run=s.run AND x.lot=s.lot AND x.status IN ('reserved','picked'))),0)
-         FROM stock_active_lots s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
+         FROM stock_available_lots s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
          WHERE s.run=?1 AND s.item=?2 AND s.posted_cursor IS NOT NULL
          AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)",
         params![run,item,revision,location],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
@@ -708,7 +754,7 @@ pub(crate) fn matches_build_requirements(
     let mut actual = std::collections::BTreeMap::new();
     for input in inputs {
         let key = tx.query_row(
-            "SELECT item,revision,unit FROM stock_receipts WHERE run=?1 AND lot=?2",
+            "SELECT item,revision,unit FROM stock_lot_origins WHERE run=?1 AND lot=?2",
             params![run, input.lot_id],
             |row| {
                 Ok((

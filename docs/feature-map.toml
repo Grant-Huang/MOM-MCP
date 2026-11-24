@@ -785,3 +785,19 @@ spec = "acceptance/P9C.md"
 features = ["F08", "F09", "F10"]
 layers = ["playwright"]
 tests = { playwright = "P9C-17 Reconcile issued material in assembly" }
+
+[[case]]
+id = "P9C-18"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9c_18_partial_lot_transfers" }
+
+[[case]]
+id = "P9C-19"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P9C-19 Transfer and reverse a partial lot" }

@@ -122,11 +122,11 @@ pub(crate) fn spec(action: Action) -> Spec {
 
 const RECORDS: &str = "SELECT r.reservation,r.work_order,r.lot,r.quantity,r.status,
     s.item,s.revision,s.unit,CASE WHEN i.issued_cursor IS NULL THEN c.location ELSE COALESCE((
-        SELECT t.destination FROM stock_transfers t WHERE t.run=r.run AND t.lot=r.lot
+        SELECT t.destination FROM stock_whole_transfers t WHERE t.run=r.run AND t.lot=r.lot
         AND t.posted_cursor<i.issued_cursor ORDER BY t.posted_cursor DESC LIMIT 1),s.location) END AS issue_location,
     i.operation,i.work_center,i.issued_cursor FROM stock_reservations r
-    JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
-    JOIN stock_current_lots c ON c.run=r.run AND c.lot=r.lot
+    JOIN stock_lot_origins s ON s.run=r.run AND s.lot=r.lot
+    JOIN stock_position_lots c ON c.run=r.run AND c.lot=r.lot
     LEFT JOIN stock_operation_issues i ON i.run=r.run AND i.reservation=r.reservation";
 
 fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
@@ -203,13 +203,13 @@ pub(crate) fn return_schema() -> Value {
 }
 
 const RETURN_RECORDS: &str = "SELECT t.movement,t.reservation,r.work_order,i.operation,r.lot,
-    s.item,s.revision,COALESCE((SELECT m.destination FROM stock_transfers m WHERE m.run=r.run AND m.lot=r.lot
+    s.item,s.revision,COALESCE((SELECT m.destination FROM stock_whole_transfers m WHERE m.run=r.run AND m.lot=r.lot
         AND m.posted_cursor<i.issued_cursor ORDER BY m.posted_cursor DESC LIMIT 1),s.location) AS issue_location,
     t.quantity,s.unit,t.reason,t.returned_cursor
     FROM stock_operation_returns t
     JOIN stock_reservations r ON r.run=t.run AND r.reservation=t.reservation
     JOIN stock_operation_issues i ON i.run=r.run AND i.reservation=r.reservation
-    JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot";
+    JOIN stock_lot_origins s ON s.run=r.run AND s.lot=r.lot";
 
 fn return_record(row: &Row<'_>) -> rusqlite::Result<Value> {
     Ok(json!({
@@ -264,10 +264,10 @@ fn return_unused(
     let issue = tx
         .query_row(
             "SELECT r.work_order,s.unit,r.quantity-COALESCE(t.quantity,0),
-            EXISTS(SELECT 1 FROM scenario_holds h WHERE h.run=r.run AND h.batch=r.lot)
+            EXISTS(SELECT 1 FROM stock_lot_holds h WHERE h.run=r.run AND h.batch=r.lot)
          FROM stock_operation_issues i
          JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
-         JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
+         JOIN stock_lot_origins s ON s.run=r.run AND s.lot=r.lot
          LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
          WHERE i.run=?1 AND i.reservation=?2 AND r.status='issued'",
             params![run, id],
@@ -358,7 +358,7 @@ pub(crate) fn order_quantity_by_state(
 ) -> rusqlite::Result<i64> {
     tx.query_row(
         "SELECT COALESCE(SUM(r.quantity-COALESCE(t.quantity,0)),0) FROM stock_reservations r
-         JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
+         JOIN stock_lot_origins s ON s.run=r.run AND s.lot=r.lot
          LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
          WHERE r.run=?1 AND r.work_order=?2 AND s.item=?3 AND s.revision=?4
          AND ((?5 AND r.status='issued') OR (NOT ?5 AND r.status IN ('reserved','picked'))) ",
@@ -457,7 +457,7 @@ pub(crate) fn invoke(
         let order = args["work_order"].as_str().unwrap();
         let stock=tx.query_row(
         "SELECT s.item,s.revision,s.unit,s.quantity,s.requires_inspection AND q.receipt IS NULL
-         FROM stock_active_lots s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
+         FROM stock_available_lots s LEFT JOIN stock_receipt_releases q ON q.run=s.run AND q.receipt=s.receipt
          WHERE s.run=?1 AND s.lot=?2 AND s.posted_cursor IS NOT NULL",params![run,lot],
         |r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,
                 r.get::<_,i64>(3)?,r.get::<_,bool>(4)?))).optional()?;
@@ -507,6 +507,16 @@ pub(crate) fn invoke(
         };
         if action == Action::PickMaterial && !eligible {
             return Ok(Err(reject("WORK_ORDER_NOT_RESERVABLE", "work_order")));
+        }
+        if action == Action::IssueMaterialToOperation {
+            let held: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM stock_lot_holds WHERE run=?1 AND batch=?2)",
+                params![run, row["lot_id"].as_str().unwrap()],
+                |row| row.get(0),
+            )?;
+            if held {
+                return Ok(Err(reject("MATERIAL_HELD", "reservation_id")));
+            }
         }
         let status = match (action, row["status"].as_str()) {
             (Action::IssueMaterialToOperation, Some("picked")) => {

@@ -70,7 +70,7 @@ pub(crate) fn extend_spec(mut spec: Spec) -> Spec {
 
 const RECORDS: &str = "SELECT r.reversal,r.original,r.kind,r.reservation,r.lot,s.item,s.revision,
     r.location,r.quantity,s.unit,r.reason,r.reversed_cursor
-    FROM stock_operation_reversals r JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot";
+    FROM stock_operation_reversals r JOIN stock_lot_origins s ON s.run=r.run AND s.lot=r.lot";
 
 fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
     Ok(
@@ -139,12 +139,12 @@ fn target(
     tx.query_row(
         "SELECT r.reservation,r.work_order,r.lot,CASE WHEN ?3 THEN r.quantity ELSE t.quantity END,
             s.quantity,COALESCE(e.quantity,0),s.item,s.revision,s.unit,s.location,
-            EXISTS(SELECT 1 FROM scenario_holds h WHERE h.run=r.run AND h.batch=r.lot),
+            EXISTS(SELECT 1 FROM stock_lot_holds h WHERE h.run=r.run AND h.batch=r.lot),
             EXISTS(SELECT 1 FROM stock_transfers m WHERE m.run=r.run AND m.lot=r.lot
                 AND m.posted_cursor>CASE WHEN ?3 THEN i.issued_cursor ELSE t.returned_cursor END)
          FROM stock_reservations r
          JOIN stock_operation_issues i ON i.run=r.run AND i.reservation=r.reservation
-         JOIN stock_active_lots s ON s.run=r.run AND s.lot=r.lot
+         JOIN stock_available_lots s ON s.run=r.run AND s.lot=r.lot
          LEFT JOIN stock_operation_returns t ON NOT ?3 AND t.run=r.run AND t.reservation=r.reservation AND t.movement=?2
          LEFT JOIN stock_effective_return_totals e ON e.run=r.run AND e.reservation=r.reservation
          WHERE r.run=?1 AND r.status='issued' AND ((?3 AND r.reservation=?2) OR t.movement=?2)",

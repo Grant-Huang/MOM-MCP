@@ -4285,6 +4285,170 @@ async fn p9c_16_assembly_material_reconciliation() {
     operation_issue_scenarios(&[("assembly", 27, "WO-E", "build", "CELL-A")]).await;
 }
 
+#[tokio::test]
+async fn p9c_18_partial_lot_transfers() {
+    operation_issue_scenarios(&[
+        ("cnc", 34, "WO-1", "machining", "MACH-01"),
+        ("assembly", 28, "WO-E", "build", "CELL-A"),
+    ])
+    .await;
+}
+
+async fn partial_lot_transfer(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+    operation: &str,
+    center: &str,
+) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["idempotency_key"] = json!(key);
+        args["expected_cursor"] = cursor().await;
+        invoke(name, args).await
+    };
+    let apply = async |name: &str, key: &str, args| {
+        let result = write(name, key, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    };
+    let stock = async |location: &str| {
+        invoke(
+            "get_stock_balance",
+            json!({"item_id":"WIRE","location":location}),
+        )
+        .await["balance"]
+            .clone()
+    };
+    let draft = json!({"transfer_id":"TR-1","lot_id":"LOT-1","child_lot_id":"LOT-2","quantity":"0.75",
+        "source_location":"RAW-02","destination_location":"RAW-01","reason":"split stock"});
+    let post = json!({"transfer_id":"TR-1"});
+    let reversal = json!({"movement_type":"transfer","movement_id":"TR-1","reversal_id":"TR-2","reason":"correct location"});
+    apply("create_stock_transfer", "draft-split", draft.clone()).await;
+    assert_eq!(stock("RAW-02").await["on_hand"], "2");
+    assert_eq!(
+        invoke("get_lot", json!({"lot_id":"LOT-2"})).await["code"],
+        "LOT_NOT_FOUND"
+    );
+    apply(
+        "reserve_material",
+        "reserve-parent",
+        json!({"reservation_id":"RS-1","work_order":order,"lot_id":"LOT-1","quantity":"1.5"}),
+    )
+    .await;
+    let before = cursor().await;
+    assert_eq!(
+        write("post_stock_transfer", "occupied", post.clone()).await["code"],
+        "LOT_AVAILABLE_QUANTITY_EXCEEDED"
+    );
+    assert_eq!(cursor().await, before);
+    apply(
+        "release_reservation",
+        "release-parent",
+        json!({"reservation_id":"RS-1"}),
+    )
+    .await;
+    apply(
+        "reserve_material",
+        "reserve-remainder",
+        json!({"reservation_id":"RS-2","work_order":order,"lot_id":"LOT-1","quantity":"1"}),
+    )
+    .await;
+    let moved = apply("post_stock_transfer", "posted-split", post).await;
+    assert_eq!(moved["transfer"]["child_lot_id"], "LOT-2");
+    assert_eq!(stock("RAW-02").await["on_hand"], "1.25");
+    assert_eq!(stock("RAW-01").await["on_hand"], "0.75");
+    assert_eq!(stock("RAW-02").await["reserved"], "1");
+    let child = invoke("get_lot", json!({"lot_id":"LOT-2"})).await;
+    assert_eq!(child["lot"]["parent_lot_id"], "LOT-1");
+    assert_eq!(child["lot"]["receipt_id"], "RC-1");
+    let page = invoke("list_lots", json!({"include_split_lots":true,"limit":1})).await;
+    assert_eq!(page["next_after_lot_id"], "LOT-1");
+    assert_eq!(
+        invoke(
+            "list_lots",
+            json!({"include_split_lots":true,"after_lot_id":"LOT-1"})
+        )
+        .await["lots"],
+        json!([child["lot"]])
+    );
+    assert_eq!(
+        invoke(
+            "list_inventory_movements",
+            json!({"movement_type":"receipt"})
+        )
+        .await["movements"][0]["quantity"],
+        "2"
+    );
+    apply(
+        "reserve_material",
+        "reserve-child",
+        json!({"reservation_id":"RS-3","work_order":order,"lot_id":"LOT-2","quantity":"0.5"}),
+    )
+    .await;
+    assert_eq!(
+        write(
+            "reverse_inventory_movement",
+            "child-committed",
+            reversal.clone()
+        )
+        .await["code"],
+        "LOT_COMMITTED"
+    );
+    apply(
+        "release_reservation",
+        "release-child",
+        json!({"reservation_id":"RS-3"}),
+    )
+    .await;
+    let reversed = apply("reverse_inventory_movement", "reverse-split", reversal).await;
+    assert_eq!(reversed["transfer"]["reverses_transfer_id"], "TR-1");
+    assert_eq!(stock("RAW-02").await["on_hand"], "2");
+    assert_eq!(stock("RAW-01").await["on_hand"], "0");
+    assert_eq!(
+        invoke("get_lot", json!({"lot_id":"LOT-2"})).await["code"],
+        "LOT_NOT_FOUND"
+    );
+    let mut draft = draft;
+    draft["transfer_id"] = json!("TR-3");
+    draft["child_lot_id"] = json!("LOT-3");
+    apply("create_stock_transfer", "draft-second", draft).await;
+    apply(
+        "post_stock_transfer",
+        "post-second",
+        json!({"transfer_id":"TR-3"}),
+    )
+    .await;
+    apply(
+        "reserve_material",
+        "reserve-issued-child",
+        json!({"reservation_id":"RS-4","work_order":order,"lot_id":"LOT-3","quantity":"0.5"}),
+    )
+    .await;
+    apply(
+        "pick_material",
+        "pick-child",
+        json!({"reservation_id":"RS-4"}),
+    )
+    .await;
+    apply(
+        "dispatch_operation",
+        "dispatch-child",
+        json!({"work_order":order,"operation":operation,"work_center":center}),
+    )
+    .await;
+    let issue = apply(
+        "issue_material_to_operation",
+        "issue-child",
+        json!({"reservation_id":"RS-4","operation":operation}),
+    )
+    .await;
+    assert_eq!(issue["reservation"]["location"], "RAW-01");
+    assert_eq!(stock("RAW-01").await["on_hand"], "0.25");
+    assert_eq!(write("reverse_inventory_movement","dependent-child",json!({"movement_type":"transfer","movement_id":"TR-3","reversal_id":"TR-4","reason":"correct location"})).await["code"],"TRANSFER_HAS_DEPENDENCIES");
+}
+
 async fn assembly_material_reconciliation(
     client: &RunningService<RoleClient, ()>,
     run: &Value,
@@ -4508,6 +4672,10 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             apply("assign_receipt_tracking","track",json!({"receipt_id":"RC-1","lot_id":"LOT-1","supplier_lot":"SUP","location":"RAW-02"})).await;
             apply("post_receipt","post",json!({"receipt_id":"RC-1"})).await;
             let reserve=json!({"reservation_id":"RS-1","work_order":order,"lot_id":"LOT-1","quantity":"1.5"});
+            if (scenario == "cnc" && version == 34) || (scenario == "assembly" && version == 28) {
+                Box::pin(partial_lot_transfer(&client,run,order,operation,center)).await;
+                continue;
+            }
             if scenario == "assembly" && version == 27 {
                 Box::pin(assembly_material_reconciliation(&client, run, order, operation, center)).await;
                 continue;
