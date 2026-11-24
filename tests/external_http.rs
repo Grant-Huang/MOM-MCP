@@ -324,3 +324,47 @@ async fn carbon_rest_enforces_exact_id_and_company_and_classifies_failures() {
     }
     server.abort();
 }
+
+#[tokio::test]
+async fn rereads_carbon_job_status_after_release() {
+    use axum::extract::State;
+    use std::sync::{Arc, RwLock};
+
+    async fn jobs(State(status): State<Arc<RwLock<&'static str>>>) -> Json<Value> {
+        Json(json!([{
+            "id": "job-a", "jobId": "WO-42", "companyId": "company-a",
+            "status": *status.read().unwrap()
+        }]))
+    }
+
+    let status = Arc::new(RwLock::new("Draft"));
+    let router = Router::new()
+        .route("/rest/v1/jobs", get(jobs))
+        .with_state(status.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let reader = HttpOrderReader::new(source(
+        &url,
+        HttpSourceKind::CarbonRest {
+            company: "company-a",
+            project_key: "project-fixture",
+        },
+    ))
+    .unwrap();
+
+    for before in ["Draft", "Planned"] {
+        *status.write().unwrap() = before;
+        let initial = reader.read_order("job-a").await.unwrap();
+        *status.write().unwrap() = "Ready";
+        let released = reader.read_order("job-a").await.unwrap();
+        assert_eq!(initial.identity, released.identity);
+        assert_eq!(initial.display_number, released.display_number);
+        for (observation, expected) in [(initial, before), (released, "Ready")] {
+            assert_eq!(observation.source_status.as_deref(), Some(expected));
+            assert_eq!(observation.normalized_status, None);
+            assert_eq!(observation.mapping_version, "0.1");
+        }
+    }
+    server.abort();
+}

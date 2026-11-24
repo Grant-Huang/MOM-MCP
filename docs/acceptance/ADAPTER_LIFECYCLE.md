@@ -10,6 +10,12 @@
 
 当前映射逐项保留源值，`normalized_status` 为空，`mapping_issue=unmapped`。未来提议同一规范状态时，需要核对各来源的操作前置条件、库存或计划副作用、进入状态后的可执行操作及反例。运行 `cargo test --locked --test external_order preserves_source_specific_release_states` 验证实际 Rust 投影器。测试使用来源响应夹具。
 
+## Carbon 放行规则与重读复验
+
+在固定 Carbon 提交 `05bd067c0a72ca9f0983f6278d2a7c9bb48b716c` 上，从 `apps/erp` 运行 `node_modules/.bin/vitest run test/release-jobs.test.ts test/job-status-guard.test.ts`。两套共 28 项通过，验证放行顺序和状态守卫，使用测试依赖替身。
+
+在 MOM-MCP 运行 `cargo test --locked --test external_http rereads_carbon_job_status_after_release`。同一个 Rust Reader 绑定相同公司和 Job ID，分别验证 REST 源从 `Draft` 或 `Planned` 变为 `Ready` 后的重读。记录身份、显示号和映射版本保持一致，规范状态为空。源状态转换由回环夹具驱动，真实部署上的完整放行工作流及前后读回仍按下表补验。
+
 ## 后续验收缺口
 
 | 缺口 | 补齐条件与证据 |
