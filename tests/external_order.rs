@@ -43,6 +43,7 @@ fn projects_three_sources_and_retains_distinct_identities() {
         assert_eq!(row.source_status.as_deref(), Some(state));
         assert_eq!(row.normalized_status, None);
         assert_eq!(row.mapping_issue, MappingIssue::Unmapped);
+        assert_eq!(row.mapping_version, "0.1");
         assert_eq!(row.source_updated_at.as_deref(), timestamp);
         assert_eq!(row.identity.source_id, "42");
         identities.push(row.identity);
@@ -91,5 +92,45 @@ fn distinguishes_missing_and_malformed_status_and_checks_binding() {
     assert_eq!(
         project_order(&binding, json!({"id":"42","jobId":"WO-42"})),
         Err(ProjectionError::InvalidBinding)
+    );
+}
+
+#[test]
+fn keeps_equal_record_ids_and_display_numbers_distinct_across_tenants_and_sites() {
+    let baseline = bind(Source::Odoo, "odoo");
+    let other_tenant = BoundOrder {
+        tenant: "tenant-b",
+        ..baseline
+    };
+    let other_site = BoundOrder {
+        site: "site-b",
+        ..baseline
+    };
+    let payload = json!([{"id":42,"name":"WO-42","state":"confirmed"}]);
+    let baseline = project_order(&baseline, payload.clone()).unwrap();
+    let other_tenant = project_order(&other_tenant, payload.clone()).unwrap();
+    let other_site = project_order(&other_site, payload).unwrap();
+    assert_ne!(baseline.identity, other_tenant.identity);
+    assert_ne!(baseline.identity, other_site.identity);
+    assert_ne!(other_tenant.identity, other_site.identity);
+    assert_eq!(baseline.display_number, other_tenant.display_number);
+    assert_eq!(baseline.display_number, other_site.display_number);
+}
+
+#[test]
+fn matches_large_numeric_source_ids_without_rounding() {
+    let binding = BoundOrder {
+        source_id: "9007199254740993",
+        ..bind(Source::Odoo, "odoo")
+    };
+    let exact = json!([{"id":9007199254740993_u64,"name":"WO-42"}]);
+    let neighboring = json!([{"id":9007199254740992_u64,"name":"WO-42"}]);
+    assert_eq!(
+        project_order(&binding, exact).unwrap().identity.source_id,
+        binding.source_id
+    );
+    assert_eq!(
+        project_order(&binding, neighboring),
+        Err(ProjectionError::UnexpectedRecord)
     );
 }
