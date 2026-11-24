@@ -12,6 +12,7 @@ mod operations;
 mod probe;
 mod quality;
 mod receipt_reversals;
+mod reconciliation;
 mod reservations;
 mod routes;
 mod scenario;

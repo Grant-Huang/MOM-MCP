@@ -1129,6 +1129,51 @@ pub fn invoke(
     cursor: i64,
 ) -> anyhow::Result<(Value, bool)> {
     let mut state = load(tx, run, setup, orders)?;
+    if action == Action::ReconcileWorkOrder {
+        let id = args["work_order"].as_str().unwrap();
+        if !crate::scenario::identifier(id) {
+            return Ok((error("INVALID_ARGUMENT"), false));
+        }
+        let Some(order) = state.orders.get(id) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        let mut summary =
+            crate::wip::reconcile(tx, run, id, order.hold_reason.is_some(), &state.reports)?;
+        if !setup.finished_output_receipt {
+            return Ok((summary, false));
+        }
+        let quality = if let Some(code) = crate::quality::blocking(tx, run, id)? {
+            code
+        } else if order.hold_reason.is_some() {
+            "WORK_ORDER_HELD".into()
+        } else {
+            match order.inspection.as_deref() {
+                Some("fail") => "QUALITY_HOLD",
+                Some("scrap") => "QUALITY_SCRAPPED",
+                Some("pass") => "released",
+                _ => "pending",
+            }
+            .into()
+        };
+        let settlement = crate::reconciliation::read(
+            tx,
+            run,
+            id,
+            &state.reports,
+            &quality,
+            order.completion_confirmed == Some(true),
+            order.phase == Phase::Closed,
+            cursor,
+        )?;
+        if settlement["differences"]
+            .as_array()
+            .is_some_and(|differences| !differences.is_empty())
+        {
+            summary["balanced"] = json!(false);
+        }
+        summary["settlement"] = settlement;
+        return Ok((summary, false));
+    }
     if action.is_genealogy_action() {
         if let Some(order) = args.get("work_order").and_then(Value::as_str)
             && !state.orders.contains_key(order)

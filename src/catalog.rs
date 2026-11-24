@@ -26,6 +26,7 @@ pub enum Action {
     GetWip,
     ReverseWipMovement,
     ReceiveWorkOrderOutput,
+    ReconcileWorkOrder,
     SplitWip,
     MergeWip,
     MoveWip,
@@ -207,6 +208,7 @@ impl Action {
             Self::GetWip,
             Self::ReverseWipMovement,
             Self::ReceiveWorkOrderOutput,
+            Self::ReconcileWorkOrder,
             Self::SplitWip,
             Self::MergeWip,
             Self::MoveWip,
@@ -285,6 +287,7 @@ impl Action {
             Self::UnpickMaterial => "unpick_material",
             Self::ReleaseReceiptInspection => "release_receipt_inspection",
             Self::GetMaterialAvailability => "get_material_availability",
+            Self::ReconcileWorkOrder => "reconcile_work_order",
             Self::ReceiveWorkOrderOutput => "receive_work_order_output",
             Self::SplitWip => "split_wip",
             Self::MergeWip => "merge_wip",
@@ -357,7 +360,8 @@ impl Action {
 
     fn keywords(self) -> &'static [&'static str] {
         match self {
-            Self::GetOrderSnapshot
+            Self::ReconcileWorkOrder
+            | Self::GetOrderSnapshot
             | Self::AssessEngineeringChange
             | Self::GetWorkOrder
             | Self::ListWorkOrders
@@ -468,6 +472,9 @@ impl Action {
         )
     }
     pub fn spec(self) -> Spec {
+        if self == Self::ReconcileWorkOrder {
+            return crate::reconciliation::spec();
+        }
         if self == Self::ReceiveWorkOrderOutput {
             return crate::finished_output::spec();
         }

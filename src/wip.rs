@@ -360,7 +360,7 @@ pub(crate) fn move_lot(
     Ok(json!({"ok":true,"work_order":order,"wip_id":id,"movement":movement}))
 }
 
-fn consumer<'a>(reports: &'a [Report], order: &str, id: &str) -> Option<&'a str> {
+pub(crate) fn consumer<'a>(reports: &'a [Report], order: &str, id: &str) -> Option<&'a str> {
     reports
         .iter()
         .find(|report| {
@@ -624,24 +624,24 @@ pub(crate) fn partition_lot(
     )
 }
 
-struct Lot<'a> {
+pub(crate) struct Lot<'a> {
     report: &'a Report,
     child: Option<(&'a Partition, &'a Child)>,
 }
 
 impl<'a> Lot<'a> {
-    fn id(&self) -> &'a str {
+    pub(crate) fn id(&self) -> &'a str {
         self.child.map_or(&self.report.id, |(_, child)| &child.id)
     }
 
-    fn serials(&self) -> &'a [String] {
+    pub(crate) fn serials(&self) -> &'a [String] {
         self.child
             .map_or(&self.report.serial_numbers, |(_, child)| {
                 &child.serial_numbers
             })
     }
 
-    fn quantity(&self) -> usize {
+    pub(crate) fn quantity(&self) -> usize {
         self.child.map_or(self.report.quantity, |(_, child)| {
             child.serial_numbers.len()
         })
@@ -654,7 +654,7 @@ impl<'a> Lot<'a> {
             })
     }
 
-    fn inactive(&self) -> Option<&'static str> {
+    pub(crate) fn inactive(&self) -> Option<&'static str> {
         match self.child {
             Some((split, _)) if split.merged_cursor.is_some() => Some("merged"),
             Some(_) => None,
@@ -665,7 +665,7 @@ impl<'a> Lot<'a> {
     }
 }
 
-fn lots<'a>(reports: &'a [Report], order: &'a str) -> impl Iterator<Item = Lot<'a>> {
+pub(crate) fn lots<'a>(reports: &'a [Report], order: &'a str) -> impl Iterator<Item = Lot<'a>> {
     reports
         .iter()
         .filter(move |report| report.order == order && report.step == 0)
@@ -702,4 +702,146 @@ fn movement_state<'a>(
         }
     }
     None
+}
+
+pub(crate) fn reconcile_spec() -> Spec {
+    let count = json!({"type":"integer","minimum":0});
+    let issues = object(
+        &[
+            "reservation_id",
+            "lot_id",
+            "unit",
+            "issued",
+            "returned",
+            "consumed",
+            "unconsumed",
+        ],
+        json!({"reservation_id":id_schema(),"lot_id":id_schema(),"unit":text(),
+            "issued":quantity_schema(),"returned":quantity_schema(),"consumed":quantity_schema(),
+            "unconsumed":{"type":"string","pattern":"^-?[0-9]+(\\.[0-9]{1,3})?$"}}),
+    );
+    let counts = object(
+        &[
+            "machined",
+            "at_source",
+            "at_destination",
+            "consumed",
+            "assembly_reported",
+        ],
+        json!({"machined":count,"at_source":count,"at_destination":count,"consumed":count,"assembly_reported":count}),
+    );
+    Spec {
+        name: Action::ReconcileWorkOrder.name(),
+        description: "核对工单实际发退料、投入量和工序在制余额",
+        domain: "production",
+        effect: "read",
+        input: object(&["work_order"], json!({"work_order":id_schema()})),
+        output: json!({"oneOf":[object(
+            &["ok","work_order","balanced","wip","issues","discrepancies"],
+            json!({"ok":{"const":true},"work_order":id_schema(),"balanced":{"type":"boolean"},
+                "wip":counts,"issues":{"type":"array","items":issues},
+                "blocking":text(),"discrepancies":{"type":"array","items":text()}})),
+            object(&["ok","code"],json!({"ok":{"const":false},"code":text()}))]}),
+        preconditions: &["run_open", "tool_enabled_in_scenario"],
+        side_effect: "none",
+        errors: &["INVALID_ARGUMENT", "WORK_ORDER_NOT_FOUND"],
+        visibility: "run",
+    }
+}
+
+pub(crate) fn reconcile(
+    tx: &Transaction<'_>,
+    run: &str,
+    order: &str,
+    order_held: bool,
+    reports: &[Report],
+) -> rusqlite::Result<Value> {
+    use crate::inventory::{parse_quantity, quantity};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut issues = Vec::new();
+    let mut discrepancies = BTreeSet::new();
+    let mut used = BTreeMap::new();
+    let mut machined = 0;
+    let mut assembly_reported = 0;
+    let mut reported_serials = Vec::new();
+    for report in reports
+        .iter()
+        .filter(|report| report.order == order && !report.reversed)
+    {
+        if report.step == 0 {
+            machined += report.quantity;
+        } else if report.step == 1 {
+            assembly_reported += report.quantity;
+            reported_serials.extend(report.serial_numbers.iter().map(String::as_str));
+        }
+        for input in &report.material_inputs {
+            *used.entry(input.reservation_id.as_str()).or_insert(0) +=
+                parse_quantity(&input.quantity).expect("validated material quantity");
+        }
+    }
+    let mut query = tx.prepare(
+        "SELECT r.reservation,r.lot,s.unit,r.quantity,COALESCE(t.quantity,0)
+         FROM stock_reservations r
+         JOIN stock_lot_origins s ON s.run=r.run AND s.lot=r.lot
+         LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
+         WHERE r.run=?1 AND r.work_order=?2 AND r.status='issued' ORDER BY r.reservation",
+    )?;
+    let mut rows = query.query(params![run, order])?;
+    while let Some(row) = rows.next()? {
+        let reservation: String = row.get(0)?;
+        let issued: i64 = row.get(3)?;
+        let returned: i64 = row.get(4)?;
+        let consumed = used.remove(reservation.as_str()).unwrap_or(0);
+        let remaining = issued - returned - consumed;
+        if remaining < 0 {
+            discrepancies.insert("ISSUE_OVERCONSUMED");
+        }
+        let unconsumed = if remaining < 0 {
+            format!("-{}", quantity(-remaining))
+        } else {
+            quantity(remaining)
+        };
+        issues.push(
+            json!({"reservation_id":reservation,"lot_id":row.get::<_,String>(1)?,
+            "unit":row.get::<_,String>(2)?,"issued":quantity(issued),"returned":quantity(returned),
+            "consumed":quantity(consumed),"unconsumed":unconsumed}),
+        );
+    }
+    if !used.is_empty() {
+        discrepancies.insert("REPORTED_ISSUE_MISSING");
+    }
+    let (mut at_source, mut at_destination, mut consumed) = (0, 0, 0);
+    let mut consumed_serials = Vec::new();
+    let mut material_blocked = false;
+    for lot in lots(reports, order).filter(|lot| lot.inactive().is_none()) {
+        if consumer(reports, order, lot.id()).is_some() {
+            consumed += lot.quantity();
+            consumed_serials.extend(lot.serials().iter().map(String::as_str));
+        } else if lot.movement().is_some() {
+            at_destination += lot.quantity();
+        } else {
+            at_source += lot.quantity();
+        }
+        material_blocked |= material_held(tx, run, lot.report)?;
+    }
+    if machined != at_source + at_destination + consumed {
+        discrepancies.insert("WIP_QUANTITY_MISMATCH");
+    }
+    reported_serials.sort_unstable();
+    consumed_serials.sort_unstable();
+    if assembly_reported != consumed || reported_serials != consumed_serials {
+        discrepancies.insert("ASSEMBLY_INPUT_MISMATCH");
+    }
+    let mut result = json!({"ok":true,"work_order":order,"balanced":discrepancies.is_empty(),
+        "wip":{"machined":machined,"at_source":at_source,"at_destination":at_destination,
+            "consumed":consumed,"assembly_reported":assembly_reported},
+        "issues":issues,"discrepancies":discrepancies});
+    if let Some(blocking) = crate::quality::blocking(tx, run, order)?
+        .or_else(|| order_held.then(|| "WORK_ORDER_HELD".into()))
+        .or_else(|| material_blocked.then(|| "MATERIAL_HELD".into()))
+    {
+        result["blocking"] = json!(blocking);
+    }
+    Ok(result)
 }

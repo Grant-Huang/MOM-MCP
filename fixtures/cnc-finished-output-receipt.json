@@ -1,6 +1,6 @@
 {
   "scenario_id": "cnc",
-  "version": 40,
+  "version": 41,
   "title": "汽车零部件 CNC · 完工入库",
   "model": "cnc_wear",
   "work_orders": [

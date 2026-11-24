@@ -409,7 +409,8 @@ fn query(
             {
                 return Ok(Err(reject("ITEM_REVISION_NOT_FOUND", "revision")));
             }
-            let (on_hand, pending, reserved) = balance(tx, run, item.unwrap(), revision, location)?;
+            let (on_hand, pending, reserved) =
+                balance(tx, run, item.unwrap(), revision, location, None)?;
             json!({"balance":{"item_id":item,"revision":revision,"location":location,"unit":unit,
                 "on_hand":quantity(on_hand),"pending_inspection":quantity(pending),"reserved":quantity(reserved),"available":quantity(on_hand-pending-reserved)}})
         }
@@ -648,12 +649,13 @@ pub(crate) fn pending_receipt(
     )
 }
 
-fn balance(
+pub(crate) fn balance(
     tx: &Transaction<'_>,
     run: &str,
     item: &str,
     revision: Option<i64>,
     location: Option<&str>,
+    lot: Option<&str>,
 ) -> rusqlite::Result<(i64, i64, i64)> {
     tx.query_row(
         "SELECT COALESCE(SUM(s.quantity - COALESCE((SELECT SUM(x.quantity-COALESCE(t.quantity,0)) FROM stock_reservations x
@@ -664,8 +666,9 @@ fn balance(
              WHERE x.run=s.run AND x.lot=s.lot AND x.status IN ('reserved','picked'))),0)
          FROM stock_available_lots s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
          WHERE s.run=?1 AND s.item=?2 AND s.posted_cursor IS NOT NULL
-         AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)",
-        params![run,item,revision,location],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+         AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)
+         AND (?5 IS NULL OR s.lot=?5)",
+        params![run,item,revision,location,lot],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
     )
 }
 
@@ -815,7 +818,7 @@ pub(crate) fn requirements(
     };
     let mut requirements = Vec::with_capacity(expansion.quantities.len());
     for ((item, revision, unit), required) in expansion.quantities {
-        let (on_hand, pending, reserved) = balance(tx, run, &item, Some(revision), None)?;
+        let (on_hand, pending, reserved) = balance(tx, run, &item, Some(revision), None, None)?;
         let available = on_hand - pending - reserved;
         let assigned =
             crate::reservations::order_quantity_by_state(tx, run, order, &item, revision, false)?;

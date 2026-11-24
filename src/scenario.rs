@@ -420,6 +420,13 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         "finished output requires recorded WIP, inventory, genealogy and controlled work-order closure"
     );
     anyhow::ensure!(
+        !definition
+            .capabilities
+            .contains(&Action::ReconcileWorkOrder)
+            || definition.capabilities.contains(&Action::MoveWip),
+        "work order reconciliation requires work in process movement"
+    );
+    anyhow::ensure!(
         definition.capabilities.contains(&Action::MoveWip)
             == definition
                 .manufacturing
@@ -749,6 +756,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-wip-movement-reversal.json"),
             include_str!("../fixtures/cnc-wip-split-merge.json"),
             include_str!("../fixtures/cnc-finished-output-receipt.json"),
+            include_str!("../fixtures/cnc-work-order-reconciliation.json"),
+            include_str!("../fixtures/cnc-full-order-reconciliation.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
@@ -1781,6 +1790,7 @@ impl Scenarios {
                     | Action::MoveWip
                     | Action::ReverseWipMovement
                     | Action::ReceiveWorkOrderOutput
+                    | Action::ReconcileWorkOrder
                     | Action::SplitWip
                     | Action::MergeWip
             )
