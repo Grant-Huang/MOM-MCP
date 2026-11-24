@@ -4740,6 +4740,11 @@ fn p9d_06_reverse_wip_movement() {
 }
 
 #[test]
+fn p9d_10_reconcile_work_order() {
+    run_wip_scenario(40);
+}
+
+#[test]
 fn p9d_08_split_merge_wip() {
     run_wip_scenario(39);
 }
@@ -4779,6 +4784,7 @@ async fn move_and_consume_wip(
     genealogy: bool,
     reversal: bool,
     partition: bool,
+    reconciliation: bool,
 ) {
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
@@ -4799,6 +4805,10 @@ async fn move_and_consume_wip(
     }
     apply("start_operation", "start-source", prep.clone()).await;
     let machining_report = |quantity, amount| json!({"work_order":order,"operation":operation,"quantity":quantity,"material_inputs":{"RS-1":amount}});
+    let reconcile = || invoke("reconcile_work_order", json!({"work_order":order}));
+    if reconciliation {
+        assert_eq!(reconcile().await["wip"]["machined"], 0);
+    }
     let first = apply(
         "post_operation_report",
         "source1",
@@ -4811,7 +4821,17 @@ async fn move_and_consume_wip(
         write("move_wip", "early", movement.clone()).await["code"],
         "WIP_DESTINATION_NOT_ELIGIBLE"
     );
-    let mut second_args = machining_report(6, "1");
+    if reconciliation {
+        apply(
+            "return_unused_material",
+            "return-before-assembly",
+            json!({
+                "reservation_id":"RS-1","movement_id":"RET-1","quantity":"0.25","reason":"surplus"
+            }),
+        )
+        .await;
+    }
+    let mut second_args = machining_report(6, if reconciliation { "0.75" } else { "1" });
     if genealogy {
         second_args["material_inputs"] = json!({"RS-2":"1"});
     }
@@ -4919,6 +4939,15 @@ async fn move_and_consume_wip(
         assert_eq!(read(child).await["status"], "merged");
         assert_eq!(read(sibling).await["status"], "merged");
         assert_eq!(read(second_id).await["quantity"], 6);
+        if reconciliation {
+            let check = reconcile().await;
+            assert_eq!(check["balanced"], true, "{check}");
+            assert_eq!(
+                check["wip"],
+                json!({"machined":10,"at_source":10,"at_destination":0,"consumed":0,"assembly_reported":0})
+            );
+        }
+
         let edges = invoke(
             "list_genealogy_edges",
             json!({"work_order":order,"limit":100}),
@@ -5025,6 +5054,15 @@ async fn move_and_consume_wip(
     }
     apply("reverse_operation_report","reverse-assembly",json!({"work_order":order,"report_id":consumed["report"]["id"],"reason":"incorrect report"})).await;
     assert_eq!(read().await["lots"][0]["status"], "moved");
+    if reconciliation {
+        let check = reconcile().await;
+        assert_eq!(
+            check["wip"],
+            json!({"machined":10,"at_source":6,"at_destination":4,"consumed":0,"assembly_reported":0})
+        );
+        assert_eq!(check["balanced"], true, "{check}");
+    }
+
     if reversal {
         withdraw["expected_cursor"] = cursor().await;
         withdraw["idempotency_key"] = json!("withdraw");
@@ -5065,6 +5103,25 @@ async fn move_and_consume_wip(
     report["wip_inputs"] = json!([second_id]);
     apply("post_operation_report", "consume-second", report).await;
     apply("complete_operation", "complete-assembly", assembly).await;
+    if reconciliation {
+        let before = cursor().await;
+        let check = reconcile().await;
+        assert_eq!(check["balanced"], true, "{check}");
+        assert_eq!(
+            check["wip"],
+            json!({"machined":10,"at_source":0,"at_destination":0,"consumed":10,"assembly_reported":10})
+        );
+        assert_eq!(check["issues"][0]["issued"], "1.5");
+        assert_eq!(check["issues"][0]["returned"], "0.25");
+        assert_eq!(check["issues"][0]["consumed"], "1.25");
+        assert_eq!(check["issues"][0]["unconsumed"], "0");
+        assert_eq!(cursor().await, before);
+        assert_eq!(
+            invoke("reconcile_work_order", json!({"work_order":"unknown"})).await["code"],
+            "WORK_ORDER_NOT_FOUND"
+        );
+    }
+
     if genealogy {
         Box::pin(assert_genealogy(
             client,
@@ -5082,7 +5139,7 @@ async fn move_and_consume_wip(
             json!({"item_id":"WIRE","location":"RAW-02"})
         )
         .await["balance"]["on_hand"],
-        "0.5"
+        if reconciliation { "0.75" } else { "0.5" }
     );
 }
 
@@ -5241,7 +5298,7 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=39) {
+            if matches!(version,36..=40) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
             }
             for (name,args) in [
@@ -5469,14 +5526,14 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if matches!(version,36..=39) {
-                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version==39)).await;
+            if matches!(version,36..=40) {
+                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version>=39,version==40)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
                 let lots=lots["lots"].as_array().unwrap();
                 assert_eq!(lots.iter().filter(|lot|lot["status"]=="consumed").count(),2);
-                assert_eq!(lots.iter().filter(|lot|lot["status"]=="merged").count(),if version==39 {2} else {0});
-                assert_eq!(lots.len(),if version==39 {4} else {2});
+                assert_eq!(lots.iter().filter(|lot|lot["status"]=="merged").count(),if version>=39 {2} else {0});
+                assert_eq!(lots.len(),if version>=39 {4} else {2});
                 continue;
             }
             if version == 35 {

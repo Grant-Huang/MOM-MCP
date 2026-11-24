@@ -1137,7 +1137,7 @@ pub fn invoke(
             false,
         ));
     }
-    if action == Action::GetWip {
+    if matches!(action, Action::GetWip | Action::ReconcileWorkOrder) {
         let order = args["work_order"].as_str().unwrap();
         if !crate::scenario::identifier(order) {
             return Ok((error("INVALID_ARGUMENT"), false));
@@ -1145,6 +1145,18 @@ pub fn invoke(
         let Some(current) = state.orders.get(order) else {
             return Ok((error("WORK_ORDER_NOT_FOUND"), false));
         };
+        if action == Action::ReconcileWorkOrder {
+            return Ok((
+                crate::wip::reconcile(
+                    tx,
+                    run,
+                    order,
+                    current.hold_reason.is_some(),
+                    &state.reports,
+                )?,
+                false,
+            ));
+        }
         return Ok((
             crate::wip::read(
                 tx,
