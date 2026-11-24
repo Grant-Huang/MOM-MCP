@@ -4765,6 +4765,10 @@ fn p9d_04_batch_serial_genealogy() {
 }
 
 fn run_wip_scenario(version: u64) {
+    run_wip_scenario_with_quality(version, false);
+}
+
+fn run_wip_scenario_with_quality(version: u64, quality_recovery: bool) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -4773,13 +4777,10 @@ fn run_wip_scenario(version: u64) {
                 .enable_all()
                 .build()
                 .unwrap()
-                .block_on(operation_issue_scenarios(&[(
-                    "cnc",
-                    version,
-                    "WO-1",
-                    "machining",
-                    "MACH-01",
-                )]));
+                .block_on(operation_issue_scenarios_with_quality(
+                    &[("cnc", version, "WO-1", "machining", "MACH-01")],
+                    quality_recovery,
+                ));
         })
         .unwrap()
         .join()
@@ -4794,6 +4795,7 @@ async fn move_and_consume_wip(
     genealogy: bool,
     reversal: bool,
     version: u64,
+    quality_recovery: bool,
 ) {
     let legacy_reconciliation = version == 40;
     let partition = matches!(version, 39 | 40);
@@ -5158,6 +5160,7 @@ async fn move_and_consume_wip(
             order,
             &first["report"]["serial_numbers"][0],
             version == 42,
+            quality_recovery,
         ))
         .await;
     }
@@ -5205,12 +5208,145 @@ async fn move_and_consume_wip(
     );
 }
 
+#[test]
+fn p9d_16_quality_recovery_before_output() {
+    run_wip_scenario_with_quality(42, true);
+}
+
+async fn recover_output_quality(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+    receipt: &Value,
+) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["expected_cursor"] = cursor().await;
+        args["idempotency_key"] = json!(key);
+        invoke(name, args).await
+    };
+    let check = async |id: &str, value: f64, prior: Option<&str>| {
+        let mut args =
+            json!({"work_order":order,"inspection_id":id,"specification_version":"QA@1"});
+        if let Some(prior) = prior {
+            args["reinspection_of"] = json!(prior);
+        }
+        let created = write("create_inspection", &format!("create-{id}"), args).await;
+        assert_eq!(created["ok"], true, "{created}");
+        let measured=write("record_measurement",&format!("measure-{id}"),json!({
+            "inspection_id":id,"characteristic":"width","unit":"mm","value":value,"lower_limit":1,"upper_limit":2
+        })).await;
+        assert_eq!(measured["ok"], true, "{measured}");
+        write(
+            "complete_inspection",
+            &format!("complete-{id}"),
+            json!({"inspection_id":id}),
+        )
+        .await
+    };
+    let move_quality = async |name: &str, key: &str, mut args: Value| {
+        args["inspection_id"] = json!("FINAL-FAIL");
+        args["responsible"] = json!("QA-01");
+        args["reason"] = json!("final dimensional check");
+        args["evidence"] = json!("QA-LOG");
+        write(name, key, args).await
+    };
+    assert_eq!(
+        check("FINAL-OLD", 1.5, None).await["inspection"]["status"],
+        "passed"
+    );
+    assert_eq!(
+        check("FINAL-FAIL", 3.0, None).await["inspection"]["status"],
+        "failed"
+    );
+    assert_eq!(
+        move_quality("open_nonconformance", "final-open", json!({})).await["nonconformance"]["status"],
+        "open"
+    );
+    assert_eq!(
+        move_quality("place_quality_hold", "final-hold", json!({})).await["nonconformance"]["status"],
+        "held"
+    );
+    let before = cursor().await;
+    let gated = write(
+        "receive_work_order_output",
+        "recovered-output",
+        receipt.clone(),
+    )
+    .await;
+    assert_eq!(gated["code"], "QUALITY_HOLD", "{gated}");
+    assert_eq!(cursor().await, before);
+    let account = invoke("reconcile_work_order", json!({"work_order":order})).await;
+    assert_eq!(account["settlement"]["quality"], "QUALITY_HOLD");
+    assert_eq!(account["balanced"], true);
+    assert_eq!(account["settlement"]["output_receipts"], json!([]));
+    assert_eq!(
+        invoke(
+            "get_stock_balance",
+            json!({"item_id":"FRAME","location":"RAW-02"})
+        )
+        .await["balance"]["on_hand"],
+        "0"
+    );
+    assert_eq!(
+        move_quality(
+            "disposition_nonconformance",
+            "stale-evidence",
+            json!({
+                "decision":"reinspection","reinspection_id":"FINAL-OLD"
+            })
+        )
+        .await["code"],
+        "REINSPECTION_NOT_ACCEPTABLE"
+    );
+    assert_eq!(
+        check("FINAL-PASS", 1.5, Some("FINAL-FAIL")).await["inspection"]["status"],
+        "passed"
+    );
+    assert_eq!(
+        move_quality(
+            "disposition_nonconformance",
+            "corrected-evidence",
+            json!({
+                "decision":"reinspection","reinspection_id":"FINAL-PASS"
+            })
+        )
+        .await["nonconformance"]["status"],
+        "disposed"
+    );
+    assert_eq!(
+        write(
+            "receive_work_order_output",
+            "recovered-output",
+            receipt.clone()
+        )
+        .await["code"],
+        "QUALITY_HOLD"
+    );
+    assert_eq!(
+        move_quality("release_quality_hold", "final-release", json!({})).await["nonconformance"]["status"],
+        "released"
+    );
+    let history = invoke("get_inspection", json!({"inspection_id":"FINAL-FAIL"})).await;
+    assert_eq!(history["inspection"]["status"], "failed");
+    assert_eq!(
+        history["nonconformance"]["history"][2]["reinspection_id"],
+        "FINAL-PASS"
+    );
+    let available = invoke("reconcile_work_order", json!({"work_order":order})).await;
+    assert_eq!(available["settlement"]["quality"], "released");
+    assert_eq!(available["wip"], account["wip"]);
+    assert_eq!(available["issues"], account["issues"]);
+}
+
 async fn receive_finished_output(
     client: &RunningService<RoleClient, ()>,
     run: &Value,
     order: &str,
     serial: &Value,
     reconciliation: bool,
+    quality_recovery: bool,
 ) {
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
@@ -5305,7 +5441,14 @@ async fn receive_finished_output(
         json!({"item_id":"FRAME","revision":2,"revision_type":"item"}),
     )
     .await;
-    receipt["idempotency_key"] = json!("post-fg");
+    if quality_recovery {
+        Box::pin(recover_output_quality(client, run, order, &receipt)).await;
+    }
+    receipt["idempotency_key"] = json!(if quality_recovery {
+        "recovered-output"
+    } else {
+        "post-fg"
+    });
     receipt["expected_cursor"] = cursor().await;
     let posted = invoke("receive_work_order_output", receipt.clone()).await;
     assert_eq!(posted["ok"], true, "{posted}");
@@ -5562,7 +5705,16 @@ async fn assert_genealogy(
     );
     assert_eq!(cursor().await, stable_cursor);
 }
-async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) {
+fn operation_issue_scenarios<'a>(
+    scenarios: &'a [(&'a str, u64, &'a str, &'a str, &'a str)],
+) -> std::pin::Pin<Box<impl std::future::Future<Output = ()> + 'a>> {
+    Box::pin(operation_issue_scenarios_with_quality(scenarios, false))
+}
+
+async fn operation_issue_scenarios_with_quality(
+    scenarios: &[(&str, u64, &str, &str, &str)],
+    quality_recovery: bool,
+) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
     let (client, _child) = connect_mode(&db, "0", true).await;
@@ -5816,7 +5968,7 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
             if matches!(version,36..=42) {
-                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version)).await;
+                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version,quality_recovery)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
                 let lots=lots["lots"].as_array().unwrap();
