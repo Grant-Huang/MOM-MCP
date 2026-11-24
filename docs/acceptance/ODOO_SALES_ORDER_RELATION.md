@@ -33,3 +33,45 @@
 同一镜像与 PostgreSQL 16 上，Rust 候选读取器已通过双公司复验。两个单公司身份各自读到预期的制造单、销售订单行和销售订单，交叉读取均返回 `NotVisible`。只填写 `origin` 的同公司制造单返回空关系。复验使用隔离数据库和临时凭据。Docker VFS 空间不足时，将相同镜像摘要的文件系统重打包为单层，保留 Odoo 入口、用户及运行环境。该结果验证实际来源的独立读取，宿主公开关系的快照要求仍待评审。
 
 加入两条关联边复读后，使用同一固定版本和双公司用例复验通过。关系改指及清除由回环夹具注入，均停止返回关系。实际来源复验覆盖稳定链路、交叉不可见与空关系。
+
+## 单事务读取候选
+
+Odoo JSON-2 的 `POST /json/2/mrp.production/web_read` 可在同一个请求中展开两条 many2one 关系。候选规格只请求校验链路需要的 ID 和公司字段。
+
+```json
+{
+  "ids": [42],
+  "specification": {
+    "id": {},
+    "company_id": {},
+    "sale_line_id": {
+      "fields": {
+        "id": {},
+        "company_id": {},
+        "order_id": {
+          "fields": {
+            "id": {},
+            "company_id": {}
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+请求使用与三跳方案相同的数据库和普通读取身份。Odoo 的 JSON-2 控制器在同一请求环境中调用记录方法，`web_read` 递归使用该环境读取关联，数据库连接配置为 PostgreSQL Repeatable Read。因此该候选可将三跳纳入同一事务快照。请求保留上述固定字段，尤其要让每个嵌套对象读取 `company_id`。上游实现对仅请求 `id` 的关联对象有快速路径，对 `display_name` 也有独立取值逻辑，权限复验仅适用于上面的规格。 [JSON-2 控制器](https://github.com/odoo/odoo/blob/d36b9405fe5d2ede753c6d7eceb778ecef20f67b/addons/rpc/controllers/json2.py#L48) · [关系展开](https://github.com/odoo/odoo/blob/d36b9405fe5d2ede753c6d7eceb778ecef20f67b/addons/web/models/models.py#L109) · [事务隔离](https://github.com/odoo/odoo/blob/d36b9405fe5d2ede753c6d7eceb778ecef20f67b/odoo/sql_db.py#L329)
+
+### 固定版本实测
+
+在同一 Odoo Community 19.0 镜像与 PostgreSQL 16 上，以两个单公司的制造用户和销售员身份复验。每人各有一张可读销售单及其制造单。另建一张仅填写 `origin` 的制造单，以及一张同公司、关联另一位销售员所有订单的制造单。
+
+| 对照 | 结果 |
+|---|---|
+| 两个身份读取各自工单的嵌套关系 | 两次 HTTP 200，三段记录 ID 和公司均匹配 |
+| 两个身份交叉查询另一公司工单 | 两次 HTTP 403，错误类型为 `odoo.exceptions.AccessError` |
+| 仅填写 `origin` 的制造单 | HTTP 200，`sale_line_id: false` |
+| 同公司制造单，只读 `id` 与 `company_id` | HTTP 200，确认制造单本身可读 |
+| 同一身份对同一制造单读取完整规格 | HTTP 403，确认关联端权限会拒绝展开 |
+
+将该固定规格作为需要单事务快照时的实现候选。实现须核对每层的 ID、公司和响应结构，并在受信侧验证拒绝类型，避免把一般 403 或上游故障都判为关系不可见。关联字段只由适配器决定，原始错误正文不进入公开结果。部署前还需验证目标版本及模块、冻结错误映射，并确定是否采用该入口。现有 Rust 读取器仍使用分次读取和边复读。
