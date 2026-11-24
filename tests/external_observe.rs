@@ -328,3 +328,115 @@ async fn one_observe_entry_reads_three_authorized_worlds() {
     }
     task.abort();
 }
+
+#[tokio::test]
+async fn publishes_only_host_authorized_odoo_relation_references() {
+    use axum::routing::post;
+    use mom_mcp::external_observe::AuthorizedOdooRelation;
+    use serde_json::Value;
+
+    async fn relation(
+        State(calls): State<Arc<AtomicUsize>>,
+        Json(query): Json<Value>,
+    ) -> Json<Value> {
+        calls.fetch_add(1, Ordering::Relaxed);
+        let id = query["ids"][0].as_i64().unwrap();
+        let link = match id {
+            4242 => json!({"id":6363,"company_id":7474,"order_id":{"id":8585,"company_id":7474}}),
+            4243 => json!(false),
+            4244 => json!({"id":6363,"company_id":7474,"order_id":{"id":8585,"company_id":9696}}),
+            _ => panic!("unexpected fixture request"),
+        };
+        Json(json!([{"id":id,"company_id":7474,"sale_line_id":link}]))
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new()
+        .route("/json/2/mrp.production/web_read", post(relation))
+        .with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let service = ExternalObserve::new([HttpSource {
+        kind: HttpSourceKind::Odoo {
+            database: "private-db",
+        },
+        instance: "instance-a",
+        ..source(&origin, "site-a", "local-fixture")
+    }])
+    .unwrap();
+    let selection = WorkOrderSelection {
+        world_id: "world-a",
+        object_ref: "opaque-work",
+    };
+    let scope = SourceScope {
+        tenant: "tenant-a",
+        site: "site-a",
+        instance: "instance-a",
+    };
+    let grant = |work_order_id| async move {
+        Some(AuthorizedOdooRelation {
+            scope,
+            work_order_id,
+            company_id: 7474,
+        })
+    };
+
+    let denied = service
+        .observe_odoo_sales_relation(
+            selection,
+            |_| async { None },
+            |_, _| async { panic!("target resolver called without a work-order authorization") },
+        )
+        .await;
+    assert_eq!(denied, Err(ObserveError::AccessDenied));
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+    let observed = service
+        .observe_odoo_sales_relation(
+            selection,
+            |_| grant(4242),
+            |requested, target| async move {
+                assert_eq!(requested.world_id, "world-a");
+                assert_eq!(requested.object_ref, "opaque-work");
+                assert_eq!(target.scope, scope);
+                assert_eq!((target.company_id, target.sales_order_id), (7474, 8585));
+                Some("opaque-sales")
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(observed).unwrap(),
+        json!({
+            "kind":"fulfills_sales_order", "work_order_ref":"opaque-work", "sales_order_ref":"opaque-sales"
+        })
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    for target_ref in [None, Some(" ")] {
+        let result = service
+            .observe_odoo_sales_relation(selection, |_| grant(4242), |_, _| async { target_ref })
+            .await;
+        assert_eq!(result, Err(ObserveError::NotVisible));
+    }
+    let absent = service
+        .observe_odoo_sales_relation(
+            selection,
+            |_| grant(4243),
+            |_, _| async { panic!("target resolver called without a direct relation") },
+        )
+        .await;
+    assert_eq!(absent, Ok(None));
+    let wrong_company = service
+        .observe_odoo_sales_relation(
+            selection,
+            |_| grant(4244),
+            |_, _| async { panic!("target resolver called for another company") },
+        )
+        .await;
+    assert_eq!(wrong_company, Err(ObserveError::NotVisible));
+    assert_eq!(calls.load(Ordering::Relaxed), 5);
+    server.abort();
+}
