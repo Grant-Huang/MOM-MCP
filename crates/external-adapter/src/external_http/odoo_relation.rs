@@ -2,6 +2,16 @@ use serde_json::Value;
 
 use super::{HttpOrderReader, HttpSourceKind, ReadError, read_json};
 
+const WORK_ORDER: (&str, &[&str]) = (
+    "/json/2/mrp.production/search_read",
+    &["id", "company_id", "sale_line_id"],
+);
+const SALES_LINE: (&str, &[&str]) = (
+    "/json/2/sale.order.line/search_read",
+    &["id", "company_id", "order_id"],
+);
+const SALES_ORDER: (&str, &[&str]) = ("/json/2/sale.order/search_read", &["id", "company_id"]);
+
 /// Internal evidence for the direct Odoo manufacturing-to-sales relationship.
 #[derive(Debug, Eq, PartialEq)]
 pub struct OdooSalesRelation<'a> {
@@ -16,7 +26,8 @@ pub struct OdooSalesRelation<'a> {
 
 impl HttpOrderReader<'_> {
     /// Reads an already authorized manufacturing order in the bound company.
-    /// Each hop uses the same database and credentials. Reads are per record.
+    /// Each hop uses the same database and credentials. Both links are checked
+    /// again before returning a relation. The calls are independent snapshots.
     pub async fn read_odoo_sales_relation(
         &self,
         work_order_id: i64,
@@ -28,36 +39,23 @@ impl HttpOrderReader<'_> {
         if work_order_id <= 0 || company_id <= 0 {
             return Err(ReadError::InvalidBinding);
         }
-        let work_order = self
-            .read_odoo_relation_row(
-                database,
-                "/json/2/mrp.production/search_read",
-                work_order_id,
-                company_id,
-                &["id", "company_id", "sale_line_id"],
-            )
-            .await?;
+        let read = |record, id| self.read_odoo_relation_row(database, record, id, company_id);
+        let work_order = read(WORK_ORDER, work_order_id).await?;
         let Some(sales_line_id) = relation_id(&work_order["sale_line_id"])? else {
             return Ok(None);
         };
-        let line = self
-            .read_odoo_relation_row(
-                database,
-                "/json/2/sale.order.line/search_read",
-                sales_line_id,
-                company_id,
-                &["id", "company_id", "order_id"],
-            )
-            .await?;
+        let line = read(SALES_LINE, sales_line_id).await?;
         let sales_order_id = relation_id(&line["order_id"])?.ok_or(ReadError::NotVisible)?;
-        self.read_odoo_relation_row(
-            database,
-            "/json/2/sale.order/search_read",
-            sales_order_id,
-            company_id,
-            &["id", "company_id"],
-        )
-        .await?;
+        read(SALES_ORDER, sales_order_id).await?;
+
+        let checked_line = read(SALES_LINE, sales_line_id).await?;
+        if relation_id(&checked_line["order_id"])? != Some(sales_order_id) {
+            return Err(ReadError::UnexpectedRecord);
+        }
+        let checked_order = read(WORK_ORDER, work_order_id).await?;
+        if relation_id(&checked_order["sale_line_id"])? != Some(sales_line_id) {
+            return Err(ReadError::UnexpectedRecord);
+        }
 
         Ok(Some(OdooSalesRelation {
             tenant: self.source.tenant,
@@ -73,10 +71,9 @@ impl HttpOrderReader<'_> {
     async fn read_odoo_relation_row(
         &self,
         database: &str,
-        path: &str,
+        (path, fields): (&str, &[&str]),
         id: i64,
         company_id: i64,
-        fields: &[&str],
     ) -> Result<Value, ReadError> {
         let response = self
             .odoo_query(database, path, id, fields, 2)?
