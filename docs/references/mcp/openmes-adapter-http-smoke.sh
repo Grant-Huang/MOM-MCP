@@ -100,6 +100,31 @@ foreach ([
     }
     echo json_encode($evidence, JSON_THROW_ON_ERROR), PHP_EOL;
 }
+
+$adapter = getenv('MOM_OPENMES_ADAPTER_SMOKE');
+if ($adapter !== false) {
+    if (!is_file($adapter) || !is_executable($adapter)) {
+        throw new RuntimeException('MOM_OPENMES_ADAPTER_SMOKE must name an executable');
+    }
+    foreach ([
+        [$fixture['visible'], $fixture['hidden'], $fixture['token']],
+        [$fixture['hidden'], $fixture['visible'], $fixture['witness_token']],
+    ] as [$visible, $hidden, $token]) {
+        $env = getenv();
+        unset($env['MOM_ODOO_WITNESS_TOKEN']);
+        $env['MOM_SAMPLE_TOKEN'] = $token;
+        $process = proc_open(
+            [$adapter, 'openmes', 'http://127.0.0.1:18765', (string) $visible, (string) $hidden, 'PENDING'],
+            [STDIN, STDOUT, STDERR],
+            $pipes,
+            null,
+            $env,
+        );
+        if (!is_resource($process) || proc_close($process) !== 0) {
+            throw new RuntimeException('OpenMES Rust Adapter smoke check failed');
+        }
+    }
+}
 PHP
 then
     cat "$sandbox/server.log" >&2
