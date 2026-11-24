@@ -27,6 +27,12 @@
 
 适配器回环共用入口可执行 `cargo test --locked --test external_observe one_observe_entry_reads_three_authorized_worlds -- --exact`。另执行 `cargo test --locked --test external_observe` 验证逐请求授权、配置与故障隔离。工作区候选证据使用 `/api/world/production/observe`，依赖适配器提交 `ea1fcd8` 和宿主提交 `7a680bf`。用 `scripts/accept-m3-observe.py` 复跑，覆盖 Odoo、OpenMES、Carbon 原生 MCP、Carbon REST 四条回环传输及拒绝、撤权和故障隔离。Carbon 社区版数据路径作为短期取证候选，原生 MCP 兼容性证据单列。MOM-MCP `fbd798a` 的三个适配器 Rust 集成套件共 11 项通过，Carbon 原生探针与本体离线用例共 11 项通过。
 
+### Odoo 双身份来源复验
+
+在固定镜像 `odoo@sha256:03a47921f9eef2c225ded1167fe7828465d2b3177883f30d173bb1c3c792949b` 和 PostgreSQL 16 上初始化 `mrp`，关闭演示数据。为两家公司分别建立一条合成 `draft` 制造单和仅属于该公司的制造用户。运行 MOM-MCP `edeebf4` 的 `external_order_smoke`，分别使用两套临时 API 凭据，并交换主身份和第二身份复跑。
+
+两个方向均通过。主身份读到自己的工单并投影为源状态 `draft`，读取另一公司工单返回 `NotVisible`。第二身份在同一数据库按相同 ID 独立读取成功，确认工单存在。此记录是实际来源直连证据。正式 AgentNexus Observe 仍待首站获批后联调。
+
 ### Carbon 社区后端实测
 
 Carbon 固定提交为 `05bd067c0a72ca9f0983f6278d2a7c9bb48b716c`。用官方社区开发栈的隔离后端启动认证、网关、PostgREST 和 PostgreSQL，执行上游迁移。Docker VFS 的多层解包耗尽空间。本地复跑从原固定摘要重打包 PostgreSQL 17.6.1.166 为单层镜像，沿用文件系统、入口及运行环境，启动时使用该本地镜像。
