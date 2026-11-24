@@ -19,6 +19,23 @@ jobs:
         with:
           name: browser-evidence
           path: test-results/
+  adapter-contracts:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify Rust adapter contracts
+        run: cargo test --locked --test external_http --test external_observe --test external_order --test odoo_relation
+      - name: Verify offline source probes
+        run: >-
+          node --test
+          docs/references/mcp/carbon-mcp-smoke.test.mjs
+          docs/references/mcp/carbon-community-smoke.test.mjs
+          docs/references/mcp/odoo-sales-order-relation.test.mjs
   trace-pilot:
     runs-on: ubuntu-24.04
     permissions:

@@ -27,6 +27,10 @@
 
 适配器回环共用入口可执行 `cargo test --locked --test external_observe one_observe_entry_reads_three_authorized_worlds -- --exact`。另执行 `cargo test --locked --test external_observe` 验证逐请求授权、配置与故障隔离。工作区候选证据使用 `/api/world/production/observe`，依赖适配器提交 `ea1fcd8` 和宿主提交 `7a680bf`。用 `scripts/accept-m3-observe.py` 复跑，覆盖 Odoo、OpenMES、Carbon 原生 MCP、Carbon REST 四条回环传输及拒绝、撤权和故障隔离。Carbon 社区版数据路径作为短期取证候选，原生 MCP 兼容性证据单列。MOM-MCP `fbd798a` 的三个适配器 Rust 集成套件共 11 项通过，Carbon 原生探针与本体离线用例共 11 项通过。
 
+### PR 自动回归
+
+GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传输、Observe、本体投影及 Odoo 关联测试，同时复跑 Carbon REST、Carbon MCP 和 Odoo 关联的离线探针用例。默认使用本地回环和合成数据。真实来源和正式 Observe 验收使用各自的获批环境，继续按本台账登记。
+
 ### Odoo 双身份来源复验
 
 在固定镜像 `odoo@sha256:03a47921f9eef2c225ded1167fe7828465d2b3177883f30d173bb1c3c792949b` 和 PostgreSQL 16 上初始化 `mrp`，关闭演示数据。为两家公司分别建立一条合成 `draft` 制造单和仅属于该公司的制造用户。运行 MOM-MCP `edeebf4` 的 `external_order_smoke`，分别使用两套临时 API 凭据，并交换主身份和第二身份复跑。
