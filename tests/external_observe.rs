@@ -123,6 +123,50 @@ async fn unavailable_or_unconfigured_binding_never_reads_another_source() {
     alternate_task.abort();
 }
 
+#[tokio::test]
+async fn invalid_source_responses_never_read_another_source() {
+    async fn invalid_order(
+        State(calls): State<Arc<AtomicUsize>>,
+        Path(id): Path<u64>,
+    ) -> &'static str {
+        calls.fetch_add(1, Ordering::Relaxed);
+        match id {
+            4242 => "invalid JSON with upstream-private-detail",
+            4243 => r#"{"data":{"id":4244,"order_no":"OTHER-WO","status":"PENDING"}}"#,
+            _ => panic!("unexpected fixture request"),
+        }
+    }
+
+    let primary_calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new()
+        .route("/api/v1/work-orders/{id}", get(invalid_order))
+        .with_state(primary_calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let primary = format!("http://{}", listener.local_addr().unwrap());
+    let primary_task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (alternate, alternate_calls, alternate_task) = run_source(StatusCode::OK).await;
+    let service = ExternalObserve::new([
+        source(&primary, "site-a", "primary"),
+        source(&alternate, "site-b", "alternate"),
+    ])
+    .unwrap();
+    let selection = WorkOrderSelection {
+        world_id: "world-a",
+        object_ref: "opaque-ref",
+    };
+
+    for (index, source_id) in ["4242", "4243"].into_iter().enumerate() {
+        let result = service
+            .observe(selection, |_| async { Some(granted("site-a", source_id)) })
+            .await;
+        assert_eq!(result.unwrap_err(), ObserveError::InvalidSourceResponse);
+        assert_eq!(primary_calls.load(Ordering::Relaxed), index + 1);
+        assert_eq!(alternate_calls.load(Ordering::Relaxed), 0);
+    }
+    primary_task.abort();
+    alternate_task.abort();
+}
+
 #[test]
 fn rejects_duplicate_configuration() {
     let origin = "https://example.test";
