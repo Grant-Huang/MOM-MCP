@@ -167,6 +167,62 @@ async fn invalid_source_responses_never_read_another_source() {
     alternate_task.abort();
 }
 
+#[tokio::test]
+async fn routes_by_tenant_site_and_instance_when_work_order_ids_are_equal() {
+    let (primary, primary_calls, primary_task) = run_source(StatusCode::OK).await;
+    let (other_tenant, tenant_calls, tenant_task) = run_source(StatusCode::OK).await;
+    let (other_instance, instance_calls, instance_task) = run_source(StatusCode::OK).await;
+    let service = ExternalObserve::new([
+        source(&primary, "site-a", "primary"),
+        HttpSource {
+            tenant: "tenant-b",
+            ..source(&other_tenant, "site-a", "other-tenant")
+        },
+        HttpSource {
+            instance: "openmes-secondary",
+            ..source(&other_instance, "site-a", "other-instance")
+        },
+    ])
+    .unwrap();
+    let selection = WorkOrderSelection {
+        world_id: "world-a",
+        object_ref: "opaque-ref",
+    };
+
+    for (tenant, instance, expected_calls) in [
+        ("tenant-a", "openmes", [1, 0, 0]),
+        ("tenant-b", "openmes", [1, 1, 0]),
+        ("tenant-a", "openmes-secondary", [1, 1, 1]),
+        ("tenant-b", "openmes-secondary", [1, 1, 1]),
+    ] {
+        let result = service
+            .observe(selection, |_| async {
+                Some(AuthorizedWorkOrder {
+                    scope: SourceScope {
+                        tenant,
+                        site: "site-a",
+                        instance,
+                    },
+                    source_id: "4242",
+                })
+            })
+            .await;
+        if (tenant, instance) == ("tenant-b", "openmes-secondary") {
+            assert_eq!(result.unwrap_err(), ObserveError::SourceUnavailable);
+        } else {
+            assert_eq!(result.unwrap().object_ref, "opaque-ref");
+        }
+        assert_eq!(
+            [&primary_calls, &tenant_calls, &instance_calls]
+                .map(|calls| calls.load(Ordering::Relaxed)),
+            expected_calls
+        );
+    }
+    for task in [primary_task, tenant_task, instance_task] {
+        task.abort();
+    }
+}
+
 #[test]
 fn rejects_duplicate_configuration() {
     let origin = "https://example.test";
