@@ -28,7 +28,7 @@ pub(crate) fn spec() -> Spec {
         json!({"wip_id":id_schema(),"report_id":id_schema(),"work_order":id_schema(),"source_operation":id_schema(),
              "quantity":{"type":"integer","minimum":1},"unit":{"const":"each"},
              "status":{"enum":["available","moved","consumed","held","scrapped","reversed"]},
-             "movement":movement_schema(),"consumed_by":id_schema(),
+             "movement":movement_schema(),"movement_reversals":{"type":"array","items":reversal_schema()},"consumed_by":id_schema(),
              "serial_numbers":{"type":"array","items":id_schema()},
              "material_inputs":{"type":"array","items":input_row},
              "blocking":{"enum":["WORK_ORDER_HELD","QUALITY_HOLD","QUALITY_SCRAPPED","MATERIAL_HELD"]}}),
@@ -115,6 +115,9 @@ pub(crate) fn read(
         if let Some(movement) = &report.wip_move {
             lot["movement"] = json!(movement);
         }
+        if !report.wip_movement_reversals.is_empty() {
+            lot["movement_reversals"] = json!(report.wip_movement_reversals);
+        }
         if let Some(consumed) = consumed {
             lot["consumed_by"] = json!(consumed);
         }
@@ -187,6 +190,102 @@ pub(crate) fn move_spec() -> Spec {
         ],
         visibility: "run",
     }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct MovementReversal {
+    original_movement: Movement,
+    reversed_cursor: i64,
+    reason: String,
+}
+
+pub(crate) fn reversal_schema() -> Value {
+    object(
+        &["original_movement", "reversed_cursor", "reason"],
+        json!({
+        "original_movement":movement_schema(),"reversed_cursor":{"type":"integer","minimum":1},"reason":text()}),
+    )
+}
+
+pub(crate) fn reverse_spec() -> Spec {
+    Spec {
+        name: Action::ReverseWipMovement.name(),
+        description: "撤回没有有效下游耗用的在制移交",
+        domain: "production",
+        effect: "write",
+        input: object(
+            &[
+                "work_order",
+                "wip_id",
+                "movement_cursor",
+                "reason",
+                "expected_cursor",
+                "idempotency_key",
+            ],
+            json!({"work_order":id_schema(),"wip_id":id_schema(),
+                "movement_cursor":{"type":"integer","minimum":1,"maximum":i64::MAX},
+                "reason":text(),"expected_cursor":{"type":"integer","minimum":0,"maximum":i64::MAX},
+                "idempotency_key":text()}),
+        ),
+        output: json!({"oneOf":[object(&["ok","work_order","wip_id","reversal","cursor"],
+            json!({"ok":{"const":true},"work_order":id_schema(),"wip_id":id_schema(),
+                "reversal":reversal_schema(),"cursor":{"type":"integer","minimum":1}})),
+            {"type":"object","required":["ok","code"],"properties":{"ok":{"const":false},"code":text(),"cursor":{"type":"integer"}}}]}),
+        preconditions: &[
+            "run_open",
+            "tool_enabled_in_scenario",
+            "no_active_downstream_consumption",
+        ],
+        side_effect: "reverse_work_in_process_movement",
+        errors: &[
+            "INVALID_ARGUMENT",
+            "WORK_ORDER_NOT_FOUND",
+            "WIP_NOT_FOUND",
+            "WIP_MOVEMENT_NOT_ACTIVE",
+            "WIP_ALREADY_CONSUMED",
+            "VERSION_CONFLICT",
+            "IDEMPOTENCY_CONFLICT",
+        ],
+        visibility: "run",
+    }
+}
+
+pub(crate) fn reverse_lot(
+    order: &str,
+    reports: &mut [Report],
+    args: &Map<String, Value>,
+    cursor: i64,
+) -> Value {
+    let id = args["wip_id"].as_str().unwrap();
+    let reason = args["reason"].as_str().unwrap();
+    if !identifier(order) || !identifier(id) || reason.trim().is_empty() {
+        return json!({"ok":false,"code":"INVALID_ARGUMENT"});
+    }
+    let Some(index) = reports
+        .iter()
+        .position(|report| report.order == order && report.step == 0 && report.id == id)
+    else {
+        return json!({"ok":false,"code":"WIP_NOT_FOUND"});
+    };
+    if reports[index]
+        .wip_move
+        .as_ref()
+        .is_none_or(|movement| args["movement_cursor"].as_i64() != Some(movement.cursor))
+    {
+        return json!({"ok":false,"code":"WIP_MOVEMENT_NOT_ACTIVE"});
+    }
+    if consumer(reports, order, id).is_some() {
+        return json!({"ok":false,"code":"WIP_ALREADY_CONSUMED"});
+    }
+    let report = &mut reports[index];
+    let reversal = MovementReversal {
+        original_movement: report.wip_move.take().expect("active movement"),
+        reversed_cursor: cursor,
+        reason: reason.into(),
+    };
+    let response = json!({"ok":true,"work_order":order,"wip_id":id,"reversal":reversal});
+    report.wip_movement_reversals.push(reversal);
+    response
 }
 
 fn material_held(tx: &Transaction<'_>, run: &str, report: &Report) -> rusqlite::Result<bool> {

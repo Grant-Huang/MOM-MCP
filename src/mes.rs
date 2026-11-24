@@ -456,6 +456,7 @@ pub fn spec(action: Action) -> Spec {
                 "reversed":{"type":"boolean"},"serial_numbers":{"type":"array","items":text()},
             "components":{"type":"object","additionalProperties":{"type":"integer","minimum":1}},
                 "wip_move":crate::wip::movement_schema(),
+                "wip_movement_reversals":{"type":"array","items":crate::wip::reversal_schema()},
                 "wip_inputs":crate::wip::inputs_schema(),
                 "material_inputs":{"type":"array","items":object(
                     &["reservation_id","lot_id","quantity","unit"],
@@ -652,6 +653,8 @@ pub(crate) struct Report {
     pub(crate) material_inputs: Vec<MaterialInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) wip_move: Option<crate::wip::Movement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) wip_movement_reversals: Vec<crate::wip::MovementReversal>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) wip_inputs: Vec<String>,
 }
@@ -1347,6 +1350,12 @@ pub fn invoke(
             args,
             cursor + 1,
         )?
+    } else if action == Action::ReverseWipMovement {
+        let order = args["work_order"].as_str().unwrap();
+        if !state.orders.contains_key(order) {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        }
+        crate::wip::reverse_lot(order, &mut state.reports, args, cursor + 1)
     } else if action == Action::ReviseRoute {
         let version = args["route_version"].as_str().unwrap();
         if state.work_centers.is_some()
@@ -1775,6 +1784,7 @@ fn apply(
                 components: BTreeMap::new(),
                 material_inputs: Vec::new(),
                 wip_move: None,
+                wip_movement_reversals: Vec::new(),
                 wip_inputs: Vec::new(),
             };
             if order.step == 0 {

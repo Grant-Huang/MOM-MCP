@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -162,6 +162,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9C-17 Reconcile issued material in assembly", scenario: "assembly@27", work_order: "WO-E", operation: "build", work_center: "CELL-A", assemblyLedger: true },
   { title: "P9C-19 Transfer and reverse a partial lot", scenario: "cnc@34", work_order: "WO-1", operation: "machining", work_center: "MACH-01", partial: true },
   { title: "P9D-UI Find actual output in work in process", scenario: "cnc@35", work_order: "WO-1", operation: "machining", work_center: "MACH-01", wip: true },
+  { title: "P9D-07 Reverse a WIP movement", scenario: "cnc@38", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, reverseWip: true },
   { title: "P9D-05 Trace an issued lot and serial", scenario: "cnc@37", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, genealogy: true },
   { title: "P9D-03 Move and consume a WIP lot", scenario: "cnc@36", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true },
 ]) {
@@ -315,7 +316,23 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       }));
       await button("调用工具").click();
       await expect(status).toContainText('"destination_operation": "assembly"');
-      cursor = JSON.parse(await status.textContent()).cursor;
+      const moved = JSON.parse(await status.textContent());
+      cursor = moved.cursor;
+      if (reverseWip) {
+        await button("搜索工具").click();
+        await page.getByLabel("匹配工具").selectOption("reverse_wip_movement");
+        await page.getByLabel("JSON 参数").fill(JSON.stringify({
+          work_order, wip_id: source.report.id, movement_cursor: moved.movement.cursor,
+          reason: "incorrect handoff", expected_cursor: cursor, idempotency_key: "withdraw",
+        }));
+        await button("调用工具").click();
+        await expect(status).toContainText('"reversed_cursor"');
+        const current = await invoke("get_wip", { work_order, wip_id: source.report.id });
+        expect(current.lots[0].status).toBe("available");
+        expect(current.lots[0].movement).toBeUndefined();
+        expect(current.lots[0].movement_reversals[0].original_movement).toEqual(moved.movement);
+        return;
+      }
       await write("dispatch_operation", { work_order, operation: "assembly", work_center: "ASM-01" });
       await write("start_operation", { work_order, operation: "assembly" });
       const output = await write("post_operation_report", { work_order, operation: "assembly", quantity: 10, wip_inputs: [source.report.id] });

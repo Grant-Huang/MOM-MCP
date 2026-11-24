@@ -4729,24 +4729,33 @@ async fn reported_wip_output(
     );
 }
 
-#[tokio::test]
-async fn p9d_02_move_and_consume_wip() {
-    operation_issue_scenarios(&[("cnc", 36, "WO-1", "machining", "MACH-01")]).await;
+#[test]
+fn p9d_02_move_and_consume_wip() {
+    run_wip_scenario(36);
+}
+
+#[test]
+fn p9d_06_reverse_wip_movement() {
+    run_wip_scenario(38);
 }
 
 #[test]
 fn p9d_04_batch_serial_genealogy() {
+    run_wip_scenario(37);
+}
+
+fn run_wip_scenario(version: u64) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
+        .spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap()
                 .block_on(operation_issue_scenarios(&[(
                     "cnc",
-                    37,
+                    version,
                     "WO-1",
                     "machining",
                     "MACH-01",
@@ -4763,6 +4772,7 @@ async fn move_and_consume_wip(
     order: &str,
     operation: &str,
     genealogy: bool,
+    reversal: bool,
 ) {
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
@@ -4886,8 +4896,47 @@ async fn move_and_consume_wip(
         read().await["lots"][0]["consumed_by"],
         consumed["report"]["id"]
     );
+    let mut withdraw = json!({"work_order":order,"wip_id":first_id,
+        "movement_cursor":moved["movement"]["cursor"],"reason":"incorrect handoff"});
+    if reversal {
+        let before = cursor().await;
+        assert_eq!(
+            write("reverse_wip_movement", "consumed-move", withdraw.clone()).await["code"],
+            "WIP_ALREADY_CONSUMED"
+        );
+        assert_eq!(cursor().await, before);
+    }
     apply("reverse_operation_report","reverse-assembly",json!({"work_order":order,"report_id":consumed["report"]["id"],"reason":"incorrect report"})).await;
     assert_eq!(read().await["lots"][0]["status"], "moved");
+    if reversal {
+        withdraw["expected_cursor"] = cursor().await;
+        withdraw["idempotency_key"] = json!("withdraw");
+        let reversed = invoke("reverse_wip_movement", withdraw.clone()).await;
+        assert_eq!(
+            reversed["reversal"]["original_movement"], moved["movement"],
+            "{reversed}"
+        );
+        assert_eq!(
+            invoke("reverse_wip_movement", withdraw.clone()).await,
+            reversed
+        );
+        let current = read().await;
+        assert_eq!(current["lots"][0]["status"], "available");
+        assert!(current["lots"][0].get("movement").is_none());
+        assert_eq!(
+            current["lots"][0]["movement_reversals"],
+            json!([reversed["reversal"]])
+        );
+        assert_eq!(
+            write("post_operation_report", "withdrawn", report.clone()).await["code"],
+            "WIP_NOT_AT_OPERATION"
+        );
+        apply("move_wip", "move-again", movement.clone()).await;
+        assert_eq!(
+            write("reverse_wip_movement", "old-move", withdraw).await["code"],
+            "WIP_MOVEMENT_NOT_ACTIVE"
+        );
+    }
     let reconsumed = apply("post_operation_report", "consume-again", report.clone()).await;
     assert_eq!(
         reconsumed["report"]["serial_numbers"],
@@ -5075,7 +5124,7 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36 | 37) {
+            if matches!(version,36..=38) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
             }
             for (name,args) in [
@@ -5303,8 +5352,8 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if matches!(version,36 | 37) {
-                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37)).await;
+            if matches!(version,36..=38) {
+                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
                 let lots=lots["lots"].as_array().unwrap();
