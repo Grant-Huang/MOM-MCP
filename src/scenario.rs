@@ -373,6 +373,13 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         "genealogy requires recorded material inputs and work-in-process movement"
     );
     anyhow::ensure!(
+        !definition
+            .capabilities
+            .contains(&Action::ReverseWipMovement)
+            || definition.capabilities.contains(&Action::MoveWip),
+        "work in process movement reversal requires work in process movement"
+    );
+    anyhow::ensure!(
         definition.capabilities.contains(&Action::MoveWip)
             == definition
                 .manufacturing
@@ -693,6 +700,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-wip-output.json"),
             include_str!("../fixtures/cnc-wip-movement.json"),
             include_str!("../fixtures/cnc-wip-genealogy.json"),
+            include_str!("../fixtures/cnc-wip-movement-reversal.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
@@ -1719,7 +1727,10 @@ impl Scenarios {
             return Ok(Ok(response));
         }
         if action.is_genealogy_action()
-            || matches!(action, Action::GetWip | Action::MoveWip)
+            || matches!(
+                action,
+                Action::GetWip | Action::MoveWip | Action::ReverseWipMovement
+            )
             || crate::mes::TOOLS.iter().any(|tool| tool.0 == action)
         {
             let Some(setup) = &definition.manufacturing else {

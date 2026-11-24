@@ -24,6 +24,7 @@ pub enum Action {
     TraceSerialBackward,
     ListGenealogyEdges,
     GetWip,
+    ReverseWipMovement,
     MoveWip,
     ListStockLocations,
     GetStockBalance,
@@ -201,6 +202,7 @@ impl Action {
             Self::TraceSerialBackward,
             Self::ListGenealogyEdges,
             Self::GetWip,
+            Self::ReverseWipMovement,
             Self::MoveWip,
             Self::ListStockLocations,
             Self::GetStockBalance,
@@ -277,6 +279,7 @@ impl Action {
             Self::UnpickMaterial => "unpick_material",
             Self::ReleaseReceiptInspection => "release_receipt_inspection",
             Self::GetMaterialAvailability => "get_material_availability",
+            Self::ReverseWipMovement => "reverse_wip_movement",
             Self::MoveWip => "move_wip",
             Self::TraceLotForward => "trace_lot_forward",
             Self::TraceSerialBackward => "trace_serial_backward",
@@ -458,6 +461,9 @@ impl Action {
     pub fn spec(self) -> Spec {
         if self.is_genealogy_action() {
             return crate::genealogy::spec(self);
+        }
+        if self == Self::ReverseWipMovement {
+            return crate::wip::reverse_spec();
         }
         if self == Self::MoveWip {
             return crate::wip::move_spec();
