@@ -4765,10 +4765,21 @@ fn p9d_04_batch_serial_genealogy() {
 }
 
 fn run_wip_scenario(version: u64) {
-    run_wip_scenario_with_quality(version, false);
+    run_wip_scenario_with_quality(version, None);
 }
 
-fn run_wip_scenario_with_quality(version: u64, quality_recovery: bool) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QualityCheckpoint {
+    Output,
+    Replenishment,
+}
+
+#[test]
+fn p9d_18_replenish_after_reinspection() {
+    run_wip_scenario_with_quality(42, Some(QualityCheckpoint::Replenishment));
+}
+
+fn run_wip_scenario_with_quality(version: u64, quality_recovery: Option<QualityCheckpoint>) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -4795,7 +4806,7 @@ async fn move_and_consume_wip(
     genealogy: bool,
     reversal: bool,
     version: u64,
-    quality_recovery: bool,
+    quality_recovery: Option<QualityCheckpoint>,
 ) {
     let legacy_reconciliation = version == 40;
     let partition = matches!(version, 39 | 40);
@@ -4816,7 +4827,12 @@ async fn move_and_consume_wip(
     if genealogy || version == 42 {
         let location = if version == 42 { "RAW-01" } else { "RAW-02" };
         Box::pin(setup_genealogy_second_lot(
-            client, run, order, operation, location,
+            client,
+            run,
+            order,
+            operation,
+            location,
+            quality_recovery != Some(QualityCheckpoint::Replenishment),
         ))
         .await;
     }
@@ -4848,12 +4864,48 @@ async fn move_and_consume_wip(
         )
         .await;
     }
+    if quality_recovery == Some(QualityCheckpoint::Replenishment) {
+        let issue = json!({"reservation_id":"RS-2","operation":operation});
+        Box::pin(recover_quality(
+            client,
+            run,
+            order,
+            "issue_material_to_operation",
+            &issue,
+            QualityCheckpoint::Replenishment,
+        ))
+        .await;
+        apply("issue_material_to_operation", "quality-recovered", issue).await;
+    }
     let mut second_args = machining_report(6, if legacy_reconciliation { "0.75" } else { "1" });
     if genealogy || version == 42 {
         second_args["material_inputs"] = json!({"RS-2":"1"});
     }
     let second = apply("post_operation_report", "source2", second_args).await;
     let second_id = &second["report"]["id"];
+    if quality_recovery == Some(QualityCheckpoint::Replenishment) {
+        let pedigree = invoke(
+            "trace_serial_backward",
+            json!({"serial_number":second["report"]["serial_numbers"][0]}),
+        )
+        .await;
+        assert!(
+            pedigree["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|edge| edge["kind"] == "material_input"
+                    && edge["source"]["id"] == "LOT-2"
+                    && edge["reservation_id"] == "RS-2")
+        );
+        assert!(
+            !pedigree["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|edge| edge["kind"] == "material_input" && edge["source"]["id"] == "LOT-1")
+        );
+    }
     apply("complete_operation", "complete-source", prep).await;
     apply(
         "dispatch_operation",
@@ -5160,7 +5212,7 @@ async fn move_and_consume_wip(
             order,
             &first["report"]["serial_numbers"][0],
             version == 42,
-            quality_recovery,
+            quality_recovery == Some(QualityCheckpoint::Output),
         ))
         .await;
     }
@@ -5210,14 +5262,16 @@ async fn move_and_consume_wip(
 
 #[test]
 fn p9d_16_quality_recovery_before_output() {
-    run_wip_scenario_with_quality(42, true);
+    run_wip_scenario_with_quality(42, Some(QualityCheckpoint::Output));
 }
 
-async fn recover_output_quality(
+async fn recover_quality(
     client: &RunningService<RoleClient, ()>,
     run: &Value,
     order: &str,
-    receipt: &Value,
+    blocked_action: &str,
+    arguments: &Value,
+    checkpoint: QualityCheckpoint,
 ) {
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
@@ -5269,12 +5323,7 @@ async fn recover_output_quality(
         "held"
     );
     let before = cursor().await;
-    let gated = write(
-        "receive_work_order_output",
-        "recovered-output",
-        receipt.clone(),
-    )
-    .await;
+    let gated = write(blocked_action, "quality-recovered", arguments.clone()).await;
     assert_eq!(gated["code"], "QUALITY_HOLD", "{gated}");
     assert_eq!(cursor().await, before);
     let account = invoke("reconcile_work_order", json!({"work_order":order})).await;
@@ -5316,12 +5365,7 @@ async fn recover_output_quality(
         "disposed"
     );
     assert_eq!(
-        write(
-            "receive_work_order_output",
-            "recovered-output",
-            receipt.clone()
-        )
-        .await["code"],
+        write(blocked_action, "quality-recovered", arguments.clone()).await["code"],
         "QUALITY_HOLD"
     );
     assert_eq!(
@@ -5335,9 +5379,23 @@ async fn recover_output_quality(
         "FINAL-PASS"
     );
     let available = invoke("reconcile_work_order", json!({"work_order":order})).await;
-    assert_eq!(available["settlement"]["quality"], "released");
+    assert!(
+        !available["settlement"]["blocking"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("QUALITY_HOLD"))
+    );
     assert_eq!(available["wip"], account["wip"]);
     assert_eq!(available["issues"], account["issues"]);
+    if checkpoint == QualityCheckpoint::Replenishment {
+        let stock = invoke(
+            "get_stock_balance",
+            json!({"item_id":"WIRE","location":"RAW-01"}),
+        )
+        .await;
+        assert_eq!(stock["balance"]["on_hand"], "1");
+        assert_eq!(stock["balance"]["reserved"], "1");
+    }
 }
 
 async fn receive_finished_output(
@@ -5442,10 +5500,18 @@ async fn receive_finished_output(
     )
     .await;
     if quality_recovery {
-        Box::pin(recover_output_quality(client, run, order, &receipt)).await;
+        Box::pin(recover_quality(
+            client,
+            run,
+            order,
+            "receive_work_order_output",
+            &receipt,
+            QualityCheckpoint::Output,
+        ))
+        .await;
     }
     receipt["idempotency_key"] = json!(if quality_recovery {
-        "recovered-output"
+        "quality-recovered"
     } else {
         "post-fg"
     });
@@ -5577,6 +5643,7 @@ async fn setup_genealogy_second_lot(
     order: &str,
     operation: &str,
     location: &str,
+    issue_now: bool,
 ) {
     let apply = async |name: &str, key: &str, mut args: Value| {
         args["idempotency_key"] = json!(key);
@@ -5605,12 +5672,14 @@ async fn setup_genealogy_second_lot(
         json!({"reservation_id":"RS-2"}),
     )
     .await;
-    apply(
-        "issue_material_to_operation",
-        "second-issue",
-        json!({"reservation_id":"RS-2","operation":operation}),
-    )
-    .await;
+    if issue_now {
+        apply(
+            "issue_material_to_operation",
+            "second-issue",
+            json!({"reservation_id":"RS-2","operation":operation}),
+        )
+        .await;
+    }
 }
 async fn assert_genealogy(
     client: &RunningService<RoleClient, ()>,
@@ -5708,12 +5777,12 @@ async fn assert_genealogy(
 fn operation_issue_scenarios<'a>(
     scenarios: &'a [(&'a str, u64, &'a str, &'a str, &'a str)],
 ) -> std::pin::Pin<Box<impl std::future::Future<Output = ()> + 'a>> {
-    Box::pin(operation_issue_scenarios_with_quality(scenarios, false))
+    Box::pin(operation_issue_scenarios_with_quality(scenarios, None))
 }
 
 async fn operation_issue_scenarios_with_quality(
     scenarios: &[(&str, u64, &str, &str, &str)],
-    quality_recovery: bool,
+    quality_recovery: Option<QualityCheckpoint>,
 ) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
