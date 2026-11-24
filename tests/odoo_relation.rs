@@ -22,12 +22,18 @@ async fn reads_only_the_authorized_direct_odoo_relation() {
         assert_eq!(headers["authorization"], "Bearer local-fixture");
         assert_eq!(headers["x-odoo-database"], "sample-db");
         let id = query["domain"][0][2].as_i64().unwrap();
-        calls.lock().unwrap().push(format!("{model}:{id}"));
+        let call = format!("{model}:{id}");
+        let repeated = {
+            let mut calls = calls.lock().unwrap();
+            let repeated = calls.contains(&call);
+            calls.push(call);
+            repeated
+        };
         let (fields, rows) = match (model.as_str(), id) {
-            ("mrp.production", id @ 42..=47) => (
+            ("mrp.production", id @ 42..=49) => (
                 json!(["id", "company_id", "sale_line_id"]),
                 json!([{"id": id, "company_id": [7, "Company"],
-                    "sale_line_id": if id == 43 { json!(false) } else { json!([id + 100, "Line"]) }}]),
+                    "sale_line_id": if id == 43 || (id == 49 && repeated) { json!(false) } else { json!([id + 100, "Line"]) }}]),
             ),
             ("sale.order.line", 142) => (
                 json!(["id", "company_id", "order_id"]),
@@ -45,6 +51,11 @@ async fn reads_only_the_authorized_direct_odoo_relation() {
             ("sale.order.line", 147) => (
                 json!(["id", "company_id", "order_id"]),
                 json!([{"id":148,"company_id":[7,"Company"],"order_id":[81,"Order"]}]),
+            ),
+            ("sale.order.line", id @ (148 | 149)) => (
+                json!(["id", "company_id", "order_id"]),
+                json!([{"id":id,"company_id":[7,"Company"],
+                    "order_id":[if id == 148 && repeated { 82 } else { 81 },"Order"]}]),
             ),
             ("sale.order", 81) => (
                 json!(["id", "company_id"]),
@@ -113,6 +124,12 @@ async fn reads_only_the_authorized_direct_odoo_relation() {
         reader.read_odoo_sales_relation(47, 7).await,
         Err(ReadError::UnexpectedRecord)
     );
+    for work_order_id in [48, 49] {
+        assert_eq!(
+            reader.read_odoo_sales_relation(work_order_id, 7).await,
+            Err(ReadError::UnexpectedRecord)
+        );
+    }
     assert_eq!(
         reader.read_odoo_sales_relation(0, 7).await,
         Err(ReadError::InvalidBinding)
@@ -123,6 +140,8 @@ async fn reads_only_the_authorized_direct_odoo_relation() {
             "mrp.production:42",
             "sale.order.line:142",
             "sale.order:81",
+            "sale.order.line:142",
+            "mrp.production:42",
             "mrp.production:43",
             "mrp.production:44",
             "sale.order.line:144",
@@ -132,6 +151,15 @@ async fn reads_only_the_authorized_direct_odoo_relation() {
             "sale.order.line:146",
             "mrp.production:47",
             "sale.order.line:147",
+            "mrp.production:48",
+            "sale.order.line:148",
+            "sale.order:81",
+            "sale.order.line:148",
+            "mrp.production:49",
+            "sale.order.line:149",
+            "sale.order:81",
+            "sale.order.line:149",
+            "mrp.production:49",
         ]
     );
     server.abort();
