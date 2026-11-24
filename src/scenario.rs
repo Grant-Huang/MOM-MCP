@@ -43,6 +43,18 @@ pub struct Definition {
     operation_material_reversals: bool,
 }
 
+impl Definition {
+    fn issued_report_inputs(&self) -> bool {
+        self.manufacturing
+            .as_ref()
+            .is_some_and(|setup| setup.issued_report_inputs)
+            || self
+                .assembly
+                .as_ref()
+                .is_some_and(|setup| setup.issued_report_inputs)
+    }
+}
+
 const fn model_version() -> u32 {
     1
 }
@@ -319,10 +331,7 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         !definition
             .capabilities
             .contains(&Action::ReturnUnusedMaterial)
-            || (definition
-                .manufacturing
-                .as_ref()
-                .is_some_and(|setup| setup.issued_report_inputs)
+            || (definition.issued_report_inputs()
                 && definition
                     .capabilities
                     .contains(&Action::IssueMaterialToOperation)
@@ -333,10 +342,7 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     );
     anyhow::ensure!(
         !definition.operation_material_reversals
-            || (definition
-                .manufacturing
-                .as_ref()
-                .is_some_and(|setup| setup.issued_report_inputs)
+            || (definition.issued_report_inputs()
                 && definition
                     .capabilities
                     .contains(&Action::ReturnUnusedMaterial)
@@ -620,6 +626,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-receipt-reversal.json"),
             include_str!("../fixtures/cnc-operation-material-reversals.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
+            include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -967,12 +974,7 @@ impl Scenarios {
         {
             spec.input["properties"]["receipt_id"] = catalog::text();
         }
-        if action == Action::PostOperationReport
-            && !definition
-                .manufacturing
-                .as_ref()
-                .is_some_and(|setup| setup.issued_report_inputs)
-        {
+        if action == Action::PostOperationReport && !definition.issued_report_inputs() {
             spec.input["properties"]
                 .as_object_mut()
                 .unwrap()
@@ -1104,6 +1106,13 @@ impl Scenarios {
                     && operation != crate::mes::MATERIAL_INPUT_OPERATION
                 {
                     Err("ISSUE_OPERATION_NOT_ELIGIBLE")
+                } else if definition
+                    .assembly
+                    .as_ref()
+                    .is_some_and(|setup| setup.issued_report_inputs)
+                    && operation != "build"
+                {
+                    Err("ISSUE_OPERATION_NOT_ELIGIBLE")
                 } else if let Some(actual) = actual
                     && matches!(actual.status, "dispatched" | "running")
                     && actual.blocking.is_none()
@@ -1139,7 +1148,12 @@ impl Scenarios {
                 | Action::PostStockTransfer
                 | Action::ReverseInventoryMovement
         ) {
-            return crate::transfers::invoke(tx, run, action, parameters, cursor);
+            let order_quantity = if definition.assembly.is_some() {
+                1
+            } else {
+                crate::mes::QUANTITY as i64
+            };
+            return crate::transfers::invoke(tx, run, action, parameters, cursor, order_quantity);
         }
         if action.is_receipt_action() {
             return crate::inventory::invoke(tx, run, action, parameters, cursor);

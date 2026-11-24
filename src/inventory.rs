@@ -696,6 +696,34 @@ fn expanded_order(
     Ok(Ok((snapshot, expansion)))
 }
 
+pub(crate) fn matches_build_requirements(
+    tx: &Transaction<'_>,
+    run: &str,
+    order: &str,
+    inputs: &[crate::mes::MaterialInput],
+) -> anyhow::Result<bool> {
+    let Ok((_, expansion)) = expanded_order(tx, run, order, 1)? else {
+        return Ok(false);
+    };
+    let mut actual = std::collections::BTreeMap::new();
+    for input in inputs {
+        let key = tx.query_row(
+            "SELECT item,revision,unit FROM stock_receipts WHERE run=?1 AND lot=?2",
+            params![run, input.lot_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )?;
+        *actual.entry(key).or_insert(0_i64) +=
+            parse_quantity(&input.quantity).expect("validated material quantity");
+    }
+    Ok(actual == expansion.quantities)
+}
+
 pub(crate) fn required_quantity(
     tx: &Transaction<'_>,
     run: &str,

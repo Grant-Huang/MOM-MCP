@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -159,6 +159,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9C-11 Reverse a posted stock transfer", scenario: "cnc@31", work_order: "WO-1", operation: "machining", work_center: "MACH-01", transfer: true, reverse: true },
   { title: "P9C-13 Reverse a posted receipt", scenario: "cnc@32", work_order: "WO-1", operation: "machining", work_center: "MACH-01", receiptReversal: true },
   { title: "P9C-15 Reverse issue and return movements", scenario: "cnc@33", work_order: "WO-1", operation: "machining", work_center: "MACH-01", operationReversal: true },
+  { title: "P9C-17 Reconcile issued material in assembly", scenario: "assembly@27", work_order: "WO-E", operation: "build", work_center: "CELL-A", assemblyLedger: true },
 ]) {
   test(title, async ({ page }) => {
     await page.goto("/scenarios");
@@ -262,7 +263,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       return;
     }
     const reservation = { reservation_id: "RS-1" };
-    await write("reserve_material", { ...reservation, ...lot, work_order: order.work_order, quantity: "1.5" });
+    await write("reserve_material", { ...reservation, ...lot, work_order: order.work_order, quantity: assemblyLedger ? "2" : "1.5" });
     await write("pick_material", reservation);
     await write("dispatch_operation", { work_order: order.work_order, operation, work_center });
     await button("搜索工具").click();
@@ -271,10 +272,30 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     await button("调用工具").click();
     await expect(status).toContainText('"status": "issued"');
     const stock = await invoke("get_material_availability", { item_id: "WIRE", revision: 1 });
-    expect(stock.balance).toMatchObject({ on_hand: "0.5", reserved: "0", available: "0.5" });
+    expect(stock.balance).toMatchObject({ on_hand: assemblyLedger ? "0" : "0.5", reserved: "0", available: assemblyLedger ? "0" : "0.5" });
     const ledger = await invoke("list_inventory_movements", { movement_type: "issue" });
     expect(ledger.movements).toHaveLength(1);
-    expect(ledger.movements[0]).toMatchObject({ lot_id: "LOT-1", operation, work_order, quantity: "1.5" });
+    expect(ledger.movements[0]).toMatchObject({ lot_id: "LOT-1", operation, work_order, quantity: assemblyLedger ? "2" : "1.5" });
+    if (assemblyLedger) {
+      cursor = JSON.parse(await status.textContent()).cursor;
+      await write("start_operation", { work_order, operation });
+      await button("搜索工具").click();
+      await page.getByLabel("匹配工具").selectOption("post_operation_report");
+      await page.getByLabel("JSON 参数").fill(JSON.stringify({
+        work_order, operation, quantity: 1, material_inputs: { "RS-1": "2" },
+        expected_cursor: cursor, idempotency_key: "assembly-report",
+      }));
+      await button("调用工具").click();
+      await expect(status).toContainText('"remaining": 0');
+      const actual = JSON.parse(await status.textContent());
+      expect(actual.report.material_inputs).toMatchObject([{ lot_id: "LOT-1", quantity: "2" }]);
+      cursor = actual.cursor;
+      await write("reverse_operation_report", { work_order, report_id: actual.report.id, reason: "incorrect report" });
+      await write("return_unused_material", { ...reservation, movement_id: "RET-1", quantity: "2", reason: "unused" });
+      const balance = await invoke("get_stock_balance", { item_id: "WIRE", location: "RAW-02" });
+      expect(balance.balance).toMatchObject({ on_hand: "2", available: "2" });
+      return;
+    }
     if (operationReversal) {
       cursor = JSON.parse(await status.textContent()).cursor;
       await write("return_unused_material", { ...reservation, movement_id: "RET-1", quantity: "0.5", reason: "unused" });
