@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -162,6 +162,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9C-17 Reconcile issued material in assembly", scenario: "assembly@27", work_order: "WO-E", operation: "build", work_center: "CELL-A", assemblyLedger: true },
   { title: "P9C-19 Transfer and reverse a partial lot", scenario: "cnc@34", work_order: "WO-1", operation: "machining", work_center: "MACH-01", partial: true },
   { title: "P9D-UI Find actual output in work in process", scenario: "cnc@35", work_order: "WO-1", operation: "machining", work_center: "MACH-01", wip: true },
+  { title: "P9D-09 Split and merge WIP lots", scenario: "cnc@39", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, splitWip: true },
   { title: "P9D-07 Reverse a WIP movement", scenario: "cnc@38", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, reverseWip: true },
   { title: "P9D-05 Trace an issued lot and serial", scenario: "cnc@37", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, genealogy: true },
   { title: "P9D-03 Move and consume a WIP lot", scenario: "cnc@36", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true },
@@ -309,6 +310,35 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       const source = await write("post_operation_report", { work_order, operation, quantity: 10, material_inputs: { "RS-1": "1.5" } });
       await write("complete_operation", { work_order, operation });
       await button("搜索工具").click();
+      if (splitWip) {
+        const callFromPage = async (name, args, expected) => {
+          await page.getByLabel("匹配工具").selectOption(name);
+          await page.getByLabel("JSON 参数").fill(JSON.stringify({
+            ...args, expected_cursor: cursor, idempotency_key: name,
+          }));
+          await button("调用工具").click();
+          await expect(status).toContainText(expected);
+          const result = JSON.parse(await status.textContent());
+          expect(result.ok).toBe(true);
+          cursor = result.cursor;
+          return result;
+        };
+        const parent = { work_order, wip_id: source.report.id };
+        const split = await callFromPage("split_wip", {
+          ...parent, selected_serial_numbers: source.report.serial_numbers.slice(0, 3), reason: "stage separate bins",
+        }, '"split_cursor"');
+        const [selected, remaining] = split.partition.children;
+        expect(selected.serial_numbers).toEqual(source.report.serial_numbers.slice(0, 3));
+        expect(remaining.serial_numbers).toEqual(source.report.serial_numbers.slice(3));
+        expect((await invoke("get_wip", parent)).lots[0].status).toBe("split");
+        await callFromPage("merge_wip", {
+          ...parent, split_cursor: split.partition.split_cursor, reason: "recombine",
+        }, '"merge_reason": "recombine"');
+        expect((await invoke("get_wip", parent)).lots[0]).toMatchObject({ quantity: 10, status: "available" });
+        const history = await invoke("get_wip", { work_order, wip_id: selected.id });
+        expect(history.lots[0]).toMatchObject({ status: "merged", parent_wip_id: source.report.id });
+        return;
+      }
       await page.getByLabel("匹配工具").selectOption("move_wip");
       await page.getByLabel("JSON 参数").fill(JSON.stringify({
         work_order, wip_id: source.report.id, destination_operation: "assembly", reason: "handoff",

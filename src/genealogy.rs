@@ -64,7 +64,7 @@ pub(crate) fn spec(action: Action) -> Spec {
             "status",
         ],
         json!({
-        "edge_id":id_schema(),"kind":{"enum":["material_input","serial_output","wip_consumption"]},
+        "edge_id":id_schema(),"kind":{"enum":["material_input","serial_output","wip_consumption","wip_split","wip_merge"]},
         "work_order":id_schema(),"source":node,"target":node,"status":{"enum":["active","reversed"]},
         "reservation_id":id_schema(),"quantity":quantity_schema(),"unit":text()}),
     );
@@ -178,6 +178,61 @@ pub(crate) fn read(
                 unit: None,
                 reservation_id: None,
             });
+        }
+        for split in &report.wip_partitions {
+            for child in &split.children {
+                if serial.is_some_and(|serial| {
+                    !child.serial_numbers.iter().any(|number| number == serial)
+                }) {
+                    continue;
+                }
+                let child_node = || Node {
+                    kind: "wip_lot",
+                    id: &child.id,
+                };
+                edges.push(Edge {
+                    edge_id: format!("{}-split", child.id),
+                    kind: "wip_split",
+                    work_order,
+                    source: wip(),
+                    target: child_node(),
+                    status: status(report.reversed),
+                    quantity: None,
+                    unit: None,
+                    reservation_id: None,
+                });
+                if split.merged_cursor.is_some() {
+                    edges.push(Edge {
+                        edge_id: format!("{}-merge", child.id),
+                        kind: "wip_merge",
+                        work_order,
+                        source: child_node(),
+                        target: wip(),
+                        status: status(report.reversed),
+                        quantity: None,
+                        unit: None,
+                        reservation_id: None,
+                    });
+                }
+                if action != Action::TraceSerialBackward {
+                    for consumer in consumers.get(child.id.as_str()).into_iter().flatten() {
+                        edges.push(Edge {
+                            edge_id: format!("{}-use-{}", child.id, consumer.id),
+                            kind: "wip_consumption",
+                            work_order,
+                            source: child_node(),
+                            target: Node {
+                                kind: "operation_report",
+                                id: &consumer.id,
+                            },
+                            status: status(report.reversed || consumer.reversed),
+                            quantity: None,
+                            unit: None,
+                            reservation_id: None,
+                        });
+                    }
+                }
+            }
         }
         if action != Action::TraceSerialBackward {
             for consumer in consumers.get(report.id.as_str()).into_iter().flatten() {

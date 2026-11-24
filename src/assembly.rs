@@ -1002,6 +1002,7 @@ fn apply(
                     material_inputs: Vec::new(),
                     wip_move: None,
                     wip_movement_reversals: Vec::new(),
+                    wip_partitions: Vec::new(),
                     wip_inputs: Vec::new(),
                 };
                 let response = json!({"ok":true,"report":report,"serial_numbers":[serial],"reported_quantity":1,"remaining":0});

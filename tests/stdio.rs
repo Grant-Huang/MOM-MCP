@@ -4740,6 +4740,11 @@ fn p9d_06_reverse_wip_movement() {
 }
 
 #[test]
+fn p9d_08_split_merge_wip() {
+    run_wip_scenario(39);
+}
+
+#[test]
 fn p9d_04_batch_serial_genealogy() {
     run_wip_scenario(37);
 }
@@ -4773,6 +4778,7 @@ async fn move_and_consume_wip(
     operation: &str,
     genealogy: bool,
     reversal: bool,
+    partition: bool,
 ) {
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
@@ -4824,6 +4830,115 @@ async fn move_and_consume_wip(
         "WIP_NOT_AT_OPERATION"
     );
     assert_eq!(cursor().await, before);
+    if partition {
+        let mut split = json!({"work_order":order,"wip_id":second_id,"reason":"stage separate bins",
+            "selected_serial_numbers":["UNKNOWN"]});
+        let before = cursor().await;
+        assert_eq!(
+            write("split_wip", "unknown-serial", split.clone()).await["code"],
+            "WIP_SERIAL_MISMATCH"
+        );
+        assert_eq!(cursor().await, before);
+        split["selected_serial_numbers"] = json!([second["report"]["serial_numbers"][0]]);
+        split["expected_cursor"] = before;
+        split["idempotency_key"] = json!("split-second");
+        let result = invoke("split_wip", split.clone()).await;
+        assert_eq!(result["ok"], true, "{result}");
+        assert_eq!(invoke("split_wip", split).await, result);
+        assert_eq!(
+            write(
+                "move_wip",
+                "move-split-parent",
+                json!({"work_order":order,"wip_id":second_id,
+            "destination_operation":"assembly","reason":"handoff"})
+            )
+            .await["code"],
+            "WIP_NOT_AVAILABLE"
+        );
+        let child = &result["partition"]["children"][0]["id"];
+        let sibling = &result["partition"]["children"][1]["id"];
+        let read = async |id| {
+            invoke("get_wip", json!({"work_order":order,"wip_id":id})).await["lots"][0].clone()
+        };
+        assert_eq!(read(second_id).await["status"], "split");
+        assert_eq!(read(child).await["quantity"], 1);
+        assert_eq!(read(sibling).await["quantity"], 5);
+        let transfer = apply(
+            "move_wip",
+            "move-child",
+            json!({"work_order":order,"wip_id":child,
+            "destination_operation":"assembly","reason":"handoff"}),
+        )
+        .await;
+        let mut merge = json!({"work_order":order,"wip_id":second_id,"reason":"recombine",
+            "split_cursor":result["partition"]["split_cursor"]});
+        assert_eq!(
+            write("merge_wip", "merge-moved", merge.clone()).await["code"],
+            "WIP_NOT_AVAILABLE"
+        );
+        apply("start_operation", "start-child-assembly", assembly.clone()).await;
+        let child_report = apply(
+            "post_operation_report",
+            "consume-child",
+            json!({"work_order":order,
+            "operation":"assembly","quantity":1,"wip_inputs":[child]}),
+        )
+        .await;
+        assert_eq!(
+            child_report["report"]["serial_numbers"],
+            read(child).await["serial_numbers"]
+        );
+        let withdraw = json!({"work_order":order,"wip_id":child,
+            "movement_cursor":transfer["movement"]["cursor"],"reason":"return for consolidation"});
+        assert_eq!(
+            write(
+                "reverse_wip_movement",
+                "withdraw-consumed",
+                withdraw.clone()
+            )
+            .await["code"],
+            "WIP_ALREADY_CONSUMED"
+        );
+        apply(
+            "reverse_operation_report",
+            "reverse-child-report",
+            json!({"work_order":order,
+            "report_id":child_report["report"]["id"],"reason":"undo child assembly"}),
+        )
+        .await;
+        apply("reverse_wip_movement", "withdraw-child", withdraw).await;
+        merge["expected_cursor"] = cursor().await;
+        merge["idempotency_key"] = json!("merge-siblings");
+        let merged = invoke("merge_wip", merge.clone()).await;
+        assert_eq!(merged["ok"], true, "{merged}");
+        assert_eq!(invoke("merge_wip", merge.clone()).await, merged);
+        assert_eq!(
+            write("merge_wip", "merge-old", merge).await["code"],
+            "WIP_SPLIT_NOT_ACTIVE"
+        );
+        assert_eq!(read(child).await["status"], "merged");
+        assert_eq!(read(sibling).await["status"], "merged");
+        assert_eq!(read(second_id).await["quantity"], 6);
+        let edges = invoke(
+            "list_genealogy_edges",
+            json!({"work_order":order,"limit":100}),
+        )
+        .await;
+        let edges = edges["edges"].as_array().unwrap();
+        assert!(
+            edges
+                .iter()
+                .any(|edge| edge["kind"] == "wip_split" && edge["target"]["id"] == *child)
+        );
+        assert!(
+            edges
+                .iter()
+                .any(|edge| edge["kind"] == "wip_merge" && edge["source"]["id"] == *child)
+        );
+        assert!(edges.iter().any(|edge| edge["kind"] == "wip_consumption"
+            && edge["source"]["id"] == *child
+            && edge["status"] == "reversed"));
+    }
     let mut wrong = movement.clone();
     wrong["destination_operation"] = json!("inspection");
     assert_eq!(
@@ -4859,7 +4974,9 @@ async fn move_and_consume_wip(
         .await["code"],
         "REPORT_HAS_DEPENDENCIES"
     );
-    apply("start_operation", "start-destination", assembly.clone()).await;
+    if !partition {
+        apply("start_operation", "start-destination", assembly.clone()).await;
+    }
     let mut report = json!({"work_order":order,"operation":"assembly","quantity":4});
     assert_eq!(
         write("post_operation_report", "missing", report.clone()).await["code"],
@@ -5124,7 +5241,7 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=38) {
+            if matches!(version,36..=39) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
             }
             for (name,args) in [
@@ -5352,13 +5469,14 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if matches!(version,36..=38) {
-                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38)).await;
+            if matches!(version,36..=39) {
+                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version==39)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
                 let lots=lots["lots"].as_array().unwrap();
-                assert_eq!(lots.len(),2);
-                assert!(lots.iter().all(|lot|lot["status"]=="consumed"));
+                assert_eq!(lots.iter().filter(|lot|lot["status"]=="consumed").count(),2);
+                assert_eq!(lots.iter().filter(|lot|lot["status"]=="merged").count(),if version==39 {2} else {0});
+                assert_eq!(lots.len(),if version==39 {4} else {2});
                 continue;
             }
             if version == 35 {
