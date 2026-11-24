@@ -897,3 +897,19 @@ spec = "acceptance/P9D.md"
 features = ["F08", "F09", "F10", "F11"]
 layers = ["playwright"]
 tests = { playwright = "P9D-11 Reconcile CNC material and WIP" }
+
+[[case]]
+id = "P9D-12"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9d_12_receive_work_order_output" }
+
+[[case]]
+id = "P9D-13"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["playwright"]
+tests = { playwright = "P9D-13 Receive and reconcile finished output" }

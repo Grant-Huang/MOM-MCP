@@ -8,6 +8,7 @@ mod items;
 mod mes;
 mod operation_reversals;
 mod operations;
+mod output_receipts;
 mod probe;
 mod quality;
 mod receipt_reversals;

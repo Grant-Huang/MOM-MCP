@@ -118,6 +118,7 @@ pub(crate) fn reverse(
             AND (r.status IN ('reserved','picked','issued') OR EXISTS(SELECT 1 FROM stock_operation_issues i
                 WHERE i.run=r.run AND i.reservation=r.reservation)))
           OR EXISTS(SELECT 1 FROM stock_transfers t WHERE t.run=s.run AND t.lot=s.lot AND t.posted_cursor IS NOT NULL)
+          OR EXISTS(SELECT 1 FROM work_order_output_receipts o WHERE o.run=s.run AND o.receipt=s.receipt)
           OR EXISTS(SELECT 1 FROM stock_receipt_inspections i WHERE i.run=s.run AND i.receipt=s.receipt)
          FROM stock_receipts s WHERE s.run=?1 AND s.receipt=?2",
         params![run,receipt], |row| Ok((row.get::<_,bool>(0)?,row.get::<_,bool>(1)?,

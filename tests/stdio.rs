@@ -4754,6 +4754,107 @@ fn p9d_04_batch_serial_genealogy() {
     run_wip_scenario(37);
 }
 
+#[test]
+fn p9d_12_receive_work_order_output() {
+    run_wip_scenario(41);
+}
+
+async fn receive_finished_output(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["idempotency_key"] = json!(key);
+        args["expected_cursor"] = cursor().await;
+        invoke(name, args).await
+    };
+    let order_args = json!({"work_order":order});
+    let mut receipt =
+        json!({"work_order":order,"receipt_id":"OUT-1","lot_id":"FG-LOT","location":"RAW-01"});
+    let before = cursor().await;
+    assert_eq!(
+        write("receive_work_order_output", "not-ready", receipt.clone()).await["code"],
+        "OUTPUT_NOT_RECEIVABLE"
+    );
+    assert_eq!(cursor().await, before);
+    assert_eq!(
+        write(
+            "dispatch_operation",
+            "inspection-dispatch",
+            json!({"work_order":order,"operation":"inspection","work_center":"QA-01"})
+        )
+        .await["ok"],
+        true
+    );
+    assert_eq!(
+        write(
+            "inspect_units",
+            "inspection-pass",
+            json!({"work_order":order,"result":"pass"})
+        )
+        .await["ok"],
+        true
+    );
+    let done = write(
+        "complete_work_order",
+        "confirm-completion",
+        order_args.clone(),
+    )
+    .await;
+    assert_eq!(done["ok"], true, "{done}");
+    assert_eq!(
+        write("close_work_order", "close-early", order_args.clone()).await["code"],
+        "OUTPUT_RECEIPT_REQUIRED"
+    );
+    let mut invalid = receipt.clone();
+    invalid["lot_id"] = json!("LOT-1");
+    assert_eq!(
+        write("receive_work_order_output", "taken-lot", invalid).await["code"],
+        "LOT_ALREADY_ASSIGNED"
+    );
+    receipt["expected_cursor"] = cursor().await;
+    receipt["idempotency_key"] = json!("post-output");
+    let posted = invoke("receive_work_order_output", receipt.clone()).await;
+    assert_eq!(posted["ok"], true, "{posted}");
+    let output = &posted["output_receipt"];
+    assert_eq!(output["quantity"], 10);
+    assert_eq!(output["item_id"], "FRAME");
+    assert_eq!(output["revision"], 1);
+    assert_eq!(output["serial_numbers"].as_array().unwrap().len(), 10);
+    assert_eq!(
+        invoke("receive_work_order_output", receipt.clone()).await,
+        posted
+    );
+    assert_eq!(
+        write("receive_work_order_output", "again", receipt).await["code"],
+        "OUTPUT_ALREADY_RECEIVED"
+    );
+    let balance = invoke(
+        "get_stock_balance",
+        json!({"item_id":"FRAME","location":"RAW-01"}),
+    )
+    .await;
+    assert_eq!(balance["balance"]["on_hand"], "10");
+    assert_eq!(
+        invoke("get_lot", json!({"lot_id":"FG-LOT"})).await["lot"]["receipt_id"],
+        "OUT-1"
+    );
+    let reconcile = invoke("reconcile_work_order", order_args.clone()).await;
+    assert_eq!(reconcile["balanced"], true, "{reconcile}");
+    assert_eq!(reconcile["output_receipt"], *output);
+    let reversed=write("reverse_inventory_movement","generic-reversal",json!({
+        "movement_type":"receipt","movement_id":"OUT-1","reversal_id":"REV-OUT","reason":"duplicate"
+    })).await;
+    assert_eq!(reversed["code"], "RECEIPT_HAS_DEPENDENCIES");
+    assert_eq!(
+        write("close_work_order", "close", order_args).await["ok"],
+        true
+    );
+}
+
 fn run_wip_scenario(version: u64) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
@@ -5298,8 +5399,9 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=40) {
+            if matches!(version,36..=41) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
+                if version==41 {route["inspection"]=json!({"work_center":"QA-01","predecessors":["assembly"]});}
             }
             for (name,args) in [
                 ("create_item",json!({"item_id":"FRAME","base_unit":"each"})),
@@ -5526,8 +5628,11 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if matches!(version,36..=40) {
-                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version>=39,version==40)).await;
+            if matches!(version,36..=41) {
+                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version>=39,version>=40)).await;
+                if version == 41 {
+                    Box::pin(receive_finished_output(&client,run,order)).await;
+                }
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
                 let lots=lots["lots"].as_array().unwrap();

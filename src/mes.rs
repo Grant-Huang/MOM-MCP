@@ -358,6 +358,7 @@ pub fn spec(action: Action) -> Spec {
                 "ORDER_HAS_EXECUTION",
                 "QUALITY_HOLD",
                 "COMPLETION_REQUIRED",
+                "OUTPUT_RECEIPT_REQUIRED",
                 "DELIVERY_REQUIRED",
                 "VERSION_CONFLICT",
                 "IDEMPOTENCY_CONFLICT",
@@ -592,6 +593,8 @@ pub struct Setup {
     pub issued_report_inputs: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub wip_movements: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub output_receipts: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub alternate_centers: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1344,7 +1347,32 @@ pub fn invoke(
             false,
         ));
     }
-    let mut response = if action == Action::MoveWip {
+    if setup.output_receipts && action == Action::CloseWorkOrder {
+        let id = args["work_order"].as_str().unwrap();
+        if state.orders.get(id).is_some_and(|order| {
+            order.phase == Phase::Complete
+                && order.inspection.as_deref() == Some("pass")
+                && order.completion_confirmed == Some(true)
+        }) && crate::output_receipts::read(tx, run, id)?.is_none()
+        {
+            return Ok((error("OUTPUT_RECEIPT_REQUIRED"), false));
+        }
+    }
+    let mut response = if action == Action::ReceiveWorkOrderOutput {
+        let id = args["work_order"].as_str().unwrap();
+        let Some(order) = state.orders.get(id) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        if order.phase != Phase::Complete
+            || order.completion_confirmed != Some(true)
+            || order.inspection.as_deref() != Some("pass")
+        {
+            return Ok((error("OUTPUT_NOT_RECEIVABLE"), false));
+        }
+        let account =
+            crate::wip::reconcile(tx, run, id, order.hold_reason.is_some(), &state.reports)?;
+        crate::output_receipts::post(tx, run, id, args, cursor + 1, &account, &order.units)?
+    } else if action == Action::MoveWip {
         let order_id = args["work_order"].as_str().unwrap();
         let Some(order) = state.orders.get(order_id) else {
             return Ok((error("WORK_ORDER_NOT_FOUND"), false));

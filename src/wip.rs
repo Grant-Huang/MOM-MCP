@@ -736,7 +736,7 @@ pub(crate) fn reconcile_spec() -> Spec {
             &["ok","work_order","balanced","wip","issues","discrepancies"],
             json!({"ok":{"const":true},"work_order":id_schema(),"balanced":{"type":"boolean"},
                 "wip":counts,"issues":{"type":"array","items":issues},
-                "blocking":text(),"discrepancies":{"type":"array","items":text()}})),
+                "blocking":text(),"output_receipt":crate::output_receipts::row_schema(),"discrepancies":{"type":"array","items":text()}})),
             object(&["ok","code"],json!({"ok":{"const":false},"code":text()}))]}),
         preconditions: &["run_open", "tool_enabled_in_scenario"],
         side_effect: "none",
@@ -829,10 +829,29 @@ pub(crate) fn reconcile(
     if assembly_reported != consumed || reported_serials != consumed_serials {
         discrepancies.insert("ASSEMBLY_INPUT_MISMATCH");
     }
+    let output = crate::output_receipts::read(tx, run, order)?;
+    if let Some(output) = &output {
+        let actual: BTreeSet<_> = output["serial_numbers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        let expected: BTreeSet<_> = reported_serials.iter().copied().collect();
+        if output["quantity"].as_u64() != Some(assembly_reported as u64)
+            || actual != expected
+            || actual.len() != assembly_reported
+        {
+            discrepancies.insert("OUTPUT_RECEIPT_MISMATCH");
+        }
+    }
     let mut result = json!({"ok":true,"work_order":order,"balanced":discrepancies.is_empty(),
         "wip":{"machined":machined,"at_source":at_source,"at_destination":at_destination,
             "consumed":consumed,"assembly_reported":assembly_reported},
         "issues":issues,"discrepancies":discrepancies});
+    if let Some(output) = output {
+        result["output_receipt"] = output;
+    }
     if let Some(blocking) = crate::quality::blocking(tx, run, order)?
         .or_else(|| order_held.then(|| "WORK_ORDER_HELD".into()))
         .or_else(|| material_blocked.then(|| "MATERIAL_HELD".into()))

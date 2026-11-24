@@ -371,6 +371,23 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             || definition.capabilities.contains(&Action::MoveWip),
         "work order reconciliation requires work in process movement"
     );
+    anyhow::ensure!(
+        definition
+            .capabilities
+            .contains(&Action::ReceiveWorkOrderOutput)
+            == definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| setup.output_receipts)
+            && (!definition
+                .capabilities
+                .contains(&Action::ReceiveWorkOrderOutput)
+                || definition
+                    .capabilities
+                    .contains(&Action::ReconcileWorkOrder)
+                    && definition.capabilities.contains(&Action::CompleteWorkOrder)),
+        "finished output receipt requires work order completion and reconciliation"
+    );
 
     anyhow::ensure!(
         !definition
@@ -509,6 +526,10 @@ impl Scenarios {
              CREATE TABLE IF NOT EXISTS fabrication_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS assembly_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS smt_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS work_order_output_receipts (
+                run TEXT NOT NULL, work_order TEXT NOT NULL, receipt TEXT NOT NULL,
+                serials TEXT NOT NULL, PRIMARY KEY(run,work_order), UNIQUE(run,receipt)
+             );
              CREATE TABLE IF NOT EXISTS mes_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS des_runs (run TEXT PRIMARY KEY, state TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS scenario_created_orders (
@@ -726,6 +747,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-wip-movement-reversal.json"),
             include_str!("../fixtures/cnc-wip-split-merge.json"),
             include_str!("../fixtures/cnc-work-order-reconciliation.json"),
+            include_str!("../fixtures/cnc-work-order-output.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
@@ -1756,6 +1778,7 @@ impl Scenarios {
                 action,
                 Action::GetWip
                     | Action::ReconcileWorkOrder
+                    | Action::ReceiveWorkOrderOutput
                     | Action::MoveWip
                     | Action::ReverseWipMovement
                     | Action::SplitWip
