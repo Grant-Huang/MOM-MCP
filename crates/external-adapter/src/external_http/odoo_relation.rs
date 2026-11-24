@@ -1,4 +1,5 @@
-use serde_json::Value;
+use reqwest::StatusCode;
+use serde_json::{Value, json};
 
 use super::{HttpOrderReader, HttpSourceKind, ReadError, read_json};
 
@@ -33,12 +34,7 @@ impl HttpOrderReader<'_> {
         work_order_id: i64,
         company_id: i64,
     ) -> Result<Option<OdooSalesRelation<'_>>, ReadError> {
-        let HttpSourceKind::Odoo { database } = self.source.kind else {
-            return Err(ReadError::InvalidBinding);
-        };
-        if work_order_id <= 0 || company_id <= 0 {
-            return Err(ReadError::InvalidBinding);
-        }
+        let database = self.relation_database(work_order_id, company_id)?;
         let read = |record, id| self.read_odoo_relation_row(database, record, id, company_id);
         let work_order = read(WORK_ORDER, work_order_id).await?;
         let Some(sales_line_id) = relation_id(&work_order["sale_line_id"])? else {
@@ -57,7 +53,102 @@ impl HttpOrderReader<'_> {
             return Err(ReadError::UnexpectedRecord);
         }
 
-        Ok(Some(OdooSalesRelation {
+        Ok(Some(self.sales_relation(
+            company_id,
+            work_order_id,
+            sales_line_id,
+            sales_order_id,
+        )))
+    }
+
+    /// Reads a relationship in one Odoo transaction using the fixed web_read specification.
+    /// The caller must authorize the work order and company before invoking this method.
+    pub async fn read_odoo_sales_relation_atomic(
+        &self,
+        work_order_id: i64,
+        company_id: i64,
+    ) -> Result<Option<OdooSalesRelation<'_>>, ReadError> {
+        let database = self.relation_database(work_order_id, company_id)?;
+        let url = self
+            .origin
+            .join("/json/2/mrp.production/web_read")
+            .map_err(|_| ReadError::InvalidBinding)?;
+        let response = self
+            .client
+            .post(url)
+            .header("X-Odoo-Database", database)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .bearer_auth(self.source.token)
+            .json(&json!({
+                "ids": [work_order_id],
+                "specification": {
+                    "id": {}, "company_id": {},
+                    "sale_line_id": {"fields": {
+                        "id": {}, "company_id": {},
+                        "order_id": {"fields": {"id": {}, "company_id": {}}}
+                    }}
+                }
+            }))
+            .send()
+            .await
+            .map_err(|_| ReadError::SourceUnavailable)?;
+        match response.status() {
+            StatusCode::OK => {}
+            StatusCode::FORBIDDEN => {
+                let error = read_json(response)
+                    .await
+                    .map_err(|_| ReadError::SourceUnavailable)?;
+                return Err(if error["name"] == "odoo.exceptions.AccessError" {
+                    ReadError::NotVisible
+                } else {
+                    ReadError::SourceUnavailable
+                });
+            }
+            _ => return Err(ReadError::SourceUnavailable),
+        }
+        let work_order = single_row(read_json(response).await?)?;
+        if positive_id(&work_order["id"])? != work_order_id {
+            return Err(ReadError::UnexpectedRecord);
+        }
+        let read_id = |row: &Value| {
+            let id = positive_id(&row["id"])?;
+            if positive_id(&row["company_id"])? != company_id {
+                return Err(ReadError::NotVisible);
+            }
+            Ok(id)
+        };
+        read_id(&work_order)?;
+        let sales_line = &work_order["sale_line_id"];
+        if *sales_line == Value::Bool(false) {
+            return Ok(None);
+        }
+        let sales_line_id = read_id(sales_line)?;
+        let sales_order_id = read_id(&sales_line["order_id"])?;
+        Ok(Some(self.sales_relation(
+            company_id,
+            work_order_id,
+            sales_line_id,
+            sales_order_id,
+        )))
+    }
+
+    fn relation_database(&self, work_order_id: i64, company_id: i64) -> Result<&str, ReadError> {
+        match self.source.kind {
+            HttpSourceKind::Odoo { database } if work_order_id > 0 && company_id > 0 => {
+                Ok(database)
+            }
+            _ => Err(ReadError::InvalidBinding),
+        }
+    }
+
+    fn sales_relation(
+        &self,
+        company_id: i64,
+        work_order_id: i64,
+        sales_line_id: i64,
+        sales_order_id: i64,
+    ) -> OdooSalesRelation<'_> {
+        OdooSalesRelation {
             tenant: self.source.tenant,
             site: self.source.site,
             instance: self.source.instance,
@@ -65,7 +156,7 @@ impl HttpOrderReader<'_> {
             work_order_id,
             sales_line_id,
             sales_order_id,
-        }))
+        }
     }
 
     async fn read_odoo_relation_row(
@@ -85,14 +176,7 @@ impl HttpOrderReader<'_> {
         if response.status() != reqwest::StatusCode::OK {
             return Err(ReadError::SourceUnavailable);
         }
-        let Value::Array(mut rows) = read_json(response).await? else {
-            return Err(ReadError::InvalidResponse);
-        };
-        let row = match rows.len() {
-            0 => return Err(ReadError::NotVisible),
-            1 => rows.pop().unwrap(),
-            _ => return Err(ReadError::UnexpectedRecord),
-        };
+        let row = single_row(read_json(response).await?)?;
         let observed_id = positive_id(&row["id"])?;
         if observed_id != id {
             return Err(ReadError::UnexpectedRecord);
@@ -102,6 +186,18 @@ impl HttpOrderReader<'_> {
         }
         Ok(row)
     }
+}
+
+fn single_row(payload: Value) -> Result<Value, ReadError> {
+    let Value::Array(rows) = payload else {
+        return Err(ReadError::InvalidResponse);
+    };
+    let mut rows = rows.into_iter();
+    let row = rows.next().ok_or(ReadError::NotVisible)?;
+    if rows.next().is_some() {
+        return Err(ReadError::UnexpectedRecord);
+    }
+    Ok(row)
 }
 
 fn positive_id(value: &Value) -> Result<i64, ReadError> {
