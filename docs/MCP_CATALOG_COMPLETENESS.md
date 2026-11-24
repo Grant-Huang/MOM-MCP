@@ -43,3 +43,11 @@ P8/P9 的分层规则、拆并条件与场景反证见 [MCP 分层审查](MCP_LA
 这些差异属于下一次契约冻结输入。每项状态必须给出可追溯的来源、所属业务流程、工具名和验收 ID，或记录范围外的原因。
 
 目录审计同时覆盖 [长期运营测试模拟](LONG_RUNNING_MES_VALIDATION.md) 的跨班任务、异常叠加、恢复和审计。场景能单次跑完是入口，连续状态和未决事项接续由独立验收矩阵签收。
+
+## P9D 谱系复审
+
+| 参考行为 | 当前契约与证据 | 待补 |
+|---|---|---|
+| OpenMES 以物料批次为起点提供正向谱系及使用去向 | `trace_lot_forward` 返回实际投入、来源在制批次、序列号与下游耗用。P9D-04 验证两批原料分流、冲销与历史保留。 [OpenMES 路由清单](references/mcp/openmes-routes.csv#L85) | 物料批次反查、在制拆合、移交纠正、跨车间冻结范围。 |
+| WebErpMesv2 以产品序列号查询生产追溯 | `trace_serial_backward` 定位产出批次及实际投入。P9D-04/05 验证同一装配路径上的序列号不会混入其他来源批次。 [WebErpMesv2 路由清单](references/mcp/weberpmesv2-routes.csv#L1036) | 序列号完工入库、质量放行记录及跨行业对账。当前投入量保留报工批次粒度。 |
+| qcadoo 工单纠正与 Carbon 库存移动纠正 | `list_genealogy_edges` 保留 CNC 已冲销耗用边并标记状态。P9D-04 验证冲销、重新耗用及分页。 [qcadoo 工单状态参考](https://github.com/qcadoo/mes/blob/625afad7a8adaaa65b5b8b7bd7867af21aafc960/mes-plugins/mes-plugins-orders/src/main/java/com/qcadoo/mes/orders/states/constants/OrderState.java) | 从谱系核对有效实绩、库存纠正及原分录。P10 前仍须完成同一运行的综合准出。 |

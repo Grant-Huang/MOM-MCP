@@ -4734,11 +4734,35 @@ async fn p9d_02_move_and_consume_wip() {
     operation_issue_scenarios(&[("cnc", 36, "WO-1", "machining", "MACH-01")]).await;
 }
 
+#[test]
+fn p9d_04_batch_serial_genealogy() {
+    // The full inventory, WIP and genealogy flow composes large debug-mode futures.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(operation_issue_scenarios(&[(
+                    "cnc",
+                    37,
+                    "WO-1",
+                    "machining",
+                    "MACH-01",
+                )]));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 async fn move_and_consume_wip(
     client: &RunningService<RoleClient, ()>,
     run: &Value,
     order: &str,
     operation: &str,
+    genealogy: bool,
 ) {
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
@@ -4754,6 +4778,9 @@ async fn move_and_consume_wip(
     };
     let prep = json!({"work_order":order,"operation":operation});
     let assembly = json!({"work_order":order,"operation":"assembly"});
+    if genealogy {
+        Box::pin(setup_genealogy_second_lot(client, run, order, operation)).await;
+    }
     apply("start_operation", "start-source", prep.clone()).await;
     let machining_report = |quantity, amount| json!({"work_order":order,"operation":operation,"quantity":quantity,"material_inputs":{"RS-1":amount}});
     let first = apply(
@@ -4768,7 +4795,11 @@ async fn move_and_consume_wip(
         write("move_wip", "early", movement.clone()).await["code"],
         "WIP_DESTINATION_NOT_ELIGIBLE"
     );
-    let second = apply("post_operation_report", "source2", machining_report(6, "1")).await;
+    let mut second_args = machining_report(6, "1");
+    if genealogy {
+        second_args["material_inputs"] = json!({"RS-2":"1"});
+    }
+    let second = apply("post_operation_report", "source2", second_args).await;
     let second_id = &second["report"]["id"];
     apply("complete_operation", "complete-source", prep).await;
     apply(
@@ -4868,6 +4899,17 @@ async fn move_and_consume_wip(
     report["wip_inputs"] = json!([second_id]);
     apply("post_operation_report", "consume-second", report).await;
     apply("complete_operation", "complete-assembly", assembly).await;
+    if genealogy {
+        Box::pin(assert_genealogy(
+            client,
+            run,
+            order,
+            &second["report"]["serial_numbers"][0],
+            &consumed["report"]["id"],
+            &reconsumed["report"]["id"],
+        ))
+        .await;
+    }
     assert_eq!(
         invoke(
             "get_stock_balance",
@@ -4878,6 +4920,139 @@ async fn move_and_consume_wip(
     );
 }
 
+async fn setup_genealogy_second_lot(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+    operation: &str,
+) {
+    let apply = async |name: &str, key: &str, mut args: Value| {
+        args["idempotency_key"] = json!(key);
+        args["expected_cursor"] =
+            call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+        let result = business(client, run, name, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+    };
+    apply("create_receipt","second-receipt",json!({"receipt_id":"RC-2","item_id":"WIRE","revision":1,"quantity":"1","requires_inspection":false})).await;
+    apply(
+        "assign_receipt_tracking",
+        "second-tracking",
+        json!({"receipt_id":"RC-2","lot_id":"LOT-2","supplier_lot":"SUP-2","location":"RAW-02"}),
+    )
+    .await;
+    apply("post_receipt", "second-post", json!({"receipt_id":"RC-2"})).await;
+    apply(
+        "reserve_material",
+        "second-reserve",
+        json!({"reservation_id":"RS-2","work_order":order,"lot_id":"LOT-2","quantity":"1"}),
+    )
+    .await;
+    apply(
+        "pick_material",
+        "second-pick",
+        json!({"reservation_id":"RS-2"}),
+    )
+    .await;
+    apply(
+        "issue_material_to_operation",
+        "second-issue",
+        json!({"reservation_id":"RS-2","operation":operation}),
+    )
+    .await;
+}
+async fn assert_genealogy(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+    serial: &Value,
+    reversed_report: &Value,
+    active_report: &Value,
+) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let stable_cursor = cursor().await;
+    let tools = call(
+        client,
+        "search_tools",
+        json!({"run_id":run,"query":"genealogy"}),
+    )
+    .await;
+    for name in [
+        "trace_lot_forward",
+        "trace_serial_backward",
+        "list_genealogy_edges",
+    ] {
+        assert!(
+            tools["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == name)
+        );
+    }
+    let forward = invoke("trace_lot_forward", json!({"lot_id":"LOT-1"})).await;
+    let edges = forward["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 7, "{forward}");
+    assert!(
+        edges
+            .iter()
+            .any(|edge| edge["target"]["id"] == *reversed_report && edge["status"] == "reversed")
+    );
+    assert!(
+        edges
+            .iter()
+            .any(|edge| edge["target"]["id"] == *active_report && edge["status"] == "active")
+    );
+    assert!(edges.iter().all(|edge| edge["source"]["id"] != "LOT-2"));
+    let backward = invoke(
+        "trace_serial_backward",
+        json!({"serial_number":serial,"work_order":order}),
+    )
+    .await;
+    let edges = backward["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 2, "{backward}");
+    assert_eq!(edges[0]["source"]["id"], "LOT-2");
+    assert_eq!(edges[1]["target"]["id"], *serial);
+    let first_page = invoke(
+        "list_genealogy_edges",
+        json!({"work_order":order,"limit":1}),
+    )
+    .await;
+    let next = invoke(
+        "list_genealogy_edges",
+        json!({"work_order":order,"limit":1,"after_edge_id":first_page["next_after_edge_id"]}),
+    )
+    .await;
+    assert_ne!(
+        first_page["edges"][0]["edge_id"],
+        next["edges"][0]["edge_id"]
+    );
+    assert_eq!(
+        invoke(
+            "trace_lot_forward",
+            json!({"lot_id":"LOT-1","work_order":"WO-2"})
+        )
+        .await["edges"],
+        json!([])
+    );
+    let isolated = call(
+        client,
+        "open_scenario",
+        json!({"scenario_id":"cnc","version":37}),
+    )
+    .await;
+    assert_eq!(
+        business(
+            client,
+            &isolated["run_id"],
+            "trace_serial_backward",
+            json!({"serial_number":serial})
+        )
+        .await["edges"],
+        json!([])
+    );
+    assert_eq!(cursor().await, stable_cursor);
+}
 async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
@@ -4900,7 +5075,7 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if version == 36 {
+            if matches!(version,36 | 37) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
             }
             for (name,args) in [
@@ -5128,8 +5303,8 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if version == 36 {
-                Box::pin(move_and_consume_wip(&client,run,order,operation)).await;
+            if matches!(version,36 | 37) {
+                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
                 let lots=lots["lots"].as_array().unwrap();

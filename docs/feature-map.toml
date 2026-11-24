@@ -833,3 +833,19 @@ spec = "acceptance/P9D.md"
 features = ["F08", "F09", "F10", "F11"]
 layers = ["playwright"]
 tests = { playwright = "P9D-03 Move and consume a WIP lot" }
+
+[[case]]
+id = "P9D-04"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9d_04_batch_serial_genealogy" }
+
+[[case]]
+id = "P9D-05"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F09", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P9D-05 Trace an issued lot and serial" }

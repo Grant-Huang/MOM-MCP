@@ -1120,6 +1120,17 @@ pub fn invoke(
     cursor: i64,
 ) -> anyhow::Result<(Value, bool)> {
     let mut state = load(tx, run, setup, orders)?;
+    if action.is_genealogy_action() {
+        if let Some(order) = args.get("work_order").and_then(Value::as_str)
+            && !state.orders.contains_key(order)
+        {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        }
+        return Ok((
+            crate::genealogy::read(run, action, &state.reports, args),
+            false,
+        ));
+    }
     if action == Action::GetWip {
         let order = args["work_order"].as_str().unwrap();
         if !crate::scenario::identifier(order) {
