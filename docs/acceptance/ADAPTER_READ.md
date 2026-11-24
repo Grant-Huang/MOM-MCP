@@ -16,7 +16,7 @@
 
 ## 证据进度
 
-[三源 Adapter 能力矩阵](ADAPTER_CAPABILITIES.md) 汇总源版本、权限、映射和正式入口证据。
+[三源 Adapter 能力矩阵](ADAPTER_CAPABILITIES.md) 汇总源版本、权限、映射和正式入口证据。 [三源工单首个状态转换](ADAPTER_LIFECYCLE.md) 记录状态对照与审查后待补的验收项。
 
 | 来源 | 真实来源接口 | AgentNexus 候选接线 | 正式接口真实来源 |
 |---|---|---|---|

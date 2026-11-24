@@ -1,0 +1,20 @@
+# 三源工单首个状态转换
+
+适用范围为单工单只读观测，映射版本为 `0.1`。来源固定版本见[能力矩阵](ADAPTER_CAPABILITIES.md)。
+
+| 来源 | 源状态转换 | 证据与业务约束 |
+|---|---|---|
+| Odoo Community 19.0 | `draft → confirmed` | 本地 JSON-2 读回已确认。制造确认涉及库存移动及物料准备。[运行记录及源码](../EXTERNAL_ADAPTER_DESIGN.md#首个状态转换的对照证据) |
+| OpenMES | `PENDING → ACCEPTED` | 本地 Laravel 测试内核对同一工单执行接受并读回。该入口校验更新权限和 `PENDING` 前置状态。[接受实现](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Http/Controllers/Api/V1/WorkOrderController.php#L136) |
+| Carbon Community | `Draft / Planned → Ready` | 固定源码显示放行时先重新计算并尝试运行 MRP，随后按当前状态有条件地更新为 `Ready`。放行还有后续业务动作。本轮证据为源码，真实后端转换待复验。[放行实现](https://github.com/crbnos/carbon/blob/05bd067c0a72ca9f0983f6278d2a7c9bb48b716c/apps/erp/app/modules/production/production.server.ts#L316) |
+
+当前映射逐项保留源值，`normalized_status` 为空，`mapping_issue=unmapped`。未来提议同一规范状态时，需要核对各来源的操作前置条件、库存或计划副作用、进入状态后的可执行操作及反例。运行 `cargo test --locked --test external_order preserves_source_specific_release_states` 验证实际 Rust 投影器。测试使用来源响应夹具。
+
+## 后续验收缺口
+
+| 缺口 | 补齐条件与证据 |
+|---|---|
+| 正式 Observe 接真实三源，当前 0/3 | 宿主批准身份、绑定、凭据和出站后，先在 Odoo 复验，再跑 OpenMES 与 Carbon Community。每站记录正式入口 401／200／404 和第二源身份对范围外记录的独立确认。 |
+| 正式身份及故障契约 | 在正式服务层记录过期、撤权、跨世界或未绑定引用的拒绝和零来源调用。记录 502／503 的错误分类、脱敏以及其他来源和 Mock 的零回退。AgentNexus #266 已提供 502 夹具证据。 |
+| Carbon 原生 MCP，授权实例 0/1 | 获得启用 MCP 权益的测试实例。确认工具调用、实际公司边界，并用受信侧记录辨明工具拒绝原因。社区版 REST 证据继续独立登记。 |
+| 生命周期与能力扩展 | 使用真实 Carbon 后端验证同一 Job 放行前后读回，并记录权限、前置状态和副作用。状态等价、列表、订阅、写入和跨版本兼容随各自切片定义验收。 |
