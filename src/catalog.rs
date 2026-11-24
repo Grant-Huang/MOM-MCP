@@ -20,6 +20,9 @@ pub enum Action {
     ReleaseReceiptInspection,
     GetMaterialAvailability,
     GetMaterialRequirements,
+    TraceLotForward,
+    TraceSerialBackward,
+    ListGenealogyEdges,
     GetWip,
     MoveWip,
     ListStockLocations,
@@ -194,6 +197,9 @@ impl Action {
             Self::ReleaseReceiptInspection,
             Self::GetMaterialAvailability,
             Self::GetMaterialRequirements,
+            Self::TraceLotForward,
+            Self::TraceSerialBackward,
+            Self::ListGenealogyEdges,
             Self::GetWip,
             Self::MoveWip,
             Self::ListStockLocations,
@@ -272,6 +278,9 @@ impl Action {
             Self::ReleaseReceiptInspection => "release_receipt_inspection",
             Self::GetMaterialAvailability => "get_material_availability",
             Self::MoveWip => "move_wip",
+            Self::TraceLotForward => "trace_lot_forward",
+            Self::TraceSerialBackward => "trace_serial_backward",
+            Self::ListGenealogyEdges => "list_genealogy_edges",
             Self::GetWip => "get_wip",
             Self::GetMaterialRequirements => "get_material_requirements",
             Self::ListStockLocations => "list_stock_locations",
@@ -365,6 +374,7 @@ impl Action {
             | Self::DispositionNonconformance
             | Self::ReleaseQualityHold => &["检验", "质量", "inspection", "quality"],
             action if action.is_reservation_action() => &["预留", "拣料", "reservation", "picking"],
+            action if action.is_genealogy_action() => &["谱系", "追溯", "genealogy", "trace"],
             action if action.is_receipt_action() => &["库存", "收货", "inventory", "receipt"],
             action if action.is_route_action() => &["工艺路线", "route", "revision"],
             action if action.is_bom_action() => &["物料清单", "bom", "revision"],
@@ -439,7 +449,16 @@ impl Action {
                 | Self::UnpickMaterial
         )
     }
+    pub(crate) fn is_genealogy_action(self) -> bool {
+        matches!(
+            self,
+            Self::TraceLotForward | Self::TraceSerialBackward | Self::ListGenealogyEdges
+        )
+    }
     pub fn spec(self) -> Spec {
+        if self.is_genealogy_action() {
+            return crate::genealogy::spec(self);
+        }
         if self == Self::MoveWip {
             return crate::wip::move_spec();
         }
