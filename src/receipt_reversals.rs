@@ -115,7 +115,8 @@ pub(crate) fn reverse(
           EXISTS(SELECT 1 FROM stock_receipt_reversals r WHERE r.run=s.run AND r.receipt=s.receipt),
           EXISTS(SELECT 1 FROM scenario_holds h WHERE h.run=s.run AND h.batch=s.lot),
           EXISTS(SELECT 1 FROM stock_reservations r WHERE r.run=s.run AND r.lot=s.lot
-            AND r.status IN ('reserved','picked','issued'))
+            AND (r.status IN ('reserved','picked','issued') OR EXISTS(SELECT 1 FROM stock_operation_issues i
+                WHERE i.run=r.run AND i.reservation=r.reservation)))
           OR EXISTS(SELECT 1 FROM stock_transfers t WHERE t.run=s.run AND t.lot=s.lot AND t.posted_cursor IS NOT NULL)
           OR EXISTS(SELECT 1 FROM stock_receipt_inspections i WHERE i.run=s.run AND i.receipt=s.receipt)
          FROM stock_receipts s WHERE s.run=?1 AND s.receipt=?2",

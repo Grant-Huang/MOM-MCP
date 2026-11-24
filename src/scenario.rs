@@ -39,6 +39,20 @@ pub struct Definition {
     capabilities: Vec<Action>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     receipt_reversals: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    operation_material_reversals: bool,
+}
+
+impl Definition {
+    fn issued_report_inputs(&self) -> bool {
+        self.manufacturing
+            .as_ref()
+            .is_some_and(|setup| setup.issued_report_inputs)
+            || self
+                .assembly
+                .as_ref()
+                .is_some_and(|setup| setup.issued_report_inputs)
+    }
 }
 
 const fn model_version() -> u32 {
@@ -317,10 +331,7 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         !definition
             .capabilities
             .contains(&Action::ReturnUnusedMaterial)
-            || (definition
-                .manufacturing
-                .as_ref()
-                .is_some_and(|setup| setup.issued_report_inputs)
+            || (definition.issued_report_inputs()
                 && definition
                     .capabilities
                     .contains(&Action::IssueMaterialToOperation)
@@ -328,6 +339,17 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                     .capabilities
                     .contains(&Action::PostOperationReport)),
         "operation material returns require recorded issue and report inputs"
+    );
+    anyhow::ensure!(
+        !definition.operation_material_reversals
+            || (definition.issued_report_inputs()
+                && definition
+                    .capabilities
+                    .contains(&Action::ReturnUnusedMaterial)
+                && definition
+                    .capabilities
+                    .contains(&Action::ReverseInventoryMovement)),
+        "operation material reversals require recorded manufacturing inputs and returns"
     );
     anyhow::ensure!(
         !definition
@@ -473,9 +495,17 @@ impl Scenarios {
                  PRIMARY KEY(run,movement)
              );
              CREATE INDEX IF NOT EXISTS stock_return_reservation ON stock_operation_returns(run,reservation);
-             CREATE VIEW IF NOT EXISTS stock_return_totals AS
-                 SELECT run,reservation,SUM(quantity) AS quantity FROM stock_operation_returns
-                 GROUP BY run,reservation;
+             CREATE TABLE IF NOT EXISTS stock_operation_reversals (
+                 run TEXT NOT NULL, kind TEXT NOT NULL, original TEXT NOT NULL, reversal TEXT NOT NULL,
+                 reservation TEXT NOT NULL, lot TEXT NOT NULL, location TEXT NOT NULL,
+                 quantity INTEGER NOT NULL, reason TEXT NOT NULL, reversed_cursor INTEGER NOT NULL,
+                 PRIMARY KEY(run,kind,original), UNIQUE(run,reversal)
+             );
+             CREATE VIEW IF NOT EXISTS stock_effective_return_totals AS
+                 SELECT t.run,t.reservation,SUM(t.quantity) AS quantity FROM stock_operation_returns t
+                 WHERE NOT EXISTS(SELECT 1 FROM stock_operation_reversals r
+                     WHERE r.run=t.run AND r.kind='return' AND r.original=t.movement)
+                 GROUP BY t.run,t.reservation;
              CREATE TABLE IF NOT EXISTS stock_reservations (
                  run TEXT NOT NULL, reservation TEXT NOT NULL, work_order TEXT NOT NULL,
                  lot TEXT NOT NULL, quantity INTEGER NOT NULL, status TEXT NOT NULL,
@@ -594,7 +624,9 @@ impl Scenarios {
             include_str!("../fixtures/cnc-stock-transfers.json"),
             include_str!("../fixtures/cnc-stock-transfer-reversal.json"),
             include_str!("../fixtures/cnc-receipt-reversal.json"),
+            include_str!("../fixtures/cnc-operation-material-reversals.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
+            include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
             include_str!("../fixtures/assembly-resource-occupancy.json"),
@@ -923,6 +955,11 @@ impl Scenarios {
             Action::GetReleaseReadiness | Action::ReleaseWorkOrder if snapshot_enabled => {
                 crate::snapshots::release_spec(action)
             }
+            Action::ReverseInventoryMovement if definition.operation_material_reversals => {
+                crate::operation_reversals::extend_spec(crate::receipt_reversals::extend_spec(
+                    action.spec(),
+                ))
+            }
             Action::ReverseInventoryMovement if definition.receipt_reversals => {
                 crate::receipt_reversals::extend_spec(action.spec())
             }
@@ -937,12 +974,7 @@ impl Scenarios {
         {
             spec.input["properties"]["receipt_id"] = catalog::text();
         }
-        if action == Action::PostOperationReport
-            && !definition
-                .manufacturing
-                .as_ref()
-                .is_some_and(|setup| setup.issued_report_inputs)
-        {
+        if action == Action::PostOperationReport && !definition.issued_report_inputs() {
             spec.input["properties"]
                 .as_object_mut()
                 .unwrap()
@@ -1074,6 +1106,13 @@ impl Scenarios {
                     && operation != crate::mes::MATERIAL_INPUT_OPERATION
                 {
                     Err("ISSUE_OPERATION_NOT_ELIGIBLE")
+                } else if definition
+                    .assembly
+                    .as_ref()
+                    .is_some_and(|setup| setup.issued_report_inputs)
+                    && operation != "build"
+                {
+                    Err("ISSUE_OPERATION_NOT_ELIGIBLE")
                 } else if let Some(actual) = actual
                     && matches!(actual.status, "dispatched" | "running")
                     && actual.blocking.is_none()
@@ -1109,7 +1148,12 @@ impl Scenarios {
                 | Action::PostStockTransfer
                 | Action::ReverseInventoryMovement
         ) {
-            return crate::transfers::invoke(tx, run, action, parameters, cursor);
+            let order_quantity = if definition.assembly.is_some() {
+                1
+            } else {
+                crate::mes::QUANTITY as i64
+            };
+            return crate::transfers::invoke(tx, run, action, parameters, cursor, order_quantity);
         }
         if action.is_receipt_action() {
             return crate::inventory::invoke(tx, run, action, parameters, cursor);

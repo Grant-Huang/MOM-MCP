@@ -161,7 +161,11 @@ pub(crate) fn issue_movements(
     let mut rows = query
         .query_map(
             params![run, after, item, revision, location, limit + 1],
-            record,
+            |row| {
+                let mut movement = record(row)?;
+                movement["status"] = json!("issued");
+                Ok(movement)
+            },
         )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let next = if rows.len() > limit as usize {
@@ -264,7 +268,7 @@ fn return_unused(
          FROM stock_operation_issues i
          JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
          JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
-         LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
+         LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
          WHERE i.run=?1 AND i.reservation=?2 AND r.status='issued'",
             params![run, id],
             |row| {
@@ -330,6 +334,20 @@ fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Va
     .optional()
 }
 
+pub(crate) fn lot_committed_quantity(
+    tx: &Transaction<'_>,
+    run: &str,
+    lot: &str,
+) -> rusqlite::Result<i64> {
+    tx.query_row(
+        "SELECT COALESCE(SUM(r.quantity-COALESCE(t.quantity,0)),0) FROM stock_reservations r
+        LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
+        WHERE r.run=?1 AND r.lot=?2 AND r.status IN ('reserved','picked','issued')",
+        params![run, lot],
+        |r| r.get(0),
+    )
+}
+
 pub(crate) fn order_quantity_by_state(
     tx: &Transaction<'_>,
     run: &str,
@@ -341,7 +359,7 @@ pub(crate) fn order_quantity_by_state(
     tx.query_row(
         "SELECT COALESCE(SUM(r.quantity-COALESCE(t.quantity,0)),0) FROM stock_reservations r
          JOIN stock_receipts s ON s.run=r.run AND s.lot=r.lot
-         LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
+         LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
          WHERE r.run=?1 AND r.work_order=?2 AND s.item=?3 AND s.revision=?4
          AND ((?5 AND r.status='issued') OR (NOT ?5 AND r.status IN ('reserved','picked'))) ",
         params![run, order, item, revision, issued],
@@ -474,13 +492,7 @@ pub(crate) fn invoke(
         if amount > required - reserved - issued {
             return Ok(Err(reject("ORDER_REQUIREMENT_EXCEEDED", "quantity")));
         }
-        let held: i64 = tx.query_row(
-            "SELECT COALESCE(SUM(r.quantity-COALESCE(t.quantity,0)),0) FROM stock_reservations r
-        LEFT JOIN stock_return_totals t ON t.run=r.run AND t.reservation=r.reservation
-        WHERE r.run=?1 AND r.lot=?2 AND r.status IN ('reserved','picked','issued')",
-            params![run, lot],
-            |r| r.get(0),
-        )?;
+        let held = lot_committed_quantity(&tx, run, lot)?;
         if amount > on_hand - held {
             return Ok(Err(reject("LOT_AVAILABLE_QUANTITY_EXCEEDED", "quantity")));
         }

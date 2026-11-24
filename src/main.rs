@@ -5,6 +5,7 @@ mod fabrication;
 mod inventory;
 mod items;
 mod mes;
+mod operation_reversals;
 mod operations;
 mod probe;
 mod quality;

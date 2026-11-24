@@ -135,6 +135,8 @@ pub fn spec(action: Action) -> Spec {
 pub struct Setup {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclusive_dispatch: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub issued_report_inputs: bool,
     stock: BTreeMap<String, usize>,
     orders: BTreeMap<String, OrderDefinition>,
     cells: BTreeMap<String, Vec<String>>,
@@ -289,6 +291,30 @@ struct State {
     received: bool,
 }
 
+pub(crate) fn reported_material_quantity(
+    tx: &Transaction<'_>,
+    run: &str,
+    order: &str,
+    reservation: &str,
+) -> anyhow::Result<i64> {
+    let saved: Option<String> = tx
+        .query_row(
+            "SELECT state FROM assembly_runs WHERE run=?1",
+            [run],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(saved) = saved else { return Ok(0) };
+    let state: State = serde_json::from_str(&saved)?;
+    Ok(state.orders.get(order).map_or(0, |order_state| {
+        crate::mes::material_used(&order_state.build_reports, order, reservation)
+    }))
+}
+
+fn has_build(order: &Order) -> bool {
+    !order.installed.is_empty() || order.build_reports.iter().any(|report| !report.reversed)
+}
+
 fn load(tx: &Transaction<'_>, run: &str, setup: &Setup) -> anyhow::Result<State> {
     let stored: Option<String> = tx
         .query_row(
@@ -360,9 +386,14 @@ fn required(setup: &Setup, order: &Order) -> BTreeMap<String, usize> {
 }
 
 fn missing(
+    setup: &Setup,
     required: &BTreeMap<String, usize>,
     stock: &BTreeMap<String, usize>,
 ) -> BTreeMap<String, usize> {
+    if setup.issued_report_inputs {
+        return BTreeMap::new();
+    }
+
     required
         .iter()
         .filter_map(|(part, &quantity)| {
@@ -425,8 +456,8 @@ pub fn operations(
         if filter.is_some_and(|filter| filter != id) {
             continue;
         }
-        let built = !order.installed.is_empty()
-            && !matches!(order.phase, Phase::Building | Phase::BuildPaused);
+        let built =
+            has_build(order) && !matches!(order.phase, Phase::Building | Phase::BuildPaused);
         let (build, test) = if order.phase == Phase::Cancelled {
             (("cancelled", None), ("cancelled", None))
         } else {
@@ -437,7 +468,7 @@ pub fn operations(
             } else if order.phase == Phase::Planned {
                 ("pending", Some("ORDER_NOT_RELEASED"))
             } else {
-                let shortages = missing(&required(setup, order), &state.stock);
+                let shortages = missing(setup, &required(setup, order), &state.stock);
                 (
                     match order.phase {
                         Phase::Dispatched => "dispatched",
@@ -445,8 +476,7 @@ pub fn operations(
                         Phase::BuildPaused => "paused",
                         _ => "ready",
                     },
-                    (order.installed.is_empty() && !shortages.is_empty())
-                        .then_some("MATERIAL_SHORTAGE"),
+                    (!has_build(order) && !shortages.is_empty()).then_some("MATERIAL_SHORTAGE"),
                 )
             };
             let test = if !built {
@@ -545,7 +575,7 @@ pub fn release_readiness(
         .filter(|(_, configurations)| configurations.contains(&setup.orders[id].configuration))
         .map(|(cell, _)| cell)
         .collect();
-    let shortages = missing(&required(setup, order), &state.stock);
+    let shortages = missing(setup, &required(setup, order), &state.stock);
     let result = dispatch_blocker(order.phase == Phase::Planned, !cells.is_empty(), &shortages);
     Ok(json!({"ok":true,"work_order":id,"ready":result.is_none(),
         "blocking":result,"cursor":cursor,"eligible_cells":cells,"missing":shortages}))
@@ -582,12 +612,21 @@ pub fn invoke(
     let mut state = load(tx, run, setup)?;
     if action == Action::AssemblyTrace {
         let subject = args["subject"].as_str().unwrap();
-        let links:Vec<_>=state.orders.iter().filter_map(|(id,order)| {
-            let spec=&setup.orders[id];
-            (subject==id || subject==spec.serial || order.installed.contains_key(subject)).then(||
-                json!({"work_order":id,"serial":spec.serial,"configuration":spec.configuration,
-                    "installed":order.installed,"substitution_qualification":order.substitute.as_ref().map(|part|&setup.substitutes[part]),
-                    "work_cell":order.cell,"tests":order.tests,"repairs":order.repairs,"delivery":order.delivery}))
+        let links: Vec<_> = state.orders.iter().filter_map(|(id,order)| {
+            let spec = &setup.orders[id];
+            let inputs: Vec<_> = order.build_reports.iter().filter(|report| !report.reversed)
+                .flat_map(|report| &report.material_inputs).collect();
+            if subject != id && subject != spec.serial && !order.installed.contains_key(subject)
+                && !inputs.iter().any(|input| input.lot_id == subject) {
+                return None;
+            }
+            let mut link = json!({"work_order":id,"serial":spec.serial,"configuration":spec.configuration,
+                "installed":order.installed,"substitution_qualification":order.substitute.as_ref().map(|part|&setup.substitutes[part]),
+                "work_cell":order.cell,"tests":order.tests,"repairs":order.repairs,"delivery":order.delivery});
+            if setup.issued_report_inputs {
+                link["material_inputs"] = json!(inputs);
+            }
+            Some(link)
         }).collect();
         return Ok((
             json!({"ok":true,"links":links,"test_bench":"TEST-1","occupied_by":state.bench,"queue":queue(&state,setup)}),
@@ -611,8 +650,8 @@ pub fn invoke(
     }
     if action == Action::AssemblyKit {
         let parts = required(setup, order);
-        let shortages = if order.installed.is_empty() {
-            missing(&parts, &state.stock)
+        let shortages = if !has_build(order) {
+            missing(setup, &parts, &state.stock)
         } else {
             BTreeMap::new()
         };
@@ -684,6 +723,36 @@ pub fn invoke(
     );
     if response["ok"] != true {
         return Ok((response, false));
+    }
+    if setup.issued_report_inputs
+        && action == Action::CancelWorkOrder
+        && crate::mes::has_operation_issue(tx, run, id, "build", false)?
+    {
+        return Ok((failure("ORDER_HAS_EXECUTION"), false));
+    }
+    if setup.issued_report_inputs
+        && matches!(action, Action::StartOperation | Action::PostOperationReport)
+    {
+        if let Some(code) = crate::quality::blocking(tx, run, id)? {
+            return Ok((failure(&code), false));
+        }
+        if action == Action::StartOperation {
+            if !crate::mes::has_operation_issue(tx, run, id, "build", true)? {
+                return Ok((failure("MATERIAL_NOT_ISSUED"), false));
+            }
+        } else {
+            let reports = &mut state.orders.get_mut(id).unwrap().build_reports;
+            let inputs = match crate::mes::report_material_inputs(tx, run, reports, id, args)? {
+                Ok(inputs) => inputs,
+                Err(code) => return Ok((failure(code), false)),
+            };
+            if !crate::inventory::matches_build_requirements(tx, run, id, &inputs)? {
+                return Ok((failure("MATERIAL_INPUTS_INCOMPLETE"), false));
+            }
+            let report = reports.last_mut().unwrap();
+            report.material_inputs = inputs;
+            response["report"] = json!(report);
+        }
     }
     response["cursor"] = (cursor + 1).into();
     save(tx, run, &state)?;
@@ -759,7 +828,7 @@ fn apply(
         }
         Action::ResumeWorkOrder if order.hold_reason.is_some() => {
             if matches!(order.phase, Phase::Released | Phase::Dispatched) {
-                let shortages = missing(&required(setup, order), &state.stock);
+                let shortages = missing(setup, &required(setup, order), &state.stock);
                 if !shortages.is_empty() {
                     return json!({"ok":false,"code":"MATERIAL_SHORTAGE","missing":shortages});
                 }
@@ -807,7 +876,7 @@ fn apply(
                 .values()
                 .any(|configs| configs.contains(configuration));
             let parts = required(setup, order);
-            let shortages = missing(&parts, &state.stock);
+            let shortages = missing(setup, &parts, &state.stock);
             if let Some(code) = dispatch_blocker(order.phase == Phase::Planned, capable, &shortages)
             {
                 return if code == "MATERIAL_SHORTAGE" {
@@ -852,7 +921,7 @@ fn apply(
             let capable = setup.cells.get(cell).is_some_and(|configurations| {
                 configurations.contains(&setup.orders[id].configuration)
             });
-            let shortages = missing(&required(setup, order), &state.stock);
+            let shortages = missing(setup, &required(setup, order), &state.stock);
             if let Some(code) = dispatch_blocker(
                 if action == Action::ReassignOperation {
                     setup.exclusive_dispatch
@@ -882,8 +951,8 @@ fn apply(
                     || (action == Action::ResumeOperation
                         && order.phase == Phase::BuildPaused)) =>
         {
-            let shortages = missing(&required(setup, order), &state.stock);
-            if order.installed.is_empty() && !shortages.is_empty() {
+            let shortages = missing(setup, &required(setup, order), &state.stock);
+            if !has_build(order) && !shortages.is_empty() {
                 return json!({"ok":false,"code":"MATERIAL_SHORTAGE","missing":shortages});
             }
             order.phase = Phase::Building;
@@ -903,20 +972,22 @@ fn apply(
                 if args["operation"] != "build" {
                     return failure("OPERATION_OUT_OF_SEQUENCE");
                 }
-                let remaining = usize::from(order.installed.is_empty());
+                let remaining = usize::from(!has_build(order));
                 if args["quantity"].as_u64().unwrap() > remaining as u64 {
                     return json!({"ok":false,"code":"REPORT_EXCEEDS_REMAINING","remaining":remaining});
                 }
             }
             let parts = required(setup, order);
-            let shortages = missing(&parts, &state.stock);
+            let shortages = missing(setup, &parts, &state.stock);
             if !shortages.is_empty() {
                 return json!({"ok":false,"code":"MATERIAL_SHORTAGE","missing":shortages});
             }
-            for (part, quantity) in &parts {
-                *state.stock.get_mut(part).unwrap() -= quantity;
+            if !setup.issued_report_inputs {
+                for (part, quantity) in &parts {
+                    *state.stock.get_mut(part).unwrap() -= quantity;
+                }
+                order.installed = parts;
             }
-            order.installed = parts;
             if action == Action::PostOperationReport {
                 let serial = &setup.orders[id].serial;
                 let report = crate::mes::Report {
@@ -940,7 +1011,7 @@ fn apply(
             if args["operation"] != "build" {
                 return failure("OPERATION_OUT_OF_SEQUENCE");
             }
-            if order.installed.is_empty() {
+            if !has_build(order) {
                 return json!({"ok":false,"code":"OPERATION_QUANTITY_INCOMPLETE","remaining":1});
             }
             order.phase = Phase::Queued;
