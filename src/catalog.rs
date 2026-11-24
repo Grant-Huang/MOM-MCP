@@ -24,6 +24,7 @@ pub enum Action {
     TraceSerialBackward,
     ListGenealogyEdges,
     GetWip,
+    ReconcileWorkOrder,
     ReverseWipMovement,
     SplitWip,
     MergeWip,
@@ -204,6 +205,7 @@ impl Action {
             Self::TraceSerialBackward,
             Self::ListGenealogyEdges,
             Self::GetWip,
+            Self::ReconcileWorkOrder,
             Self::ReverseWipMovement,
             Self::SplitWip,
             Self::MergeWip,
@@ -290,6 +292,7 @@ impl Action {
             Self::TraceLotForward => "trace_lot_forward",
             Self::TraceSerialBackward => "trace_serial_backward",
             Self::ListGenealogyEdges => "list_genealogy_edges",
+            Self::ReconcileWorkOrder => "reconcile_work_order",
             Self::GetWip => "get_wip",
             Self::GetMaterialRequirements => "get_material_requirements",
             Self::ListStockLocations => "list_stock_locations",
@@ -476,6 +479,9 @@ impl Action {
         }
         if self == Self::MoveWip {
             return crate::wip::move_spec();
+        }
+        if self == Self::ReconcileWorkOrder {
+            return crate::wip::reconcile_spec();
         }
         if self == Self::GetWip {
             return crate::wip::spec();

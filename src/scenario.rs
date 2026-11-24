@@ -367,6 +367,14 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     anyhow::ensure!(
         !definition
             .capabilities
+            .contains(&Action::ReconcileWorkOrder)
+            || definition.capabilities.contains(&Action::MoveWip),
+        "work order reconciliation requires work in process movement"
+    );
+
+    anyhow::ensure!(
+        !definition
+            .capabilities
             .iter()
             .any(|action| action.is_genealogy_action())
             || definition.capabilities.contains(&Action::MoveWip),
@@ -717,6 +725,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-wip-genealogy.json"),
             include_str!("../fixtures/cnc-wip-movement-reversal.json"),
             include_str!("../fixtures/cnc-wip-split-merge.json"),
+            include_str!("../fixtures/cnc-work-order-reconciliation.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
@@ -1746,6 +1755,7 @@ impl Scenarios {
             || matches!(
                 action,
                 Action::GetWip
+                    | Action::ReconcileWorkOrder
                     | Action::MoveWip
                     | Action::ReverseWipMovement
                     | Action::SplitWip
