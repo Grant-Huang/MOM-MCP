@@ -516,8 +516,10 @@ fn read_work_order(
 impl Scenarios {
     pub fn new(db: PathBuf) -> anyhow::Result<Self> {
         let store = Self { db };
-        let conn = store.connect()?;
-        conn.execute_batch(
+        let mut conn = store.connect()?;
+        // Commit the schema and built-in fixtures together before accepting requests.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS scenario_definitions (
                  id TEXT NOT NULL, version INTEGER NOT NULL, definition TEXT NOT NULL,
                  PRIMARY KEY (id, version)
@@ -787,11 +789,12 @@ impl Scenarios {
             include_str!("../fixtures/wire-harness.json"),
         ] {
             let definition = parse_definition(source)?;
-            conn.execute(
+            tx.execute(
                 "INSERT OR IGNORE INTO scenario_definitions VALUES (?1,?2,?3)",
                 params![definition.scenario_id, definition.version, source],
             )?;
         }
+        tx.commit()?;
         Ok(store)
     }
 
