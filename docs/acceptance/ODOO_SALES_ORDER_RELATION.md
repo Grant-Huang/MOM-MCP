@@ -16,6 +16,12 @@
 
 运行 `node --test docs/references/mcp/odoo-sales-order-relation.test.mjs` 执行候选契约。用例使用三个精确查询的响应夹具。上线验收还需验证真实读身份、宿主公开关系、跨系统目标匹配，以及查询间的变化处理。
 
+## Rust 读取候选
+
+`HttpOrderReader::read_odoo_sales_relation` 接收宿主已授权的源工单 ID 和公司 ID，按固定字段依次读取三跳，并核对每跳的记录 ID 与公司。仅显式缺失的直接关系返回空结果，范围外或不可见返回 `NotVisible`，记录冲突返回 `UnexpectedRecord`，畸形响应返回 `InvalidResponse`。成功证据包含源内部标识，供受信侧使用。当前三次读取各自独立，发布前仍需确定读取之间发生变化时的行为和宿主公开形态。
+
+运行 `cargo test --locked --test odoo_relation` 验证回环 HTTP 请求和提前停止行为。现有真实 Odoo 记录验证了各跳的接口与访问边界，Rust 候选链路仍待真实来源复跑。
+
 ## Odoo 本地 JSON-2 复核
 
 使用 Odoo Community 19.0 镜像 `odoo@sha256:03a47921f9eef2c225ded1167fe7828465d2b3177883f30d173bb1c3c792949b` 和 PostgreSQL 16，安装 `sale_mrp`，关闭演示数据。用合成数据在两个公司各准备一条直接关联链，再在第一家公司准备一张仅填写 `origin` 的制造单。给第一家公司专属的读取身份授予制造用户及本人销售订单的访问权限。

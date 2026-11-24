@@ -6,6 +6,9 @@ use reqwest::{Client, Response, StatusCode, Url, header::HeaderValue, redirect::
 use serde_json::{Value, json};
 
 mod carbon;
+mod odoo_relation;
+
+pub use odoo_relation::OdooSalesRelation;
 
 use crate::external_order::{BoundOrder, OrderObservation, ProjectionError, Source, project_order};
 
@@ -181,6 +184,29 @@ impl<'a> HttpOrderReader<'a> {
         }
     }
 
+    fn odoo_query(
+        &self,
+        database: &str,
+        path: &str,
+        id: i64,
+        fields: &[&str],
+        limit: u8,
+    ) -> Result<reqwest::RequestBuilder, ReadError> {
+        let url = self
+            .origin
+            .join(path)
+            .map_err(|_| ReadError::InvalidBinding)?;
+        Ok(self
+            .client
+            .post(url)
+            .header("X-Odoo-Database", database)
+            .json(&json!({
+                "domain": [["id", "=", id]],
+                "fields": fields,
+                "limit": limit,
+            })))
+    }
+
     async fn read_http(&self, source_id: &str) -> Result<(Source, Value), ReadError> {
         use ReadError::*;
         let numeric_id = source_id
@@ -191,18 +217,13 @@ impl<'a> HttpOrderReader<'a> {
         let (source, request) = match self.source.kind {
             HttpSourceKind::Odoo { database } => (
                 Source::Odoo,
-                self.client
-                    .post(
-                        self.origin
-                            .join("/json/2/mrp.production/search_read")
-                            .map_err(|_| InvalidBinding)?,
-                    )
-                    .header("X-Odoo-Database", database)
-                    .json(&json!({
-                        "domain": [["id", "=", numeric_id]],
-                        "fields": ["id", "name", "state", "write_date"],
-                        "limit": 1
-                    })),
+                self.odoo_query(
+                    database,
+                    "/json/2/mrp.production/search_read",
+                    numeric_id,
+                    &["id", "name", "state", "write_date"],
+                    1,
+                )?,
             ),
             HttpSourceKind::OpenMes => (
                 Source::OpenMes,
