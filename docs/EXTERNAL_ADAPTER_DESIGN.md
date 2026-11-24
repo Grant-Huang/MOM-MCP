@@ -63,6 +63,8 @@ Odoo 已观测到的空数组和 OpenMES 的 403／404 须分别解释。适配�
 
 双身份复验沿用同一固定 OpenMES 版本、PHP 8.5.13 和隔离 SQLite。HTTP 样本脚本为两条产线各建立一个单产线 Operator 和一张合成工单。两位 Operator 各自读取本产线工单返回 200，核对记录 ID 和 `PENDING` 源状态，交叉读取均返回 403。匿名读取返回 401，缺失工单返回 404。六项检查全部通过，每张被拒绝的工单都能由另一身份独立确认存在。
 
+要在同一组样本上复跑 Rust Adapter，先在 MOM-MCP 执行 `cargo build --locked --example external_order_smoke`，再在 OpenMES backend 运行上述脚本，并用环境变量 `MOM_OPENMES_ADAPTER_SMOKE` 指定该二进制在同一运行环境中的绝对路径。脚本在六项 HTTP 检查后交换两套 Operator 身份。固定 OpenMES 版本和 PHP 8.5.13 下，两次 Rust 直连均投影本产线的 `PENDING` 工单，并将另一产线的 403 归为 `NotVisible`。
+
 AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收。其 DES Observe 当前按 `world_id` 读取已发布的模拟快照。生产工单读取需要 M3 绑定与对象选择契约，联审需确认生产身份、授权范围、适配调用位置和响应错误归属。 [DES Observe 实现](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/mom_world_des.rs#L680)
 
 ## Carbon 样本验证
