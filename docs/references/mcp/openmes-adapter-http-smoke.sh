@@ -28,16 +28,24 @@ require 'vendor/autoload.php';
 $app = require 'bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
 $app->make(RolesAndPermissionsSeeder::class)->run();
-$actor = User::factory()->create();
-$actor->assignRole('Operator');
+function createOperator(Line $line): User {
+    $actor = User::factory()->create();
+    $actor->assignRole('Operator');
+    $actor->lines()->attach($line->id);
+    return $actor;
+}
+
 $line = Line::factory()->create();
-$actor->lines()->attach($line->id);
+$otherLine = Line::factory()->create();
+$actor = createOperator($line);
+$witness = createOperator($otherLine);
 $visible = WorkOrder::factory()->create(['line_id' => $line->id]);
-$hidden = WorkOrder::factory()->create(['line_id' => Line::factory()->create()->id]);
+$hidden = WorkOrder::factory()->create(['line_id' => $otherLine->id]);
 file_put_contents(getenv('ADAPTER_FIXTURE'), json_encode([
     'visible' => $visible->id,
     'hidden' => $hidden->id,
     'token' => $actor->createToken('adapter-http-sample')->plainTextToken,
+    'witness_token' => $witness->createToken('adapter-http-witness')->plainTextToken,
 ], JSON_THROW_ON_ERROR));
 PHP
 (cd public && exec php -S 127.0.0.1:18765 ../vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php) > "$sandbox/server.log" 2>&1 &
@@ -73,6 +81,8 @@ foreach ([
     ['anonymous', $fixture['visible'], null, 401],
     ['assigned_line', $fixture['visible'], $fixture['token'], 200],
     ['other_line', $fixture['hidden'], $fixture['token'], 403],
+    ['witness_assigned_line', $fixture['hidden'], $fixture['witness_token'], 200],
+    ['witness_other_line', $fixture['visible'], $fixture['witness_token'], 403],
     ['missing', 999999, $fixture['token'], 404],
 ] as [$name, $id, $token, $expected]) {
     [$status, $result] = request($id, $token);

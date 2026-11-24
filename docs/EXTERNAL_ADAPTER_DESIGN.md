@@ -61,6 +61,8 @@ Odoo、OpenMES 与 Carbon 均纳入首期最低验证范围。Odoo 制造订单�
 
 Odoo 已观测到的空数组和 OpenMES 的 403／404 须分别解释。适配层应保留可公开的拒绝或不可见语义，并避免以跨范围查询推断存在性。Odoo `draft` 与 OpenMES `PENDING` 各自保留源值，需按生命周期证据评审是否可映射为同一规范状态。另用 [HTTP 样本脚本](references/mcp/openmes-adapter-http-smoke.sh) 在相同 OpenMES 版本、隔离 SQLite 和 PHP 8.5.13 环境启动回环 HTTP 服务。将脚本复制到已安装 Composer 依赖的 OpenMES backend 目录，运行 `sh openmes-adapter-http-smoke.sh`。真实请求复现了表中的四项结果，200 返回的四个字段一致。实际站点网络、部署身份与 AgentNexus Observe 联调仍待验证。
 
+双身份复验沿用同一固定 OpenMES 版本、PHP 8.5.13 和隔离 SQLite。HTTP 样本脚本为两条产线各建立一个单产线 Operator 和一张合成工单。两位 Operator 各自读取本产线工单返回 200，核对记录 ID 和 `PENDING` 源状态，交叉读取均返回 403。匿名读取返回 401，缺失工单返回 404。六项检查全部通过，每张被拒绝的工单都能由另一身份独立确认存在。
+
 AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收。其 DES Observe 当前按 `world_id` 读取已发布的模拟快照。生产工单读取需要 M3 绑定与对象选择契约，联审需确认生产身份、授权范围、适配调用位置和响应错误归属。 [DES Observe 实现](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/mom_world_des.rs#L680)
 
 ## Carbon 样本验证
