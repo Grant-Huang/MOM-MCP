@@ -31,6 +31,28 @@ pub struct AuthorizedWorkOrder<'a> {
     pub source_id: &'a str,
 }
 
+/// A work-order relationship binding issued by the host for the current caller.
+pub struct AuthorizedOdooRelation<'a> {
+    pub scope: SourceScope<'a>,
+    pub work_order_id: i64,
+    pub company_id: i64,
+}
+
+/// Trusted input to the host's sales-order authorization and reference resolver.
+pub struct OdooSalesTarget<'a> {
+    pub scope: SourceScope<'a>,
+    pub company_id: i64,
+    pub sales_order_id: i64,
+}
+
+/// Candidate host-facing projection with opaque endpoint references.
+#[derive(Debug, Serialize, Eq, PartialEq)]
+pub struct ObservedSalesRelation<'a> {
+    pub kind: &'static str,
+    pub work_order_ref: &'a str,
+    pub sales_order_ref: &'a str,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum ConfigurationError {
     DuplicateSource,
@@ -103,16 +125,7 @@ impl<'a> ExternalObserve<'a> {
         let order = reader
             .read_order(authorized.source_id)
             .await
-            .map_err(|error| match error {
-                ReadError::NotVisible => ObserveError::NotVisible,
-                ReadError::InvalidResponse | ReadError::UnexpectedRecord => {
-                    ObserveError::InvalidSourceResponse
-                }
-                ReadError::InvalidBinding
-                | ReadError::SourceUnavailable
-                | ReadError::EntitlementRequired
-                | ReadError::UpstreamToolRefused => ObserveError::SourceUnavailable,
-            })?;
+            .map_err(observe_error)?;
         Ok(ObservedWorkOrder {
             object_ref: selection.object_ref,
             source_instance: authorized.scope.instance,
@@ -125,5 +138,69 @@ impl<'a> ExternalObserve<'a> {
             mapping_version: order.mapping_version,
             source_updated_at: order.source_updated_at,
         })
+    }
+
+    /// The host authorizes the work order before source I/O, then independently
+    /// authorizes and resolves the target in the same selected world.
+    pub async fn observe_odoo_sales_relation<
+        'request,
+        Resolve,
+        Resolution,
+        Authorize,
+        Authorization,
+    >(
+        &'request self,
+        selection: WorkOrderSelection<'request>,
+        resolve: Resolve,
+        authorize_target: Authorize,
+    ) -> Result<Option<ObservedSalesRelation<'request>>, ObserveError>
+    where
+        Resolve: FnOnce(WorkOrderSelection<'request>) -> Resolution,
+        Resolution: Future<Output = Option<AuthorizedOdooRelation<'request>>>,
+        Authorize: FnOnce(WorkOrderSelection<'request>, OdooSalesTarget<'request>) -> Authorization,
+        Authorization: Future<Output = Option<&'request str>>,
+    {
+        if selection.world_id.trim().is_empty() || selection.object_ref.trim().is_empty() {
+            return Err(ObserveError::AccessDenied);
+        }
+        let authorized = resolve(selection).await.ok_or(ObserveError::AccessDenied)?;
+        let reader = self
+            .sources
+            .get(&authorized.scope)
+            .ok_or(ObserveError::SourceUnavailable)?;
+        let Some(relation) = reader
+            .read_odoo_sales_relation_atomic(authorized.work_order_id, authorized.company_id)
+            .await
+            .map_err(observe_error)?
+        else {
+            return Ok(None);
+        };
+        let target = OdooSalesTarget {
+            scope: authorized.scope,
+            company_id: relation.company_id,
+            sales_order_id: relation.sales_order_id,
+        };
+        let sales_order_ref = authorize_target(selection, target)
+            .await
+            .filter(|reference| !reference.trim().is_empty())
+            .ok_or(ObserveError::NotVisible)?;
+        Ok(Some(ObservedSalesRelation {
+            kind: "fulfills_sales_order",
+            work_order_ref: selection.object_ref,
+            sales_order_ref,
+        }))
+    }
+}
+
+fn observe_error(error: ReadError) -> ObserveError {
+    match error {
+        ReadError::NotVisible => ObserveError::NotVisible,
+        ReadError::InvalidResponse | ReadError::UnexpectedRecord => {
+            ObserveError::InvalidSourceResponse
+        }
+        ReadError::InvalidBinding
+        | ReadError::SourceUnavailable
+        | ReadError::EntitlementRequired
+        | ReadError::UpstreamToolRefused => ObserveError::SourceUnavailable,
     }
 }
