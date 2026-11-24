@@ -317,9 +317,11 @@ fn create_or_post(
         }
         let lot = args["lot_id"].as_str().unwrap();
         let current = tx.query_row(
-            "SELECT location,unit,parent_lot IS NOT NULL FROM stock_available_lots WHERE run=?1 AND lot=?2 AND posted_cursor IS NOT NULL",
+            "SELECT location,unit,(parent_lot IS NOT NULL OR EXISTS(
+                SELECT 1 FROM stock_work_order_output o WHERE o.run=stock_available_lots.run AND o.receipt=stock_available_lots.receipt))
+                FROM stock_available_lots WHERE run=?1 AND lot=?2 AND posted_cursor IS NOT NULL",
             params![run,lot],|row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,bool>(2)?))).optional()?;
-        let Some((location, unit, is_child)) = current else {
+        let Some((location, unit, split_blocked)) = current else {
             return Ok(Err(reject("LOT_NOT_FOUND", "lot_id")));
         };
         if location != source {
@@ -327,7 +329,7 @@ fn create_or_post(
         }
         match (args.get("quantity"), args.get("child_lot_id")) {
             (Some(value), Some(child)) => {
-                if is_child {
+                if split_blocked {
                     return Ok(Err(reject("LOT_SPLIT_NOT_ALLOWED", "lot_id")));
                 }
                 let child = child.as_str().unwrap();

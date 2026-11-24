@@ -4745,6 +4745,16 @@ fn p9d_10_reconcile_work_order() {
 }
 
 #[test]
+fn p9d_14_reconcile_finished_work_order() {
+    run_wip_scenario(42);
+}
+
+#[test]
+fn p9d_12_receive_finished_output() {
+    run_wip_scenario(41);
+}
+
+#[test]
 fn p9d_08_split_merge_wip() {
     run_wip_scenario(39);
 }
@@ -4783,9 +4793,10 @@ async fn move_and_consume_wip(
     operation: &str,
     genealogy: bool,
     reversal: bool,
-    partition: bool,
-    reconciliation: bool,
+    version: u64,
 ) {
+    let legacy_reconciliation = version == 40;
+    let partition = matches!(version, 39 | 40);
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
     let write = async |name: &str, key: &str, mut args: Value| {
@@ -4800,13 +4811,17 @@ async fn move_and_consume_wip(
     };
     let prep = json!({"work_order":order,"operation":operation});
     let assembly = json!({"work_order":order,"operation":"assembly"});
-    if genealogy {
-        Box::pin(setup_genealogy_second_lot(client, run, order, operation)).await;
+    if genealogy || version == 42 {
+        let location = if version == 42 { "RAW-01" } else { "RAW-02" };
+        Box::pin(setup_genealogy_second_lot(
+            client, run, order, operation, location,
+        ))
+        .await;
     }
     apply("start_operation", "start-source", prep.clone()).await;
     let machining_report = |quantity, amount| json!({"work_order":order,"operation":operation,"quantity":quantity,"material_inputs":{"RS-1":amount}});
     let reconcile = || invoke("reconcile_work_order", json!({"work_order":order}));
-    if reconciliation {
+    if legacy_reconciliation {
         assert_eq!(reconcile().await["wip"]["machined"], 0);
     }
     let first = apply(
@@ -4821,7 +4836,7 @@ async fn move_and_consume_wip(
         write("move_wip", "early", movement.clone()).await["code"],
         "WIP_DESTINATION_NOT_ELIGIBLE"
     );
-    if reconciliation {
+    if legacy_reconciliation {
         apply(
             "return_unused_material",
             "return-before-assembly",
@@ -4831,8 +4846,8 @@ async fn move_and_consume_wip(
         )
         .await;
     }
-    let mut second_args = machining_report(6, if reconciliation { "0.75" } else { "1" });
-    if genealogy {
+    let mut second_args = machining_report(6, if legacy_reconciliation { "0.75" } else { "1" });
+    if genealogy || version == 42 {
         second_args["material_inputs"] = json!({"RS-2":"1"});
     }
     let second = apply("post_operation_report", "source2", second_args).await;
@@ -4939,7 +4954,7 @@ async fn move_and_consume_wip(
         assert_eq!(read(child).await["status"], "merged");
         assert_eq!(read(sibling).await["status"], "merged");
         assert_eq!(read(second_id).await["quantity"], 6);
-        if reconciliation {
+        if legacy_reconciliation {
             let check = reconcile().await;
             assert_eq!(check["balanced"], true, "{check}");
             assert_eq!(
@@ -5054,7 +5069,7 @@ async fn move_and_consume_wip(
     }
     apply("reverse_operation_report","reverse-assembly",json!({"work_order":order,"report_id":consumed["report"]["id"],"reason":"incorrect report"})).await;
     assert_eq!(read().await["lots"][0]["status"], "moved");
-    if reconciliation {
+    if legacy_reconciliation {
         let check = reconcile().await;
         assert_eq!(
             check["wip"],
@@ -5092,6 +5107,17 @@ async fn move_and_consume_wip(
             "WIP_MOVEMENT_NOT_ACTIVE"
         );
     }
+    if version == 42 {
+        let check =
+            invoke("reconcile_work_order", json!({"work_order":order})).await["settlement"].clone();
+        assert_eq!(check["production"]["wip_open"], 10);
+        assert_eq!(check["production"]["assembled"], 0);
+        assert_eq!(
+            check["production"]["reversed_report_ids"],
+            json!([consumed["report"]["id"]])
+        );
+        assert_eq!(check["differences"], json!([]));
+    }
     let reconsumed = apply("post_operation_report", "consume-again", report.clone()).await;
     assert_eq!(
         reconsumed["report"]["serial_numbers"],
@@ -5103,7 +5129,39 @@ async fn move_and_consume_wip(
     report["wip_inputs"] = json!([second_id]);
     apply("post_operation_report", "consume-second", report).await;
     apply("complete_operation", "complete-assembly", assembly).await;
-    if reconciliation {
+    if version == 42 {
+        apply(
+            "return_unused_material",
+            "return-surplus",
+            json!({"reservation_id":"RS-1","movement_id":"RET-RECON",
+            "quantity":"1","reason":"unused balance"}),
+        )
+        .await;
+        apply("reverse_inventory_movement","reverse-surplus-return",json!({"movement_type":"return",
+            "movement_id":"RET-RECON","reversal_id":"REV-RET-RECON","reason":"incorrect return posting"})).await;
+        let check =
+            invoke("reconcile_work_order", json!({"work_order":order})).await["settlement"].clone();
+        assert_eq!(check["material_issues"][0]["returned"], "0");
+        assert_eq!(check["material_issues"][0]["unused"], "1");
+        apply(
+            "return_unused_material",
+            "return-surplus-again",
+            json!({"reservation_id":"RS-1","movement_id":"RET-RECON-2",
+            "quantity":"1","reason":"corrected return"}),
+        )
+        .await;
+    }
+    if version >= 41 {
+        Box::pin(receive_finished_output(
+            client,
+            run,
+            order,
+            &first["report"]["serial_numbers"][0],
+            version == 42,
+        ))
+        .await;
+    }
+    if legacy_reconciliation {
         let before = cursor().await;
         let check = reconcile().await;
         assert_eq!(check["balanced"], true, "{check}");
@@ -5139,8 +5197,235 @@ async fn move_and_consume_wip(
             json!({"item_id":"WIRE","location":"RAW-02"})
         )
         .await["balance"]["on_hand"],
-        if reconciliation { "0.75" } else { "0.5" }
+        match version {
+            42 => "1.5",
+            40 => "0.75",
+            _ => "0.5",
+        }
     );
+}
+
+async fn receive_finished_output(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+    serial: &Value,
+    reconciliation: bool,
+) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["idempotency_key"] = json!(key);
+        args["expected_cursor"] = cursor().await;
+        invoke(name, args).await
+    };
+    let apply = async |name: &str, key: &str, args| {
+        let result = write(name, key, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    };
+    let mut receipt =
+        json!({"work_order":order,"receipt_id":"FG-1","lot_id":"FG-LOT-1","location":"RAW-02"});
+    let reversal = |id, key| json!({"movement_type":"receipt","movement_id":id,"reversal_id":key,"reason":"correct posting"});
+    let balance = async || {
+        invoke(
+            "get_stock_balance",
+            json!({"item_id":"FRAME","revision":1,"location":"RAW-02"}),
+        )
+        .await["balance"]["on_hand"]
+            .clone()
+    };
+    let order_args = json!({"work_order":order});
+    let before = cursor().await;
+    assert_eq!(
+        write("receive_work_order_output", "too-early", receipt.clone()).await["code"],
+        "COMPLETION_REQUIRED"
+    );
+    assert_eq!(cursor().await, before);
+    apply(
+        "dispatch_operation",
+        "dispatch-output-inspection",
+        json!({"work_order":order,"operation":"inspection","work_center":"QA-01"}),
+    )
+    .await;
+    apply(
+        "inspect_units",
+        "reject-output",
+        json!({"work_order":order,"result":"fail"}),
+    )
+    .await;
+    assert_eq!(
+        write(
+            "complete_work_order",
+            "complete-rejected",
+            order_args.clone()
+        )
+        .await["code"],
+        "QUALITY_HOLD"
+    );
+    if reconciliation {
+        assert_eq!(
+            invoke("reconcile_work_order", json!({"work_order":"bad id"})).await["code"],
+            "INVALID_ARGUMENT"
+        );
+        let check = invoke("reconcile_work_order", order_args.clone()).await["settlement"].clone();
+        assert_eq!(check["quality"], "QUALITY_HOLD");
+        assert_eq!(
+            check["blocking"],
+            json!(["QUALITY_HOLD", "COMPLETION_REQUIRED"])
+        );
+        assert_eq!(check["differences"], json!([]));
+    }
+    apply(
+        "disposition",
+        "release-output",
+        json!({"work_order":order,"result":"pass","reason":"verified repeat inspection"}),
+    )
+    .await;
+    apply(
+        "complete_work_order",
+        "confirm-finished",
+        order_args.clone(),
+    )
+    .await;
+    assert_eq!(
+        write("close_work_order", "close-early", order_args.clone()).await["code"],
+        "OUTPUT_RECEIPT_REQUIRED"
+    );
+    assert_eq!(balance().await, "0");
+    apply(
+        "create_item_revision",
+        "draft-frame-v2",
+        json!({"item_id":"FRAME","revision":2,"name":"Frame V2"}),
+    )
+    .await;
+    apply(
+        "activate_revision",
+        "activate-frame-v2",
+        json!({"item_id":"FRAME","revision":2,"revision_type":"item"}),
+    )
+    .await;
+    receipt["idempotency_key"] = json!("post-fg");
+    receipt["expected_cursor"] = cursor().await;
+    let posted = invoke("receive_work_order_output", receipt.clone()).await;
+    assert_eq!(posted["ok"], true, "{posted}");
+    assert_eq!(posted["receipt"]["revision"], 1);
+    assert_eq!(posted["receipt"]["quantity"], "10");
+    assert_eq!(
+        posted["receipt"]["serial_numbers"]
+            .as_array()
+            .unwrap()
+            .len(),
+        10
+    );
+    assert_eq!(
+        invoke("receive_work_order_output", receipt.clone()).await,
+        posted
+    );
+    assert_eq!(
+        write("receive_work_order_output", "duplicate-fg", receipt.clone()).await["code"],
+        "OUTPUT_RECEIPT_EXISTS"
+    );
+    assert_eq!(balance().await, "10");
+    assert_eq!(
+        invoke("get_lot", json!({"lot_id":"FG-LOT-1"})).await["lot"],
+        posted["receipt"]
+    );
+    assert_eq!(write("create_stock_transfer","split-serialized",json!({"transfer_id":"TR-FG","lot_id":"FG-LOT-1",
+        "source_location":"RAW-02","destination_location":"RAW-01","child_lot_id":"FG-CHILD","quantity":"1","reason":"partial transfer"})).await["code"],"LOT_SPLIT_NOT_ALLOWED");
+    apply(
+        "reverse_inventory_movement",
+        "correct-fg",
+        reversal("FG-1", "REV-FG-1"),
+    )
+    .await;
+    assert_eq!(balance().await, "0");
+    assert_eq!(
+        write(
+            "close_work_order",
+            "close-after-reversal",
+            order_args.clone()
+        )
+        .await["code"],
+        "OUTPUT_RECEIPT_REQUIRED"
+    );
+    if reconciliation {
+        let check = invoke("reconcile_work_order", order_args.clone()).await["settlement"].clone();
+        assert_eq!(check["production"]["received"], 0);
+        assert_eq!(check["blocking"], json!(["OUTPUT_RECEIPT_REQUIRED"]));
+        assert_eq!(check["output_receipts"][0]["reversed"], true);
+        assert_eq!(check["output_receipts"][0]["lot_on_hand"], "0");
+    }
+    receipt["receipt_id"] = json!("FG-2");
+    receipt["lot_id"] = json!("FG-LOT-2");
+    let reposted = apply("receive_work_order_output", "post-fg-again", receipt).await;
+    assert_eq!(
+        reposted["receipt"]["serial_numbers"],
+        posted["receipt"]["serial_numbers"]
+    );
+    let trace = async |name: &str, args| {
+        let result = invoke(name, args).await;
+        let edges = result["edges"].as_array().unwrap();
+        assert!(edges.iter().any(|edge| edge["source"]["id"] == *serial
+            && edge["kind"] == "finished_output_receipt"
+            && edge["target"]["id"] == "FG-LOT-1"
+            && edge["status"] == "reversed"));
+        assert!(edges.iter().any(|edge| edge["source"]["id"] == *serial
+            && edge["kind"] == "finished_output_receipt"
+            && edge["target"]["id"] == "FG-LOT-2"
+            && edge["status"] == "active"));
+    };
+    trace("trace_serial_backward", json!({"serial_number":serial})).await;
+    trace("trace_lot_forward", json!({"lot_id":"LOT-1"})).await;
+    apply("close_work_order", "close-finished", order_args.clone()).await;
+    assert_eq!(
+        write(
+            "reverse_inventory_movement",
+            "reverse-settled",
+            reversal("FG-2", "REV-FG-2")
+        )
+        .await["code"],
+        "RECEIPT_HAS_DEPENDENCIES"
+    );
+    if reconciliation {
+        let before = cursor().await;
+        let check = invoke("reconcile_work_order", order_args.clone()).await["settlement"].clone();
+        assert_eq!(check["closed"], true, "{check}");
+        assert_eq!(check["quality"], "released");
+        assert_eq!(
+            check["snapshot_fingerprint"],
+            invoke("get_order_snapshot", order_args.clone()).await["snapshot"]["fingerprint"]
+        );
+        assert_eq!(check["cursor"], before);
+        assert_eq!(cursor().await, before);
+        assert_eq!(
+            invoke("reconcile_work_order", order_args).await["settlement"],
+            check
+        );
+        assert_eq!(check["differences"], json!([]));
+        assert_eq!(check["blocking"], json!([]));
+        assert_eq!(check["production"]["machined"], 10);
+        assert_eq!(check["production"]["assembled"], 10);
+        assert_eq!(check["production"]["wip_open"], 0);
+        assert_eq!(check["production"]["wip_consumed"], 10);
+        assert_eq!(check["production"]["received"], 10);
+        let rows = check["material_issues"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["issue_location"], "RAW-02");
+        assert_eq!(rows[0]["issued"], "1.5");
+        assert_eq!(rows[0]["returned"], "1");
+        assert_eq!(rows[0]["net_issued"], "0.5");
+        assert_eq!(rows[0]["consumed"], "0.5");
+        assert_eq!(rows[0]["unused"], "0");
+        assert_eq!(rows[0]["lot_on_hand"], "1.5");
+        assert_eq!(rows[1]["issue_location"], "RAW-01");
+        assert_eq!(rows[1]["consumed"], "1");
+        assert_eq!(check["output_receipts"][1]["lot_on_hand"], "10");
+        let other = invoke("reconcile_work_order", json!({"work_order":"WO-2"})).await;
+        assert_eq!(other["settlement"]["material_issues"], json!([]));
+        assert_eq!(other["settlement"]["output_receipts"], json!([]));
+    }
+    assert_eq!(balance().await, "10");
 }
 
 async fn setup_genealogy_second_lot(
@@ -5148,6 +5433,7 @@ async fn setup_genealogy_second_lot(
     run: &Value,
     order: &str,
     operation: &str,
+    location: &str,
 ) {
     let apply = async |name: &str, key: &str, mut args: Value| {
         args["idempotency_key"] = json!(key);
@@ -5160,7 +5446,7 @@ async fn setup_genealogy_second_lot(
     apply(
         "assign_receipt_tracking",
         "second-tracking",
-        json!({"receipt_id":"RC-2","lot_id":"LOT-2","supplier_lot":"SUP-2","location":"RAW-02"}),
+        json!({"receipt_id":"RC-2","lot_id":"LOT-2","supplier_lot":"SUP-2","location":location}),
     )
     .await;
     apply("post_receipt", "second-post", json!({"receipt_id":"RC-2"})).await;
@@ -5298,8 +5584,11 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=40) {
+            if matches!(version,36..=42) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
+            }
+            if version >= 41 {
+                route["inspection"]=json!({"work_center":"QA-01","predecessors":["assembly"]});
             }
             for (name,args) in [
                 ("create_item",json!({"item_id":"FRAME","base_unit":"each"})),
@@ -5526,14 +5815,14 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if matches!(version,36..=40) {
-                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version>=39,version==40)).await;
+            if matches!(version,36..=42) {
+                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
                 let lots=lots["lots"].as_array().unwrap();
                 assert_eq!(lots.iter().filter(|lot|lot["status"]=="consumed").count(),2);
-                assert_eq!(lots.iter().filter(|lot|lot["status"]=="merged").count(),if version>=39 {2} else {0});
-                assert_eq!(lots.len(),if version>=39 {4} else {2});
+                assert_eq!(lots.iter().filter(|lot|lot["status"]=="merged").count(),if matches!(version,39 | 40) {2} else {0});
+                assert_eq!(lots.len(),if matches!(version,39 | 40) {4} else {2});
                 continue;
             }
             if version == 35 {

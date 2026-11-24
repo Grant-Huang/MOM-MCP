@@ -24,8 +24,9 @@ pub enum Action {
     TraceSerialBackward,
     ListGenealogyEdges,
     GetWip,
-    ReconcileWorkOrder,
     ReverseWipMovement,
+    ReceiveWorkOrderOutput,
+    ReconcileWorkOrder,
     SplitWip,
     MergeWip,
     MoveWip,
@@ -205,8 +206,9 @@ impl Action {
             Self::TraceSerialBackward,
             Self::ListGenealogyEdges,
             Self::GetWip,
-            Self::ReconcileWorkOrder,
             Self::ReverseWipMovement,
+            Self::ReceiveWorkOrderOutput,
+            Self::ReconcileWorkOrder,
             Self::SplitWip,
             Self::MergeWip,
             Self::MoveWip,
@@ -285,6 +287,8 @@ impl Action {
             Self::UnpickMaterial => "unpick_material",
             Self::ReleaseReceiptInspection => "release_receipt_inspection",
             Self::GetMaterialAvailability => "get_material_availability",
+            Self::ReconcileWorkOrder => "reconcile_work_order",
+            Self::ReceiveWorkOrderOutput => "receive_work_order_output",
             Self::SplitWip => "split_wip",
             Self::MergeWip => "merge_wip",
             Self::ReverseWipMovement => "reverse_wip_movement",
@@ -292,7 +296,6 @@ impl Action {
             Self::TraceLotForward => "trace_lot_forward",
             Self::TraceSerialBackward => "trace_serial_backward",
             Self::ListGenealogyEdges => "list_genealogy_edges",
-            Self::ReconcileWorkOrder => "reconcile_work_order",
             Self::GetWip => "get_wip",
             Self::GetMaterialRequirements => "get_material_requirements",
             Self::ListStockLocations => "list_stock_locations",
@@ -357,7 +360,8 @@ impl Action {
 
     fn keywords(self) -> &'static [&'static str] {
         match self {
-            Self::GetOrderSnapshot
+            Self::ReconcileWorkOrder
+            | Self::GetOrderSnapshot
             | Self::AssessEngineeringChange
             | Self::GetWorkOrder
             | Self::ListWorkOrders
@@ -468,6 +472,12 @@ impl Action {
         )
     }
     pub fn spec(self) -> Spec {
+        if self == Self::ReconcileWorkOrder {
+            return crate::reconciliation::spec();
+        }
+        if self == Self::ReceiveWorkOrderOutput {
+            return crate::finished_output::spec();
+        }
         if self.is_genealogy_action() {
             return crate::genealogy::spec(self);
         }
@@ -479,9 +489,6 @@ impl Action {
         }
         if self == Self::MoveWip {
             return crate::wip::move_spec();
-        }
-        if self == Self::ReconcileWorkOrder {
-            return crate::wip::reconcile_spec();
         }
         if self == Self::GetWip {
             return crate::wip::spec();

@@ -359,6 +359,7 @@ pub fn spec(action: Action) -> Spec {
                 "QUALITY_HOLD",
                 "COMPLETION_REQUIRED",
                 "DELIVERY_REQUIRED",
+                "OUTPUT_RECEIPT_REQUIRED",
                 "VERSION_CONFLICT",
                 "IDEMPOTENCY_CONFLICT",
             ],
@@ -592,6 +593,8 @@ pub struct Setup {
     pub issued_report_inputs: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub wip_movements: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub finished_output_receipt: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub alternate_centers: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1126,6 +1129,51 @@ pub fn invoke(
     cursor: i64,
 ) -> anyhow::Result<(Value, bool)> {
     let mut state = load(tx, run, setup, orders)?;
+    if action == Action::ReconcileWorkOrder {
+        let id = args["work_order"].as_str().unwrap();
+        if !crate::scenario::identifier(id) {
+            return Ok((error("INVALID_ARGUMENT"), false));
+        }
+        let Some(order) = state.orders.get(id) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        let mut summary =
+            crate::wip::reconcile(tx, run, id, order.hold_reason.is_some(), &state.reports)?;
+        if !setup.finished_output_receipt {
+            return Ok((summary, false));
+        }
+        let quality = if let Some(code) = crate::quality::blocking(tx, run, id)? {
+            code
+        } else if order.hold_reason.is_some() {
+            "WORK_ORDER_HELD".into()
+        } else {
+            match order.inspection.as_deref() {
+                Some("fail") => "QUALITY_HOLD",
+                Some("scrap") => "QUALITY_SCRAPPED",
+                Some("pass") => "released",
+                _ => "pending",
+            }
+            .into()
+        };
+        let settlement = crate::reconciliation::read(
+            tx,
+            run,
+            id,
+            &state.reports,
+            &quality,
+            order.completion_confirmed == Some(true),
+            order.phase == Phase::Closed,
+            cursor,
+        )?;
+        if settlement["differences"]
+            .as_array()
+            .is_some_and(|differences| !differences.is_empty())
+        {
+            summary["balanced"] = json!(false);
+        }
+        summary["settlement"] = settlement;
+        return Ok((summary, false));
+    }
     if action.is_genealogy_action() {
         if let Some(order) = args.get("work_order").and_then(Value::as_str)
             && !state.orders.contains_key(order)
@@ -1133,11 +1181,11 @@ pub fn invoke(
             return Ok((error("WORK_ORDER_NOT_FOUND"), false));
         }
         return Ok((
-            crate::genealogy::read(run, action, &state.reports, args),
+            crate::genealogy::read(tx, run, action, &state.reports, args)?,
             false,
         ));
     }
-    if matches!(action, Action::GetWip | Action::ReconcileWorkOrder) {
+    if action == Action::GetWip {
         let order = args["work_order"].as_str().unwrap();
         if !crate::scenario::identifier(order) {
             return Ok((error("INVALID_ARGUMENT"), false));
@@ -1145,18 +1193,6 @@ pub fn invoke(
         let Some(current) = state.orders.get(order) else {
             return Ok((error("WORK_ORDER_NOT_FOUND"), false));
         };
-        if action == Action::ReconcileWorkOrder {
-            return Ok((
-                crate::wip::reconcile(
-                    tx,
-                    run,
-                    order,
-                    current.hold_reason.is_some(),
-                    &state.reports,
-                )?,
-                false,
-            ));
-        }
         return Ok((
             crate::wip::read(
                 tx,
@@ -1297,7 +1333,17 @@ pub fn invoke(
                     vec!["disposition"]
                 }
                 Phase::Complete if !held || order.inspection.as_deref() == Some("scrap") => {
-                    vec!["close_order"]
+                    if !setup.finished_output_receipt {
+                        vec!["close_order"]
+                    } else if order.completion_confirmed.is_none() {
+                        vec!["complete_work_order"]
+                    } else if order.inspection.as_deref() == Some("scrap")
+                        || crate::finished_output::active(tx, run, id)?
+                    {
+                        vec!["close_work_order"]
+                    } else {
+                        vec!["receive_work_order_output"]
+                    }
                 }
                 Phase::Complete => vec!["disposition"],
                 _ => Vec::new(),
@@ -1344,7 +1390,25 @@ pub fn invoke(
             false,
         ));
     }
-    let mut response = if action == Action::MoveWip {
+    let mut response = if action == Action::ReceiveWorkOrderOutput {
+        let order_id = args["work_order"].as_str().unwrap();
+        let Some(order) = state.orders.get(order_id) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        if let Some(code) = crate::quality::blocking(tx, run, order_id)? {
+            return Ok((error(&code), false));
+        }
+        if held || order.hold_reason.is_some() {
+            return Ok((error("MATERIAL_HELD"), false));
+        }
+        if order.phase != Phase::Complete || order.completion_confirmed != Some(true) {
+            return Ok((error("COMPLETION_REQUIRED"), false));
+        }
+        if order.inspection.as_deref() != Some("pass") {
+            return Ok((error("OUTPUT_NOT_RELEASED"), false));
+        }
+        crate::finished_output::receive(tx, run, &state.reports, args, cursor + 1)?
+    } else if action == Action::MoveWip {
         let order_id = args["work_order"].as_str().unwrap();
         let Some(order) = state.orders.get(order_id) else {
             return Ok((error("WORK_ORDER_NOT_FOUND"), false));
@@ -1428,6 +1492,14 @@ pub fn invoke(
     };
     if response["ok"] != true {
         return Ok((response, false));
+    }
+    if action == Action::CloseWorkOrder && setup.finished_output_receipt {
+        let order_id = args["work_order"].as_str().unwrap();
+        if state.orders[order_id].inspection.as_deref() != Some("scrap")
+            && !crate::finished_output::settle(tx, run, order_id)?
+        {
+            return Ok((error("OUTPUT_RECEIPT_REQUIRED"), false));
+        }
     }
     if action == Action::Disposition && args["result"] == "pass" {
         tx.execute(

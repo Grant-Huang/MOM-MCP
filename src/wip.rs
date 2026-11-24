@@ -293,7 +293,11 @@ pub(crate) fn reverse_lot(
     response
 }
 
-fn material_held(tx: &Transaction<'_>, run: &str, report: &Report) -> rusqlite::Result<bool> {
+pub(crate) fn material_held(
+    tx: &Transaction<'_>,
+    run: &str,
+    report: &Report,
+) -> rusqlite::Result<bool> {
     for input in &report.material_inputs {
         if tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM stock_lot_holds WHERE run=?1 AND batch=?2)",
@@ -356,7 +360,7 @@ pub(crate) fn move_lot(
     Ok(json!({"ok":true,"work_order":order,"wip_id":id,"movement":movement}))
 }
 
-fn consumer<'a>(reports: &'a [Report], order: &str, id: &str) -> Option<&'a str> {
+pub(crate) fn consumer<'a>(reports: &'a [Report], order: &str, id: &str) -> Option<&'a str> {
     reports
         .iter()
         .find(|report| {
@@ -620,24 +624,24 @@ pub(crate) fn partition_lot(
     )
 }
 
-struct Lot<'a> {
+pub(crate) struct Lot<'a> {
     report: &'a Report,
     child: Option<(&'a Partition, &'a Child)>,
 }
 
 impl<'a> Lot<'a> {
-    fn id(&self) -> &'a str {
+    pub(crate) fn id(&self) -> &'a str {
         self.child.map_or(&self.report.id, |(_, child)| &child.id)
     }
 
-    fn serials(&self) -> &'a [String] {
+    pub(crate) fn serials(&self) -> &'a [String] {
         self.child
             .map_or(&self.report.serial_numbers, |(_, child)| {
                 &child.serial_numbers
             })
     }
 
-    fn quantity(&self) -> usize {
+    pub(crate) fn quantity(&self) -> usize {
         self.child.map_or(self.report.quantity, |(_, child)| {
             child.serial_numbers.len()
         })
@@ -650,7 +654,7 @@ impl<'a> Lot<'a> {
             })
     }
 
-    fn inactive(&self) -> Option<&'static str> {
+    pub(crate) fn inactive(&self) -> Option<&'static str> {
         match self.child {
             Some((split, _)) if split.merged_cursor.is_some() => Some("merged"),
             Some(_) => None,
@@ -661,7 +665,7 @@ impl<'a> Lot<'a> {
     }
 }
 
-fn lots<'a>(reports: &'a [Report], order: &'a str) -> impl Iterator<Item = Lot<'a>> {
+pub(crate) fn lots<'a>(reports: &'a [Report], order: &'a str) -> impl Iterator<Item = Lot<'a>> {
     reports
         .iter()
         .filter(move |report| report.order == order && report.step == 0)

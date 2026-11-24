@@ -367,14 +367,6 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     anyhow::ensure!(
         !definition
             .capabilities
-            .contains(&Action::ReconcileWorkOrder)
-            || definition.capabilities.contains(&Action::MoveWip),
-        "work order reconciliation requires work in process movement"
-    );
-
-    anyhow::ensure!(
-        !definition
-            .capabilities
             .iter()
             .any(|action| action.is_genealogy_action())
             || definition.capabilities.contains(&Action::MoveWip),
@@ -401,6 +393,38 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             .iter()
             .all(|action| definition.capabilities.contains(action)),
         "work in process split and merge require movement reversal and genealogy"
+    );
+    anyhow::ensure!(
+        definition
+            .capabilities
+            .contains(&Action::ReceiveWorkOrderOutput)
+            == definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| setup.finished_output_receipt)
+            && (!definition
+                .capabilities
+                .contains(&Action::ReceiveWorkOrderOutput)
+                || [
+                    Action::CompleteWorkOrder,
+                    Action::CloseWorkOrder,
+                    Action::MoveWip,
+                    Action::GetLot,
+                    Action::GetStockBalance,
+                    Action::ListGenealogyEdges,
+                    Action::ReverseInventoryMovement
+                ]
+                .iter()
+                .all(|action| definition.capabilities.contains(action))
+                    && !definition.capabilities.contains(&Action::CloseOrder)),
+        "finished output requires recorded WIP, inventory, genealogy and controlled work-order closure"
+    );
+    anyhow::ensure!(
+        !definition
+            .capabilities
+            .contains(&Action::ReconcileWorkOrder)
+            || definition.capabilities.contains(&Action::MoveWip),
+        "work order reconciliation requires work in process movement"
     );
     anyhow::ensure!(
         definition.capabilities.contains(&Action::MoveWip)
@@ -614,6 +638,12 @@ impl Scenarios {
                  location TEXT, posted_cursor INTEGER,
                  PRIMARY KEY (run,receipt), UNIQUE (run,lot)
              );
+             CREATE TABLE IF NOT EXISTS stock_work_order_output (
+                 run TEXT NOT NULL, receipt TEXT NOT NULL, work_order TEXT NOT NULL,
+                 serial_numbers TEXT NOT NULL, settled INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY(run,receipt)
+             );
+             CREATE INDEX IF NOT EXISTS stock_work_order_output_order ON stock_work_order_output(run,work_order);
              CREATE TABLE IF NOT EXISTS order_definition_snapshots (
                  run TEXT NOT NULL, work_order TEXT NOT NULL, snapshot TEXT NOT NULL,
                  PRIMARY KEY(run,work_order)
@@ -725,7 +755,9 @@ impl Scenarios {
             include_str!("../fixtures/cnc-wip-genealogy.json"),
             include_str!("../fixtures/cnc-wip-movement-reversal.json"),
             include_str!("../fixtures/cnc-wip-split-merge.json"),
+            include_str!("../fixtures/cnc-finished-output-receipt.json"),
             include_str!("../fixtures/cnc-work-order-reconciliation.json"),
+            include_str!("../fixtures/cnc-full-order-reconciliation.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
@@ -1755,9 +1787,10 @@ impl Scenarios {
             || matches!(
                 action,
                 Action::GetWip
-                    | Action::ReconcileWorkOrder
                     | Action::MoveWip
                     | Action::ReverseWipMovement
+                    | Action::ReceiveWorkOrderOutput
+                    | Action::ReconcileWorkOrder
                     | Action::SplitWip
                     | Action::MergeWip
             )

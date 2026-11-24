@@ -22,7 +22,7 @@ fn revision_schema() -> Value {
     json!({"type":"integer","minimum":1,"maximum":u32::MAX})
 }
 
-fn receipt_schema() -> Value {
+pub(crate) fn receipt_schema() -> Value {
     object(
         &[
             "receipt_id",
@@ -44,7 +44,7 @@ fn receipt_schema() -> Value {
             "supplier_lot":{"type":["string","null"]},"location":{"type":["string","null"]},
             "posted_cursor":{"type":["integer","null"],"minimum":1},
             "availability":{"enum":[null,"pending_inspection","available"]},
-            "released_inspection_id":id_schema(),"released_cursor":{"type":"integer","minimum":1},"parent_lot_id":id_schema()}),
+            "released_inspection_id":id_schema(),"released_cursor":{"type":"integer","minimum":1},"parent_lot_id":id_schema(),"work_order":id_schema(),"serial_numbers":{"type":"array","items":id_schema()}}),
     )
 }
 
@@ -305,14 +305,27 @@ fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
         response["released_inspection_id"] = json!(released);
         response["released_cursor"] = json!(row.get::<_, i64>(11)?);
     }
+    if let Some(order) = row.get::<_, Option<String>>(12)? {
+        let serials: String = row.get(13)?;
+        response["work_order"] = json!(order);
+        response["serial_numbers"] = serde_json::from_str(&serials).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                13,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    }
     Ok(response)
 }
 
 const RECEIPT_COLUMNS: &str = "receipt,item,revision,unit,quantity,requires_inspection,lot,supplier_lot,location,posted_cursor,
     (SELECT inspection FROM stock_receipt_releases r WHERE r.run=stock_receipts.run AND r.receipt=stock_receipts.receipt),
-    (SELECT released_cursor FROM stock_receipt_releases r WHERE r.run=stock_receipts.run AND r.receipt=stock_receipts.receipt)";
+    (SELECT released_cursor FROM stock_receipt_releases r WHERE r.run=stock_receipts.run AND r.receipt=stock_receipts.receipt),
+    (SELECT work_order FROM stock_work_order_output o WHERE o.run=stock_receipts.run AND o.receipt=stock_receipts.receipt),
+    (SELECT serial_numbers FROM stock_work_order_output o WHERE o.run=stock_receipts.run AND o.receipt=stock_receipts.receipt)";
 
-fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Value>> {
+pub(crate) fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Value>> {
     tx.query_row(
         &format!("SELECT {RECEIPT_COLUMNS} FROM stock_receipts WHERE run=?1 AND receipt=?2"),
         params![run, id],
@@ -323,7 +336,7 @@ fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Va
 
 fn lot_record(row: &Row<'_>) -> rusqlite::Result<Value> {
     let mut lot = record(row)?;
-    if let Some(parent) = row.get::<_, Option<String>>(12)? {
+    if let Some(parent) = row.get::<_, Option<String>>(14)? {
         lot["parent_lot_id"] = json!(parent);
     }
     Ok(lot)
@@ -396,7 +409,8 @@ fn query(
             {
                 return Ok(Err(reject("ITEM_REVISION_NOT_FOUND", "revision")));
             }
-            let (on_hand, pending, reserved) = balance(tx, run, item.unwrap(), revision, location)?;
+            let (on_hand, pending, reserved) =
+                balance(tx, run, item.unwrap(), revision, location, None)?;
             json!({"balance":{"item_id":item,"revision":revision,"location":location,"unit":unit,
                 "on_hand":quantity(on_hand),"pending_inspection":quantity(pending),"reserved":quantity(reserved),"available":quantity(on_hand-pending-reserved)}})
         }
@@ -635,12 +649,13 @@ pub(crate) fn pending_receipt(
     )
 }
 
-fn balance(
+pub(crate) fn balance(
     tx: &Transaction<'_>,
     run: &str,
     item: &str,
     revision: Option<i64>,
     location: Option<&str>,
+    lot: Option<&str>,
 ) -> rusqlite::Result<(i64, i64, i64)> {
     tx.query_row(
         "SELECT COALESCE(SUM(s.quantity - COALESCE((SELECT SUM(x.quantity-COALESCE(t.quantity,0)) FROM stock_reservations x
@@ -651,8 +666,9 @@ fn balance(
              WHERE x.run=s.run AND x.lot=s.lot AND x.status IN ('reserved','picked'))),0)
          FROM stock_available_lots s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
          WHERE s.run=?1 AND s.item=?2 AND s.posted_cursor IS NOT NULL
-         AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)",
-        params![run,item,revision,location],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+         AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)
+         AND (?5 IS NULL OR s.lot=?5)",
+        params![run,item,revision,location,lot],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
     )
 }
 
@@ -802,7 +818,7 @@ pub(crate) fn requirements(
     };
     let mut requirements = Vec::with_capacity(expansion.quantities.len());
     for ((item, revision, unit), required) in expansion.quantities {
-        let (on_hand, pending, reserved) = balance(tx, run, &item, Some(revision), None)?;
+        let (on_hand, pending, reserved) = balance(tx, run, &item, Some(revision), None, None)?;
         let available = on_hand - pending - reserved;
         let assigned =
             crate::reservations::order_quantity_by_state(tx, run, order, &item, revision, false)?;
