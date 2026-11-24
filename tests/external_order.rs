@@ -134,3 +134,29 @@ fn matches_large_numeric_source_ids_without_rounding() {
         Err(ProjectionError::UnexpectedRecord)
     );
 }
+
+#[test]
+fn preserves_source_specific_release_states() {
+    for (source, instance, before, after) in [
+        (Source::Odoo, "odoo", "draft", "confirmed"),
+        (Source::OpenMes, "openmes", "PENDING", "ACCEPTED"),
+        (Source::Carbon, "carbon", "Draft", "Ready"),
+        (Source::Carbon, "carbon", "Planned", "Ready"),
+    ] {
+        let scope = bind(source, instance);
+        let payload = |status: &str| match source {
+            Source::Odoo => json!([{"id":42,"name":"WO-42","state":status}]),
+            Source::OpenMes => json!({"data":{"id":42,"order_no":"WO-42","status":status}}),
+            Source::Carbon => json!({"id":"42","jobId":"WO-42","status":status}),
+        };
+        let initial = project_order(&scope, payload(before)).unwrap();
+        let released = project_order(&scope, payload(after)).unwrap();
+        assert_eq!(initial.identity, released.identity);
+        for (observation, expected) in [(initial, before), (released, after)] {
+            assert_eq!(observation.source_status.as_deref(), Some(expected));
+            assert_eq!(observation.normalized_status, None);
+            assert_eq!(observation.mapping_issue, MappingIssue::Unmapped);
+            assert_eq!(observation.mapping_version, "0.1");
+        }
+    }
+}
