@@ -168,6 +168,9 @@ async fn reads_only_the_authorized_direct_odoo_relation() {
 #[tokio::test]
 #[ignore = "requires a running Odoo Community test instance and two authorized company identities"]
 async fn reads_live_odoo_relations_with_two_company_identities() {
+    use mom_mcp::external_observe::{
+        AuthorizedOdooRelation, ExternalObserve, ObserveError, SourceScope, WorkOrderSelection,
+    };
     #[derive(serde::Deserialize)]
     struct Fixture {
         database: String,
@@ -179,6 +182,7 @@ async fn reads_live_odoo_relations_with_two_company_identities() {
         visible: [i64; 3],
         hidden: [i64; 3],
         unlinked: [i64; 3],
+        nested_denied: Option<[i64; 3]>,
     }
 
     let origin = std::env::var("MOM_ODOO_RELATION_ORIGIN").expect("missing Odoo fixture origin");
@@ -261,6 +265,91 @@ async fn reads_live_odoo_relations_with_two_company_identities() {
             .await,
         Ok(None)
     );
+
+    let service = ExternalObserve::new([HttpSource {
+        kind: HttpSourceKind::Odoo {
+            database: &fixture.database,
+        },
+        base_url: &origin,
+        token: &fixture.token,
+        tenant: "test",
+        site: "test",
+        instance: "odoo",
+    }])
+    .unwrap();
+    let selection = WorkOrderSelection {
+        world_id: "test-world",
+        object_ref: "opaque-work-order",
+    };
+    let scope = SourceScope {
+        tenant: "test",
+        site: "test",
+        instance: "odoo",
+    };
+    let grant = |work_order_id| async move {
+        Some(AuthorizedOdooRelation {
+            scope,
+            work_order_id,
+            company_id: fixture.company,
+        })
+    };
+
+    let published = service
+        .observe_odoo_sales_relation(
+            selection,
+            |_| grant(fixture.visible[0]),
+            |requested, target| async move {
+                assert_eq!(requested.world_id, selection.world_id);
+                assert_eq!(target.scope, scope);
+                assert_eq!(target.company_id, fixture.company);
+                assert_eq!(target.sales_order_id, fixture.visible[2]);
+                Some("opaque-sales-order")
+            },
+        )
+        .await
+        .expect("could not observe Odoo relation")
+        .expect("expected the fixture relation");
+    assert_eq!(
+        serde_json::to_value(published).unwrap(),
+        json!({
+            "kind": "fulfills_sales_order",
+            "work_order_ref": "opaque-work-order",
+            "sales_order_ref": "opaque-sales-order",
+        })
+    );
+
+    assert_eq!(
+        service
+            .observe_odoo_sales_relation(
+                selection,
+                |_| grant(fixture.visible[0]),
+                |_, _| async { None }
+            )
+            .await,
+        Err(ObserveError::NotVisible)
+    );
+
+    if let Some(nested_denied) = fixture.nested_denied {
+        assert_ne!(nested_denied[0], fixture.visible[0]);
+        assert_ne!(nested_denied[0], fixture.hidden[0]);
+        assert_ne!(nested_denied[0], fixture.unlinked[0]);
+        primary
+            .read_order(&nested_denied[0].to_string())
+            .await
+            .expect("fixture manufacturing order must be visible before expanding the relation");
+        assert_eq!(
+            service
+                .observe_odoo_sales_relation(
+                    selection,
+                    |_| grant(nested_denied[0]),
+                    |_, _| async {
+                        panic!("source-denied sales order reached the host authorizer")
+                    }
+                )
+                .await,
+            Err(ObserveError::NotVisible)
+        );
+    }
 }
 
 #[tokio::test]

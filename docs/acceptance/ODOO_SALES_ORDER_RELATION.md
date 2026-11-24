@@ -41,3 +41,5 @@
 `ExternalObserve::observe_odoo_sales_relation` 接收现有工单选择。宿主按当前调用者授权该工单，并提供受信的租户、站点、来源实例和公司绑定。Adapter 只读取该来源的单事务关联。查到关系后，宿主在同一世界为销售单单独核对授权，并返回其不透明引用。销售单不可见或宿主未提供引用时返回 `NotVisible`。源端明确没有直接关系时返回空结果。成功载荷只有 `kind=fulfills_sales_order`、`work_order_ref` 和 `sales_order_ref`。
 
 运行 `cargo test --locked --test external_observe publishes_only_host_authorized_odoo_relation_references`。回环用例验证工单拒绝时零来源调用、销售单拒绝及空引用、跨公司目标、无关联与成功输出。宿主身份和引用签发、公开路由及错误包络仍需联审，签收按短期验收计划推进。
+
+真实后端复验沿用双公司测试命令，可在样本文件附加 `nested_denied`，填入同公司可读制造单及另一位销售员独占的销售订单行、销售订单 ID。固定版本 Odoo Community 19 和 PostgreSQL 16 上，该用例使用真实 JSON-2 响应调用 `ExternalObserve`，宿主授权及引用签发由测试回调提供。成功结果只含关系类型和两个不透明引用。宿主拒绝销售单时返回 `NotVisible`。带 `nested_denied` 的样本先确认制造单可直读，再验证 Odoo 拒绝展开时仍返回 `NotVisible` 且从未调用目标授权回调。此用例已通过，正式宿主部署按现有短期台账验收。
