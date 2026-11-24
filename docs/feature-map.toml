@@ -865,3 +865,19 @@ spec = "acceptance/P9D.md"
 features = ["F09", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P9D-07 Reverse a WIP movement" }
+
+[[case]]
+id = "P9D-08"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9d_08_split_merge_wip" }
+
+[[case]]
+id = "P9D-09"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F09", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P9D-09 Split and merge WIP lots" }

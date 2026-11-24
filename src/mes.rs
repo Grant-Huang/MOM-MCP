@@ -458,6 +458,7 @@ pub fn spec(action: Action) -> Spec {
                 "wip_move":crate::wip::movement_schema(),
                 "wip_movement_reversals":{"type":"array","items":crate::wip::reversal_schema()},
                 "wip_inputs":crate::wip::inputs_schema(),
+                "wip_partitions":{"type":"array","items":crate::wip::partition_schema()},
                 "material_inputs":{"type":"array","items":object(
                     &["reservation_id","lot_id","quantity","unit"],
                     json!({"reservation_id":text(),"lot_id":text(),"quantity":crate::inventory::quantity_schema(),"unit":text()})
@@ -655,6 +656,8 @@ pub(crate) struct Report {
     pub(crate) wip_move: Option<crate::wip::Movement>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) wip_movement_reversals: Vec<crate::wip::MovementReversal>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) wip_partitions: Vec<crate::wip::Partition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) wip_inputs: Vec<String>,
 }
@@ -1350,6 +1353,26 @@ pub fn invoke(
             args,
             cursor + 1,
         )?
+    } else if matches!(action, Action::SplitWip | Action::MergeWip) {
+        let order_id = args["work_order"].as_str().unwrap();
+        let Some(order) = state.orders.get(order_id) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        if matches!(
+            order.phase,
+            Phase::Complete | Phase::Closed | Phase::Cancelled
+        ) {
+            return Ok((error("WIP_NOT_AVAILABLE"), false));
+        }
+        crate::wip::partition_lot(
+            tx,
+            run,
+            &mut state.reports,
+            args,
+            cursor + 1,
+            action,
+            order.hold_reason.is_some(),
+        )?
     } else if action == Action::ReverseWipMovement {
         let order = args["work_order"].as_str().unwrap();
         if !state.orders.contains_key(order) {
@@ -1785,6 +1808,7 @@ fn apply(
                 material_inputs: Vec::new(),
                 wip_move: None,
                 wip_movement_reversals: Vec::new(),
+                wip_partitions: Vec::new(),
                 wip_inputs: Vec::new(),
             };
             if order.step == 0 {
@@ -1866,6 +1890,7 @@ fn apply(
                 .iter()
                 .any(|later| later.order == id && later.step == report.step && !later.reversed);
             if report.reversed
+                || crate::wip::active_partition(report).is_some()
                 || report.wip_move.is_some()
                 || !(same_step || previous_step)
                 || later_report

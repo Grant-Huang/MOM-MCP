@@ -380,6 +380,21 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         "work in process movement reversal requires work in process movement"
     );
     anyhow::ensure!(
+        !definition
+            .capabilities
+            .iter()
+            .any(|action| matches!(action, Action::SplitWip | Action::MergeWip))
+            || [
+                Action::SplitWip,
+                Action::MergeWip,
+                Action::ReverseWipMovement,
+                Action::ListGenealogyEdges
+            ]
+            .iter()
+            .all(|action| definition.capabilities.contains(action)),
+        "work in process split and merge require movement reversal and genealogy"
+    );
+    anyhow::ensure!(
         definition.capabilities.contains(&Action::MoveWip)
             == definition
                 .manufacturing
@@ -701,6 +716,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-wip-movement.json"),
             include_str!("../fixtures/cnc-wip-genealogy.json"),
             include_str!("../fixtures/cnc-wip-movement-reversal.json"),
+            include_str!("../fixtures/cnc-wip-split-merge.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
@@ -1729,7 +1745,11 @@ impl Scenarios {
         if action.is_genealogy_action()
             || matches!(
                 action,
-                Action::GetWip | Action::MoveWip | Action::ReverseWipMovement
+                Action::GetWip
+                    | Action::MoveWip
+                    | Action::ReverseWipMovement
+                    | Action::SplitWip
+                    | Action::MergeWip
             )
             || crate::mes::TOOLS.iter().any(|tool| tool.0 == action)
         {
