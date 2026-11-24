@@ -753,3 +753,35 @@ spec = "acceptance/P9C.md"
 features = ["F08", "F09", "F10"]
 layers = ["playwright"]
 tests = { playwright = "P9C-13 Reverse a posted receipt" }
+
+[[case]]
+id = "P9C-14"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9c_14_operation_material_reversals" }
+
+[[case]]
+id = "P9C-15"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P9C-15 Reverse issue and return movements" }
+
+[[case]]
+id = "P9C-16"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9c_16_assembly_material_reconciliation" }
+
+[[case]]
+id = "P9C-17"
+phase = "P9C"
+spec = "acceptance/P9C.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P9C-17 Reconcile issued material in assembly" }
