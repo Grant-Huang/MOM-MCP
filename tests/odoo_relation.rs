@@ -136,3 +136,83 @@ async fn reads_only_the_authorized_direct_odoo_relation() {
     );
     server.abort();
 }
+
+#[tokio::test]
+#[ignore = "requires a running Odoo Community test instance and two authorized company identities"]
+async fn reads_live_odoo_relations_with_two_company_identities() {
+    #[derive(serde::Deserialize)]
+    struct Fixture {
+        database: String,
+        token: String,
+        witness_token: String,
+        company: i64,
+        other_company: i64,
+        // Each tuple is manufacturing order, sales order line, sales order.
+        visible: [i64; 3],
+        hidden: [i64; 3],
+        unlinked: [i64; 3],
+    }
+
+    let origin = std::env::var("MOM_ODOO_RELATION_ORIGIN").expect("missing Odoo fixture origin");
+    let file = std::env::var_os("MOM_ODOO_RELATION_FIXTURE").expect("missing Odoo fixture path");
+    let data = std::fs::read(file).expect("could not read Odoo fixture");
+    let fixture: Fixture =
+        serde_json::from_slice(&data).unwrap_or_else(|_| panic!("invalid Odoo fixture"));
+    assert!(
+        fixture.token != fixture.witness_token,
+        "expected distinct Odoo readers"
+    );
+    assert_ne!(fixture.company, fixture.other_company);
+    assert_ne!(fixture.visible[0], fixture.hidden[0]);
+    assert_ne!(fixture.visible[0], fixture.unlinked[0]);
+    assert_ne!(fixture.hidden[0], fixture.unlinked[0]);
+    let reader = |token| {
+        HttpOrderReader::new(HttpSource {
+            kind: HttpSourceKind::Odoo {
+                database: &fixture.database,
+            },
+            base_url: &origin,
+            token,
+            tenant: "test",
+            site: "test",
+            instance: "odoo",
+        })
+        .expect("invalid Odoo fixture source")
+    };
+    let primary = reader(fixture.token.as_str());
+    let witness = reader(fixture.witness_token.as_str());
+    for (reader, company, own, other) in [
+        (&primary, fixture.company, fixture.visible, fixture.hidden),
+        (
+            &witness,
+            fixture.other_company,
+            fixture.hidden,
+            fixture.visible,
+        ),
+    ] {
+        let relation = reader
+            .read_odoo_sales_relation(own[0], company)
+            .await
+            .expect("own Odoo relation could not be read")
+            .expect("own Odoo relation was missing");
+        assert_eq!(relation.company_id, company);
+        assert!(
+            [
+                relation.work_order_id,
+                relation.sales_line_id,
+                relation.sales_order_id
+            ] == own,
+            "Odoo relation did not match the fixture"
+        );
+        assert!(matches!(
+            reader.read_odoo_sales_relation(other[0], company).await,
+            Err(ReadError::NotVisible)
+        ));
+    }
+    assert!(matches!(
+        primary
+            .read_odoo_sales_relation(fixture.unlinked[0], fixture.company)
+            .await,
+        Ok(None)
+    ));
+}
