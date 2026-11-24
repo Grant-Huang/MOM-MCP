@@ -155,6 +155,8 @@ cargo run --locked --example external_order_smoke -- VENDOR HTTPS_OR_LOOPBACK_OR
 
 使用获授权测试环境中的合成工单。通过环境传入 `MOM_SAMPLE_TOKEN`。Odoo 还需要 `MOM_ODOO_DATABASE`。第二条工单应已由受信侧确认存在，但超出该身份的公司或产线范围。示例复用正式候选读取器，断言首条记录的源 ID和源状态正确、规范状态为空，且第二条返回不可见。输出仅含来源和通过结果。
 
+Odoo 首站可额外通过环境提供 `MOM_ODOO_WITNESS_TOKEN`。使用同一数据库内另一获授权公司的独立只读身份。探针先核对主身份对第二条工单返回不可见，再用第二身份按同一 ID 读取并确认该记录存在。证据输出省略工单标识、数据库和凭据。省略第二凭据时，继续由受信人员独立确认该样本。
+
 本地复跑沿用上文固定版本及隔离数据。OpenMES 用 Laravel 实际 HTTP 服务与 SQLite，由只属于本产线的 Operator 读取 `PENDING`，另一产线工单返回不可见。Odoo 用本地 Community 19.0 与 PostgreSQL，由单公司制造用户读取 `draft`，另一公司工单返回不可见。两套验证均直接执行本仓库 Rust 读取器。
 
 ### 生产 Observe 的宿主接线候选
