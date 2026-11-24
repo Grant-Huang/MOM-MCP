@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use rusqlite::Transaction;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
@@ -52,7 +53,7 @@ pub(crate) fn spec(action: Action) -> Spec {
     };
     let node = object(
         &["kind", "id"],
-        json!({"kind":{"enum":["material_lot","wip_lot","serial","operation_report"]},"id":id_schema()}),
+        json!({"kind":{"enum":["material_lot","wip_lot","serial","operation_report","stock_lot"]},"id":id_schema()}),
     );
     let edge = object(
         &[
@@ -64,7 +65,7 @@ pub(crate) fn spec(action: Action) -> Spec {
             "status",
         ],
         json!({
-        "edge_id":id_schema(),"kind":{"enum":["material_input","serial_output","wip_consumption","wip_split","wip_merge"]},
+        "edge_id":id_schema(),"kind":{"enum":["material_input","serial_output","wip_consumption","wip_split","wip_merge","finished_output_receipt"]},
         "work_order":id_schema(),"source":node,"target":node,"status":{"enum":["active","reversed"]},
         "reservation_id":id_schema(),"quantity":quantity_schema(),"unit":text()}),
     );
@@ -90,11 +91,12 @@ fn status(reversed: bool) -> &'static str {
 }
 
 pub(crate) fn read(
+    tx: &Transaction<'_>,
     run: &str,
     action: Action,
     reports: &[Report],
     args: &Map<String, Value>,
-) -> Value {
+) -> anyhow::Result<Value> {
     let selector = |name: &str| args.get(name).and_then(Value::as_str);
     let order = selector("work_order");
     let after = selector("after_edge_id");
@@ -105,7 +107,7 @@ pub(crate) fn read(
         .flatten()
         .any(|id| !identifier(id))
     {
-        return json!({"ok":false,"code":"INVALID_ARGUMENT"});
+        return Ok(json!({"ok":false,"code":"INVALID_ARGUMENT"}));
     }
     let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
     let mut consumers: BTreeMap<&str, Vec<&Report>> = BTreeMap::new();
@@ -118,6 +120,7 @@ pub(crate) fn read(
         }
     }
 
+    let receipts = crate::finished_output::genealogy(tx, run, order)?;
     let mut edges = Vec::new();
     for report in reports
         .iter()
@@ -178,6 +181,28 @@ pub(crate) fn read(
                 unit: None,
                 reservation_id: None,
             });
+            for output in receipts
+                .iter()
+                .filter(|output| output.order == report.order && output.serials.contains(number))
+            {
+                edges.push(Edge {
+                    edge_id: format!("output-{}-{}-{index}", report.id, output.cursor),
+                    kind: "finished_output_receipt",
+                    work_order,
+                    source: Node {
+                        kind: "serial",
+                        id: number,
+                    },
+                    target: Node {
+                        kind: "stock_lot",
+                        id: &output.lot,
+                    },
+                    status: status(report.reversed || output.reversed),
+                    quantity: None,
+                    unit: None,
+                    reservation_id: None,
+                });
+            }
         }
         for split in &report.wip_partitions {
             for child in &split.children {
@@ -257,5 +282,5 @@ pub(crate) fn read(
     edges.sort_unstable_by(|left, right| left.edge_id.cmp(&right.edge_id));
     let next = (edges.len() > limit).then(|| edges[limit - 1].edge_id.clone());
     edges.truncate(limit);
-    json!({"ok":true,"run_id":run,"edges":edges,"next_after_edge_id":next})
+    Ok(json!({"ok":true,"run_id":run,"edges":edges,"next_after_edge_id":next}))
 }

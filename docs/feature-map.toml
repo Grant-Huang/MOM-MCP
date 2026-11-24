@@ -881,3 +881,19 @@ spec = "acceptance/P9D.md"
 features = ["F09", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P9D-09 Split and merge WIP lots" }
+
+[[case]]
+id = "P9D-10"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9d_10_receive_finished_output" }
+
+[[case]]
+id = "P9D-11"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F09", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P9D-11 Receive serialized finished output" }

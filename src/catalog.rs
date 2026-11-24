@@ -25,6 +25,7 @@ pub enum Action {
     ListGenealogyEdges,
     GetWip,
     ReverseWipMovement,
+    ReceiveWorkOrderOutput,
     SplitWip,
     MergeWip,
     MoveWip,
@@ -205,6 +206,7 @@ impl Action {
             Self::ListGenealogyEdges,
             Self::GetWip,
             Self::ReverseWipMovement,
+            Self::ReceiveWorkOrderOutput,
             Self::SplitWip,
             Self::MergeWip,
             Self::MoveWip,
@@ -283,6 +285,7 @@ impl Action {
             Self::UnpickMaterial => "unpick_material",
             Self::ReleaseReceiptInspection => "release_receipt_inspection",
             Self::GetMaterialAvailability => "get_material_availability",
+            Self::ReceiveWorkOrderOutput => "receive_work_order_output",
             Self::SplitWip => "split_wip",
             Self::MergeWip => "merge_wip",
             Self::ReverseWipMovement => "reverse_wip_movement",
@@ -465,6 +468,9 @@ impl Action {
         )
     }
     pub fn spec(self) -> Spec {
+        if self == Self::ReceiveWorkOrderOutput {
+            return crate::finished_output::spec();
+        }
         if self.is_genealogy_action() {
             return crate::genealogy::spec(self);
         }

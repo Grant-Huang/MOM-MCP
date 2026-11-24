@@ -293,7 +293,11 @@ pub(crate) fn reverse_lot(
     response
 }
 
-fn material_held(tx: &Transaction<'_>, run: &str, report: &Report) -> rusqlite::Result<bool> {
+pub(crate) fn material_held(
+    tx: &Transaction<'_>,
+    run: &str,
+    report: &Report,
+) -> rusqlite::Result<bool> {
     for input in &report.material_inputs {
         if tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM stock_lot_holds WHERE run=?1 AND batch=?2)",

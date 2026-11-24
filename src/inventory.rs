@@ -22,7 +22,7 @@ fn revision_schema() -> Value {
     json!({"type":"integer","minimum":1,"maximum":u32::MAX})
 }
 
-fn receipt_schema() -> Value {
+pub(crate) fn receipt_schema() -> Value {
     object(
         &[
             "receipt_id",
@@ -44,7 +44,7 @@ fn receipt_schema() -> Value {
             "supplier_lot":{"type":["string","null"]},"location":{"type":["string","null"]},
             "posted_cursor":{"type":["integer","null"],"minimum":1},
             "availability":{"enum":[null,"pending_inspection","available"]},
-            "released_inspection_id":id_schema(),"released_cursor":{"type":"integer","minimum":1},"parent_lot_id":id_schema()}),
+            "released_inspection_id":id_schema(),"released_cursor":{"type":"integer","minimum":1},"parent_lot_id":id_schema(),"work_order":id_schema(),"serial_numbers":{"type":"array","items":id_schema()}}),
     )
 }
 
@@ -305,14 +305,27 @@ fn record(row: &Row<'_>) -> rusqlite::Result<Value> {
         response["released_inspection_id"] = json!(released);
         response["released_cursor"] = json!(row.get::<_, i64>(11)?);
     }
+    if let Some(order) = row.get::<_, Option<String>>(12)? {
+        let serials: String = row.get(13)?;
+        response["work_order"] = json!(order);
+        response["serial_numbers"] = serde_json::from_str(&serials).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                13,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    }
     Ok(response)
 }
 
 const RECEIPT_COLUMNS: &str = "receipt,item,revision,unit,quantity,requires_inspection,lot,supplier_lot,location,posted_cursor,
     (SELECT inspection FROM stock_receipt_releases r WHERE r.run=stock_receipts.run AND r.receipt=stock_receipts.receipt),
-    (SELECT released_cursor FROM stock_receipt_releases r WHERE r.run=stock_receipts.run AND r.receipt=stock_receipts.receipt)";
+    (SELECT released_cursor FROM stock_receipt_releases r WHERE r.run=stock_receipts.run AND r.receipt=stock_receipts.receipt),
+    (SELECT work_order FROM stock_work_order_output o WHERE o.run=stock_receipts.run AND o.receipt=stock_receipts.receipt),
+    (SELECT serial_numbers FROM stock_work_order_output o WHERE o.run=stock_receipts.run AND o.receipt=stock_receipts.receipt)";
 
-fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Value>> {
+pub(crate) fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Value>> {
     tx.query_row(
         &format!("SELECT {RECEIPT_COLUMNS} FROM stock_receipts WHERE run=?1 AND receipt=?2"),
         params![run, id],
@@ -323,7 +336,7 @@ fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<Option<Va
 
 fn lot_record(row: &Row<'_>) -> rusqlite::Result<Value> {
     let mut lot = record(row)?;
-    if let Some(parent) = row.get::<_, Option<String>>(12)? {
+    if let Some(parent) = row.get::<_, Option<String>>(14)? {
         lot["parent_lot_id"] = json!(parent);
     }
     Ok(lot)

@@ -4740,6 +4740,11 @@ fn p9d_06_reverse_wip_movement() {
 }
 
 #[test]
+fn p9d_10_receive_finished_output() {
+    run_wip_scenario(40);
+}
+
+#[test]
 fn p9d_08_split_merge_wip() {
     run_wip_scenario(39);
 }
@@ -4778,8 +4783,9 @@ async fn move_and_consume_wip(
     operation: &str,
     genealogy: bool,
     reversal: bool,
-    partition: bool,
+    version: u64,
 ) {
+    let partition = version == 39;
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
     let write = async |name: &str, key: &str, mut args: Value| {
@@ -5065,6 +5071,15 @@ async fn move_and_consume_wip(
     report["wip_inputs"] = json!([second_id]);
     apply("post_operation_report", "consume-second", report).await;
     apply("complete_operation", "complete-assembly", assembly).await;
+    if version == 40 {
+        Box::pin(receive_finished_output(
+            client,
+            run,
+            order,
+            &first["report"]["serial_numbers"][0],
+        ))
+        .await;
+    }
     if genealogy {
         Box::pin(assert_genealogy(
             client,
@@ -5084,6 +5099,170 @@ async fn move_and_consume_wip(
         .await["balance"]["on_hand"],
         "0.5"
     );
+}
+
+async fn receive_finished_output(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+    serial: &Value,
+) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["idempotency_key"] = json!(key);
+        args["expected_cursor"] = cursor().await;
+        invoke(name, args).await
+    };
+    let apply = async |name: &str, key: &str, args| {
+        let result = write(name, key, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    };
+    let mut receipt =
+        json!({"work_order":order,"receipt_id":"FG-1","lot_id":"FG-LOT-1","location":"RAW-02"});
+    let reversal = |id, key| json!({"movement_type":"receipt","movement_id":id,"reversal_id":key,"reason":"correct posting"});
+    let balance = async || {
+        invoke(
+            "get_stock_balance",
+            json!({"item_id":"FRAME","revision":1,"location":"RAW-02"}),
+        )
+        .await["balance"]["on_hand"]
+            .clone()
+    };
+    let order_args = json!({"work_order":order});
+    let before = cursor().await;
+    assert_eq!(
+        write("receive_work_order_output", "too-early", receipt.clone()).await["code"],
+        "COMPLETION_REQUIRED"
+    );
+    assert_eq!(cursor().await, before);
+    apply(
+        "dispatch_operation",
+        "dispatch-output-inspection",
+        json!({"work_order":order,"operation":"inspection","work_center":"QA-01"}),
+    )
+    .await;
+    apply(
+        "inspect_units",
+        "reject-output",
+        json!({"work_order":order,"result":"fail"}),
+    )
+    .await;
+    assert_eq!(
+        write(
+            "complete_work_order",
+            "complete-rejected",
+            order_args.clone()
+        )
+        .await["code"],
+        "QUALITY_HOLD"
+    );
+    apply(
+        "disposition",
+        "release-output",
+        json!({"work_order":order,"result":"pass","reason":"verified repeat inspection"}),
+    )
+    .await;
+    apply(
+        "complete_work_order",
+        "confirm-finished",
+        order_args.clone(),
+    )
+    .await;
+    assert_eq!(
+        write("close_work_order", "close-early", order_args.clone()).await["code"],
+        "OUTPUT_RECEIPT_REQUIRED"
+    );
+    assert_eq!(balance().await, "0");
+    apply(
+        "create_item_revision",
+        "draft-frame-v2",
+        json!({"item_id":"FRAME","revision":2,"name":"Frame V2"}),
+    )
+    .await;
+    apply(
+        "activate_revision",
+        "activate-frame-v2",
+        json!({"item_id":"FRAME","revision":2,"revision_type":"item"}),
+    )
+    .await;
+    receipt["idempotency_key"] = json!("post-fg");
+    receipt["expected_cursor"] = cursor().await;
+    let posted = invoke("receive_work_order_output", receipt.clone()).await;
+    assert_eq!(posted["ok"], true, "{posted}");
+    assert_eq!(posted["receipt"]["revision"], 1);
+    assert_eq!(posted["receipt"]["quantity"], "10");
+    assert_eq!(
+        posted["receipt"]["serial_numbers"]
+            .as_array()
+            .unwrap()
+            .len(),
+        10
+    );
+    assert_eq!(
+        invoke("receive_work_order_output", receipt.clone()).await,
+        posted
+    );
+    assert_eq!(
+        write("receive_work_order_output", "duplicate-fg", receipt.clone()).await["code"],
+        "OUTPUT_RECEIPT_EXISTS"
+    );
+    assert_eq!(balance().await, "10");
+    assert_eq!(
+        invoke("get_lot", json!({"lot_id":"FG-LOT-1"})).await["lot"],
+        posted["receipt"]
+    );
+    assert_eq!(write("create_stock_transfer","split-serialized",json!({"transfer_id":"TR-FG","lot_id":"FG-LOT-1",
+        "source_location":"RAW-02","destination_location":"RAW-01","child_lot_id":"FG-CHILD","quantity":"1","reason":"partial transfer"})).await["code"],"LOT_SPLIT_NOT_ALLOWED");
+    apply(
+        "reverse_inventory_movement",
+        "correct-fg",
+        reversal("FG-1", "REV-FG-1"),
+    )
+    .await;
+    assert_eq!(balance().await, "0");
+    assert_eq!(
+        write(
+            "close_work_order",
+            "close-after-reversal",
+            order_args.clone()
+        )
+        .await["code"],
+        "OUTPUT_RECEIPT_REQUIRED"
+    );
+    receipt["receipt_id"] = json!("FG-2");
+    receipt["lot_id"] = json!("FG-LOT-2");
+    let reposted = apply("receive_work_order_output", "post-fg-again", receipt).await;
+    assert_eq!(
+        reposted["receipt"]["serial_numbers"],
+        posted["receipt"]["serial_numbers"]
+    );
+    let trace = async |name: &str, args| {
+        let result = invoke(name, args).await;
+        let edges = result["edges"].as_array().unwrap();
+        assert!(edges.iter().any(|edge| edge["source"]["id"] == *serial
+            && edge["kind"] == "finished_output_receipt"
+            && edge["target"]["id"] == "FG-LOT-1"
+            && edge["status"] == "reversed"));
+        assert!(edges.iter().any(|edge| edge["source"]["id"] == *serial
+            && edge["kind"] == "finished_output_receipt"
+            && edge["target"]["id"] == "FG-LOT-2"
+            && edge["status"] == "active"));
+    };
+    trace("trace_serial_backward", json!({"serial_number":serial})).await;
+    trace("trace_lot_forward", json!({"lot_id":"LOT-1"})).await;
+    apply("close_work_order", "close-finished", order_args).await;
+    assert_eq!(
+        write(
+            "reverse_inventory_movement",
+            "reverse-settled",
+            reversal("FG-2", "REV-FG-2")
+        )
+        .await["code"],
+        "RECEIPT_HAS_DEPENDENCIES"
+    );
+    assert_eq!(balance().await, "10");
 }
 
 async fn setup_genealogy_second_lot(
@@ -5241,8 +5420,11 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=39) {
+            if matches!(version,36..=40) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
+            }
+            if version == 40 {
+                route["inspection"]=json!({"work_center":"QA-01","predecessors":["assembly"]});
             }
             for (name,args) in [
                 ("create_item",json!({"item_id":"FRAME","base_unit":"each"})),
@@ -5469,8 +5651,8 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if matches!(version,36..=39) {
-                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version==39)).await;
+            if matches!(version,36..=40) {
+                Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
                 let lots=lots["lots"].as_array().unwrap();

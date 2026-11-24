@@ -2,6 +2,7 @@ mod assembly;
 mod bom;
 mod catalog;
 mod fabrication;
+mod finished_output;
 mod genealogy;
 mod inventory;
 mod items;
