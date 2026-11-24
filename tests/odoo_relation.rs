@@ -236,6 +236,18 @@ async fn reads_live_odoo_relations_with_two_company_identities() {
             reader.read_odoo_sales_relation(other[0], company).await,
             Err(ReadError::NotVisible)
         ));
+        assert_eq!(
+            reader
+                .read_odoo_sales_relation_atomic(own[0], company)
+                .await,
+            Ok(Some(relation))
+        );
+        assert_eq!(
+            reader
+                .read_odoo_sales_relation_atomic(other[0], company)
+                .await,
+            Err(ReadError::NotVisible)
+        );
     }
     assert!(matches!(
         primary
@@ -243,4 +255,108 @@ async fn reads_live_odoo_relations_with_two_company_identities() {
             .await,
         Ok(None)
     ));
+    assert_eq!(
+        primary
+            .read_odoo_sales_relation_atomic(fixture.unlinked[0], fixture.company)
+            .await,
+        Ok(None)
+    );
+}
+
+#[tokio::test]
+async fn reads_atomic_odoo_relation_with_fixed_fields_and_scoped_errors() {
+    use axum::http::StatusCode;
+
+    async fn read(headers: HeaderMap, Json(query): Json<Value>) -> (StatusCode, Json<Value>) {
+        assert_eq!(headers["authorization"], "Bearer local-fixture");
+        assert_eq!(headers["x-odoo-database"], "sample-db");
+        let id = query["ids"][0].as_i64().unwrap();
+        assert_eq!(
+            query,
+            json!({
+                "ids": [id],
+                "specification": {
+                    "id": {}, "company_id": {},
+                    "sale_line_id": {"fields": {
+                        "id": {}, "company_id": {},
+                        "order_id": {"fields": {"id": {}, "company_id": {}}}
+                    }}
+                }
+            })
+        );
+        let row = |company| {
+            json!({"id":id,"company_id":7,"sale_line_id":{
+                "id":142,"company_id":7,"order_id":{"id":81,"company_id":company}
+            }})
+        };
+        let (status, body) = match id {
+            42 => (StatusCode::OK, json!([row(json!(7))])),
+            43 => (
+                StatusCode::OK,
+                json!([{"id":43,"company_id":7,"sale_line_id":false}]),
+            ),
+            44 => (StatusCode::OK, json!([row(json!(8))])),
+            45 => (StatusCode::OK, json!([row(json!("7"))])),
+            46 => (StatusCode::OK, json!([{"id":42,"company_id":7}])),
+            47 => (
+                StatusCode::FORBIDDEN,
+                json!({"name":"odoo.exceptions.AccessError","message":"private"}),
+            ),
+            48 => (
+                StatusCode::FORBIDDEN,
+                json!({"name":"other","message":"private"}),
+            ),
+            49 => (StatusCode::NOT_FOUND, json!({})),
+            _ => panic!("unexpected query"),
+        };
+        (status, Json(body))
+    }
+    let router = Router::new().route("/json/2/mrp.production/web_read", post(read));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let reader = HttpOrderReader::new(HttpSource {
+        kind: HttpSourceKind::Odoo {
+            database: "sample-db",
+        },
+        base_url: &origin,
+        token: "local-fixture",
+        tenant: "tenant",
+        site: "site",
+        instance: "odoo",
+    })
+    .unwrap();
+
+    let relation = reader
+        .read_odoo_sales_relation_atomic(42, 7)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            relation.work_order_id,
+            relation.sales_line_id,
+            relation.sales_order_id
+        ),
+        (42, 142, 81)
+    );
+    assert_eq!(
+        reader.read_odoo_sales_relation_atomic(43, 7).await,
+        Ok(None)
+    );
+    for (id, expected) in [
+        (44, ReadError::NotVisible),
+        (45, ReadError::InvalidResponse),
+        (46, ReadError::UnexpectedRecord),
+        (47, ReadError::NotVisible),
+        (48, ReadError::SourceUnavailable),
+        (49, ReadError::SourceUnavailable),
+        (0, ReadError::InvalidBinding),
+    ] {
+        assert_eq!(
+            reader.read_odoo_sales_relation_atomic(id, 7).await,
+            Err(expected)
+        );
+    }
+    server.abort();
 }

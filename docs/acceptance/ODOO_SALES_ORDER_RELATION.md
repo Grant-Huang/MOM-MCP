@@ -20,6 +20,8 @@
 
 `HttpOrderReader::read_odoo_sales_relation` 接收宿主已授权的源工单 ID 和公司 ID，按固定字段依次读取三跳，并核对每跳的记录 ID 与公司。仅显式缺失的直接关系返回空结果，范围外或不可见返回 `NotVisible`，记录冲突返回 `UnexpectedRecord`，畸形响应返回 `InvalidResponse`。成功证据包含源内部标识，供受信侧使用。读取销售订单后，按销售订单行、制造单的顺序复读两条关联边。任一边变更或被清除即返回 `UnexpectedRecord`，复读时不可见仍返回 `NotVisible`。稳定关联最多发出五次 JSON-2 查询，无直接关系只需一次。请求各自独立，复读只能发现比较时可见的变更，无法排除中间改回或最后一次读取之后的变化。宿主公开关系的快照要求仍待评审。
 
+可显式选择 `HttpOrderReader::read_odoo_sales_relation_atomic`，以一次 JSON-2 `web_read` 请求展开固定三层规格。读取器校验制造单 ID、每层公司和嵌套记录结构。HTTP 403 且 Odoo 错误名为 `odoo.exceptions.AccessError` 时返回 `NotVisible`，其他 403、端点 404 和上游故障归为 `SourceUnavailable`。调用者仍须预先授权工单及公司。单事务入口不进行跨版本探测或自动回退，生产接线需确认目标版本及模块。
+
 运行 `cargo test --locked --test odoo_relation` 验证回环 HTTP 请求和提前停止行为。
 
 真实来源复验使用 `MOM_ODOO_RELATION_ORIGIN` 指定测试来源，`MOM_ODOO_RELATION_FIXTURE` 指向仅当前用户可读的本地 JSON 文件。字段含测试数据库 `database`、两套临时凭据 `token` 和 `witness_token`、各自公司的 `company` 和 `other_company`，以及三组样本 `visible`、`hidden`、`unlinked`。每组依次填写制造单、销售订单行、销售订单的 ID。前两组分别属于两个公司，第三组属于第一个公司，制造单只保留订单文字。执行 `cargo test --locked --test odoo_relation reads_live_odoo_relations_with_two_company_identities -- --ignored --exact`。
@@ -30,6 +32,6 @@
 
 以同一 Bearer 凭证和 `X-Odoo-Database`，依次向 `/json/2/<model>/search_read` 发送按 `id` 精确匹配的请求。三个模型均读取 `id` 和 `company_id`，制造单额外读取 `sale_line_id`，销售订单行额外读取 `order_id`。现场记录显示，本公司三跳均返回唯一匹配记录。仅填写 `origin` 的制造单返回 `sale_line_id: false`。相同身份按已知 ID 逐个查询另一公司的三条记录，均返回空数组。证据范围为本地 Odoo JSON-2 和合成业务数据。
 
-同一镜像与 PostgreSQL 16 上，Rust 候选读取器已通过双公司复验。两个单公司身份各自读到预期的制造单、销售订单行和销售订单，交叉读取均返回 `NotVisible`。只填写 `origin` 的同公司制造单返回空关系。复验使用隔离数据库和临时凭据。Docker VFS 空间不足时，将相同镜像摘要的文件系统重打包为单层，保留 Odoo 入口、用户及运行环境。该结果验证实际来源的独立读取，宿主公开关系的快照要求仍待评审。
+同一镜像与 PostgreSQL 16 上，Rust 候选读取器已通过双公司复验。两个单公司身份各自读到预期的制造单、销售订单行和销售订单，交叉读取均返回 `NotVisible`。只填写 `origin` 的同公司制造单返回空关系。复验使用隔离数据库和临时凭据。Docker VFS 空间不足时，将相同镜像摘要的文件系统重打包为单层，保留 Odoo 入口、用户及运行环境。该结果验证实际来源的独立读取，宿主公开关系的快照要求仍待评审。 同一双公司用例已复跑单事务 Rust 入口，确认其关联、交叉不可见及空关系结果与原读取器一致。
 
 加入两条关联边复读后，使用同一固定版本和双公司用例复验通过。关系改指及清除由回环夹具注入，均停止返回关系。实际来源复验覆盖稳定链路、交叉不可见与空关系。
