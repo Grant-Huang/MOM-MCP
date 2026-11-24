@@ -522,6 +522,7 @@ pub fn spec(action: Action) -> Spec {
                 "MATERIAL_HELD",
                 "REPORT_EXCEEDS_REMAINING",
                 "MATERIAL_INPUTS_REQUIRED",
+                "MATERIAL_INPUTS_INCOMPLETE",
                 "MATERIAL_ISSUE_NOT_FOUND",
                 "MATERIAL_ISSUE_QUANTITY_EXCEEDED",
                 "QUALITY_HOLD",
@@ -646,8 +647,8 @@ pub(crate) struct Report {
 #[derive(Deserialize, Serialize)]
 pub(crate) struct MaterialInput {
     reservation_id: String,
-    lot_id: String,
-    quantity: String,
+    pub(crate) lot_id: String,
+    pub(crate) quantity: String,
     unit: String,
 }
 
@@ -983,10 +984,11 @@ pub fn resource_capability(
     ))
 }
 
-fn has_operation_issue(
+pub(crate) fn has_operation_issue(
     tx: &Transaction<'_>,
     run: &str,
     order: &str,
+    operation: &str,
     require_remaining: bool,
 ) -> rusqlite::Result<bool> {
     tx.query_row(
@@ -995,7 +997,7 @@ fn has_operation_issue(
          LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
          WHERE i.run=?1 AND r.work_order=?2 AND i.operation=?3
          AND r.status='issued' AND (NOT ?4 OR r.quantity > COALESCE(t.quantity,0)))",
-        params![run, order, MATERIAL_INPUT_OPERATION, require_remaining],
+        params![run, order, operation, require_remaining],
         |row| row.get(0),
     )
 }
@@ -1012,15 +1014,14 @@ pub(crate) fn reported_material_quantity(
         })
         .optional()?;
     let Some(saved) = saved else {
-        return Ok(0);
+        return crate::assembly::reported_material_quantity(tx, run, order, reservation);
     };
-    let state = serde_json::from_str(&saved)?;
-    Ok(material_used(&state, order, reservation))
+    let state: State = serde_json::from_str(&saved)?;
+    Ok(material_used(&state.reports, order, reservation))
 }
 
-fn material_used(state: &State, order: &str, reservation: &str) -> i64 {
-    state
-        .reports
+pub(crate) fn material_used(reports: &[Report], order: &str, reservation: &str) -> i64 {
+    reports
         .iter()
         .filter(|report| !report.reversed && report.order == order)
         .flat_map(|report| &report.material_inputs)
@@ -1031,10 +1032,10 @@ fn material_used(state: &State, order: &str, reservation: &str) -> i64 {
         .sum()
 }
 
-fn report_material_inputs(
+pub(crate) fn report_material_inputs(
     tx: &Transaction<'_>,
     run: &str,
-    state: &State,
+    reports: &[Report],
     order: &str,
     args: &Map<String, Value>,
 ) -> rusqlite::Result<Result<Vec<MaterialInput>, &'static str>> {
@@ -1063,7 +1064,7 @@ fn report_material_inputs(
              LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
              WHERE i.run=?1 AND r.work_order=?2 AND i.operation=?3 AND i.reservation=?4
                AND r.status='issued'",
-                params![run, order, MATERIAL_INPUT_OPERATION, reservation],
+                params![run, order, args["operation"].as_str().unwrap(), reservation],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
@@ -1080,7 +1081,7 @@ fn report_material_inputs(
         if held {
             return Ok(Err("MATERIAL_HELD"));
         }
-        let used = material_used(state, order, reservation);
+        let used = material_used(reports, order, reservation);
         if unit == "each" && requested % crate::inventory::QUANTITY_SCALE != 0 {
             return Ok(Err("INVALID_ARGUMENT"));
         }
@@ -1200,7 +1201,8 @@ pub fn invoke(
                         actions.push("issue_material");
                     }
                     let can_start = if setup.issued_report_inputs {
-                        order.step != 0 || has_operation_issue(tx, run, id, true)?
+                        order.step != 0
+                            || has_operation_issue(tx, run, id, MATERIAL_INPUT_OPERATION, true)?
                     } else {
                         order.batch.is_some()
                     };
@@ -1322,7 +1324,13 @@ pub fn invoke(
     }
     if setup.issued_report_inputs
         && action == Action::CancelWorkOrder
-        && has_operation_issue(tx, run, args["work_order"].as_str().unwrap(), false)?
+        && has_operation_issue(
+            tx,
+            run,
+            args["work_order"].as_str().unwrap(),
+            MATERIAL_INPUT_OPERATION,
+            false,
+        )?
     {
         return Ok((error("ORDER_HAS_EXECUTION"), false));
     }
@@ -1334,11 +1342,13 @@ pub fn invoke(
             return Ok((error(&code), false));
         }
         if args["operation"] == MATERIAL_INPUT_OPERATION {
-            if action == Action::StartOperation && !has_operation_issue(tx, run, order, true)? {
+            if action == Action::StartOperation
+                && !has_operation_issue(tx, run, order, MATERIAL_INPUT_OPERATION, true)?
+            {
                 return Ok((error("MATERIAL_NOT_ISSUED"), false));
             }
             if action == Action::PostOperationReport {
-                let inputs = match report_material_inputs(tx, run, &state, order, args)? {
+                let inputs = match report_material_inputs(tx, run, &state.reports, order, args)? {
                     Ok(inputs) => inputs,
                     Err(code) => return Ok((error(code), false)),
                 };

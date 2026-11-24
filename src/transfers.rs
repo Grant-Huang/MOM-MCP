@@ -157,6 +157,7 @@ pub(crate) fn invoke(
     action: Action,
     args: &Map<String, Value>,
     cursor: i64,
+    order_quantity: i64,
 ) -> anyhow::Result<Result<Value, Rejection>> {
     for field in [
         "transfer_id",
@@ -202,7 +203,14 @@ pub(crate) fn invoke(
     if action == Action::ReverseInventoryMovement
         && matches!(args["movement_type"].as_str(), Some("issue" | "return"))
     {
-        return match crate::operation_reversals::reverse(&tx, run, id, args, cursor)? {
+        return match crate::operation_reversals::reverse(
+            &tx,
+            run,
+            id,
+            args,
+            cursor,
+            order_quantity,
+        )? {
             Ok(row) => crate::reservations::finish_write(
                 tx,
                 run,

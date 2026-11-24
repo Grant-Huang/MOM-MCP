@@ -162,6 +162,7 @@ pub(crate) fn reverse(
     id: &str,
     args: &Map<String, Value>,
     cursor: i64,
+    order_quantity: i64,
 ) -> anyhow::Result<Result<Value, Rejection>> {
     let original = args["movement_id"].as_str().unwrap();
     let kind = args["movement_type"].as_str().unwrap();
@@ -201,7 +202,7 @@ pub(crate) fn reverse(
             tx,
             run,
             &target.order,
-            crate::mes::QUANTITY as i64,
+            order_quantity,
             &target.item,
             target.revision,
             &target.unit,
