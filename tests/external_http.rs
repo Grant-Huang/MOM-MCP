@@ -96,6 +96,47 @@ async fn reads_and_classifies_odoo_and_openmes_http_responses() {
     server.abort();
 }
 
+#[tokio::test]
+async fn rereads_the_current_openmes_status_for_the_same_order() {
+    use axum::extract::State;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    async fn order(State(accepted): State<Arc<AtomicBool>>, Path(id): Path<u64>) -> Json<Value> {
+        let status = if accepted.load(Ordering::Relaxed) {
+            "ACCEPTED"
+        } else {
+            "PENDING"
+        };
+        Json(json!({"data":{"id":id,"order_no":"WO-42","status":status}}))
+    }
+
+    let accepted = Arc::new(AtomicBool::new(false));
+    let router = Router::new()
+        .route("/api/v1/work-orders/{id}", get(order))
+        .with_state(accepted.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let reader = HttpOrderReader::new(source(&url, HttpSourceKind::OpenMes)).unwrap();
+
+    let pending = reader.read_order("42").await.unwrap();
+    accepted.store(true, Ordering::Relaxed);
+    let approved = reader.read_order("42").await.unwrap();
+
+    assert_eq!(pending.identity, approved.identity);
+    assert_eq!(pending.display_number, approved.display_number);
+    assert_eq!(pending.source_status.as_deref(), Some("PENDING"));
+    assert_eq!(approved.source_status.as_deref(), Some("ACCEPTED"));
+    for observation in [pending, approved] {
+        assert_eq!(observation.normalized_status, None);
+        assert_eq!(observation.mapping_version, "0.1");
+    }
+    server.abort();
+}
+
 #[test]
 fn rejects_cleartext_remote_sources_and_non_origin_urls() {
     for url in [

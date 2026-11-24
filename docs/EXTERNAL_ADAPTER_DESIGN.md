@@ -133,6 +133,8 @@ Carbon 上游 MCP 路由要求 Business 权益，默认 ERP 镜像下载也返�
 | Odoo Community 19.0 | 使用上文固定镜像和本地 JSON-2 读取。首个公司的草稿单返回 `draft`，对同公司另一个合成制造单执行服务器端 `action_confirm` 后读到 `confirmed`，跨公司查询仍为空。 | 确认进入制造执行准备，并可能触发库存移动确认或物料调度。保留源状态。 [确认实现](https://github.com/odoo/odoo/blob/d36b9405fe5d2ede753c6d7eceb778ecef20f67b/addons/mrp/models/mrp_production.py#L1626) |
 | OpenMES | 在固定版本运行 [样本测试](references/mcp/openmes-adapter-sample.php)，用 Laravel HTTP 内核读取 `PENDING`，执行接受后再读取 `ACCEPTED`。与访问范围用例合计 2 项测试和 16 条断言通过。 | 接受接口校验授权与前置状态，并持久化状态转换。尚无与 Odoo 库存或工序副作用等价的证据。 [接受实现](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Http/Controllers/Api/V1/WorkOrderController.php#L136) |
 
+用 `cargo test --locked --test external_http rereads_the_current_openmes_status_for_the_same_order` 验证 Adapter 的重读合同。回环样本沿用已验证的源状态转换。同一个 Reader 两次查询同一记录，分别保留 `PENDING` 与 `ACCEPTED`，工单身份、显示号及映射版本保持一致，规范状态为空。
+
 两套试验用本地合成数据准备读取样本。公开适配器的首期能力仍为只读。候选契约保留上述四个源值，规范状态在取得等价证据前保持为空。`progress` 与 `IN_PROGRESS` 仍待运行证据和联审确认。
 
 ### Rust HTTP 读取试实现
