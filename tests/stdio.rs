@@ -4623,11 +4623,117 @@ async fn assembly_material_reconciliation(
     );
 }
 
+#[tokio::test]
+async fn p9d_01_reported_wip_output() {
+    operation_issue_scenarios(&[("cnc", 35, "WO-1", "machining", "MACH-01")]).await;
+}
+
+async fn reported_wip_output(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+    operation: &str,
+) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["idempotency_key"] = json!(key);
+        args["expected_cursor"] = cursor().await;
+        let result = invoke(name, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    };
+    let read = |order| invoke("get_wip", json!({"work_order":order}));
+    assert_eq!(read(order).await["lots"], json!([]));
+    write(
+        "start_operation",
+        "start-wip",
+        json!({"work_order":order,"operation":operation}),
+    )
+    .await;
+    let mut report = json!({"work_order":order,"operation":operation,"quantity":1,
+        "material_inputs":{"RS-1":"0.625"},"idempotency_key":"wip-report-1","expected_cursor":cursor().await});
+    let posted = invoke("post_operation_report", report.clone()).await;
+    assert_eq!(posted["ok"], true, "{posted}");
+    assert_eq!(
+        invoke("post_operation_report", report.clone()).await,
+        posted
+    );
+    report["material_inputs"]["RS-1"] = json!("0.375");
+    let second = write("post_operation_report", "wip-report-2", report).await;
+    let first_id = posted["report"]["id"].as_str().unwrap();
+    let second_id = second["report"]["id"].as_str().unwrap();
+    let at = cursor().await;
+    let page = invoke("get_wip", json!({"work_order":order,"limit":1})).await;
+    assert_eq!(page["next_after_wip_id"], first_id);
+    assert_eq!(
+        page["lots"][0],
+        json!({"wip_id":first_id,"report_id":first_id,"work_order":order,"source_operation":operation,
+        "unit":"each","quantity":1,"status":"available","material_inputs":posted["report"]["material_inputs"],
+        "serial_numbers":posted["report"]["serial_numbers"]})
+    );
+    let following = invoke(
+        "get_wip",
+        json!({"work_order":order,"after_wip_id":first_id}),
+    )
+    .await;
+    assert_eq!(following["lots"][0]["wip_id"], second_id);
+    assert!(following["next_after_wip_id"].is_null());
+    assert_eq!(
+        invoke("get_wip", json!({"work_order":"WO-2","wip_id":first_id})).await["code"],
+        "WIP_NOT_FOUND"
+    );
+    assert_eq!(cursor().await, at);
+    write(
+        "reverse_operation_report",
+        "reverse-wip",
+        json!({"work_order":order,"report_id":second_id,"reason":"correct report"}),
+    )
+    .await;
+    let reversed = invoke("get_wip", json!({"work_order":order,"wip_id":second_id})).await;
+    assert_eq!(reversed["lots"][0]["status"], "reversed");
+    assert_eq!(
+        reversed["lots"][0]["material_inputs"],
+        second["report"]["material_inputs"]
+    );
+    write(
+        "create_inspection",
+        "wip-qc",
+        json!({"inspection_id":"WIP-QC","work_order":order,"specification_version":"QA@1"}),
+    )
+    .await;
+    write(
+        "record_measurement",
+        "wip-measure",
+        json!({"inspection_id":"WIP-QC","characteristic":"width","unit":"mm",
+        "value":3,"lower_limit":1,"upper_limit":2}),
+    )
+    .await;
+    write(
+        "complete_inspection",
+        "wip-failed",
+        json!({"inspection_id":"WIP-QC"}),
+    )
+    .await;
+    let current = read(order).await;
+    assert_eq!(current["lots"][0]["blocking"], "QUALITY_HOLD");
+    assert_eq!(current["lots"][0]["status"], "held");
+    assert_eq!(current["lots"][1]["status"], "reversed");
+    assert_eq!(
+        invoke(
+            "get_stock_balance",
+            json!({"item_id":"WIRE","location":"RAW-02"})
+        )
+        .await["balance"]["on_hand"],
+        "0.5"
+    );
+}
+
 async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
     let (client, _child) = connect_mode(&db, "0", true).await;
-    timeout(Duration::from_secs(30), async {
+    timeout(Duration::from_secs(30), Box::pin(async {
         for &(scenario,version,order,operation,center) in scenarios {
             let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
             assert_eq!(opened["ok"],true,"{opened}");
@@ -4869,6 +4975,14 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
+            if version == 35 {
+                Box::pin(reported_wip_output(&client,run,order,operation)).await;
+                let (peer,_child)=connect_mode(&db,"0",true).await;
+                let entries=business(&peer,run,"get_wip",json!({"work_order":order})).await;
+                assert_eq!(entries["lots"][0]["status"],"held");
+                assert_eq!(entries["lots"][1]["status"],"reversed");
+                continue;
+            }
             if version == 33 {
                 let issue_reversal=json!({"movement_type":"issue","movement_id":"RS-1","reversal_id":"REV-ISSUE","reason":"incorrect issue"});
                 apply("start_operation","start",json!({"work_order":order,"operation":operation})).await;
@@ -5016,5 +5130,5 @@ async fn operation_issue_scenarios(scenarios: &[(&str, u64, &str, &str, &str)]) 
             assert_eq!(journal["movements"],json!([first["reservation"]]));
             assert_eq!(invoke("list_inventory_movements",json!({})).await["movements"][0]["quantity"],"2");
         }
-    }).await.unwrap();
+    })).await.unwrap();
 }

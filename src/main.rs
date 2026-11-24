@@ -18,6 +18,7 @@ mod smt;
 mod snapshots;
 mod transfers;
 mod web;
+mod wip;
 
 use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;

@@ -354,6 +354,18 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         "operation material reversals require recorded manufacturing inputs and returns"
     );
     anyhow::ensure!(
+        !definition.capabilities.contains(&Action::GetWip)
+            || (definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| setup.issued_report_inputs)
+                && definition
+                    .capabilities
+                    .contains(&Action::PostOperationReport)),
+        "work in process requires recorded operation output"
+    );
+
+    anyhow::ensure!(
         !definition
             .capabilities
             .contains(&Action::RequestMaintenance)
@@ -656,6 +668,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-receipt-reversal.json"),
             include_str!("../fixtures/cnc-operation-material-reversals.json"),
             include_str!("../fixtures/cnc-partial-lot-transfers.json"),
+            include_str!("../fixtures/cnc-wip-output.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
@@ -1676,7 +1689,7 @@ impl Scenarios {
             }
             return Ok(Ok(response));
         }
-        if crate::mes::TOOLS.iter().any(|tool| tool.0 == action) {
+        if action == Action::GetWip || crate::mes::TOOLS.iter().any(|tool| tool.0 == action) {
             let Some(setup) = &definition.manufacturing else {
                 return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
             };

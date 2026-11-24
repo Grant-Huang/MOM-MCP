@@ -646,10 +646,10 @@ pub(crate) struct Report {
 
 #[derive(Deserialize, Serialize)]
 pub(crate) struct MaterialInput {
-    reservation_id: String,
+    pub(crate) reservation_id: String,
     pub(crate) lot_id: String,
     pub(crate) quantity: String,
-    unit: String,
+    pub(crate) unit: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1108,6 +1108,26 @@ pub fn invoke(
     cursor: i64,
 ) -> anyhow::Result<(Value, bool)> {
     let mut state = load(tx, run, setup, orders)?;
+    if action == Action::GetWip {
+        let order = args["work_order"].as_str().unwrap();
+        if !crate::scenario::identifier(order) {
+            return Ok((error("INVALID_ARGUMENT"), false));
+        }
+        let Some(current) = state.orders.get(order) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        return Ok((
+            crate::wip::read(
+                tx,
+                run,
+                order,
+                current.hold_reason.is_some(),
+                &state.reports,
+                args,
+            )?,
+            false,
+        ));
+    }
     if action == Action::ListOperationReports {
         let order = args["work_order"].as_str().unwrap();
         if !state.orders.contains_key(order) {
