@@ -817,3 +817,19 @@ spec = "acceptance/P9D.md"
 features = ["F08", "F09", "F10", "F11"]
 layers = ["playwright"]
 tests = { playwright = "P9D-UI Find actual output in work in process" }
+
+[[case]]
+id = "P9D-02"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9d_02_move_and_consume_wip" }
+
+[[case]]
+id = "P9D-03"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["playwright"]
+tests = { playwright = "P9D-03 Move and consume a WIP lot" }
