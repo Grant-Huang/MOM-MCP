@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -167,6 +167,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9D-13 Receive serialized finished output", scenario: "cnc@41", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, outputReceipt: true },
   { title: "P9D-17 Recover a quality-held output", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, outputReceipt: true, reconciliation: true, qualityRecovery: true },
   { title: "P9D-19 Replenish after a quality reinspection", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", replenish: true },
+  { title: "P9D-21 Hold WIP across workshops", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, crossShopHold: true },
   { title: "P9D-09 Split and merge WIP lots", scenario: "cnc@39", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, splitWip: true },
   { title: "P9D-07 Reverse a WIP movement", scenario: "cnc@38", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, reverseWip: true },
   { title: "P9D-05 Trace an issued lot and serial", scenario: "cnc@37", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, genealogy: true },
@@ -409,6 +410,28 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       }
       await write("dispatch_operation", { work_order, operation: "assembly", work_center: "ASM-01" });
       await write("start_operation", { work_order, operation: "assembly" });
+      if (crossShopHold) {
+        await write("create_inspection", { work_order, inspection_id: "SHOP-FAIL", specification_version: "QA@1" });
+        await write("record_measurement", { inspection_id: "SHOP-FAIL", characteristic: "width", value: 3, unit: "mm", lower_limit: 1, upper_limit: 2 });
+        expect((await write("complete_inspection", { inspection_id: "SHOP-FAIL" })).inspection.status).toBe("failed");
+        const review = { inspection_id: "SHOP-FAIL", responsible: "QA-01", reason: "workshop isolation", evidence: "QA-LOG" };
+        await write("open_nonconformance", review);
+        await write("place_quality_hold", review);
+        await button("搜索工具").click();
+        await page.getByLabel("匹配工具").selectOption("post_operation_report");
+        await page.getByLabel("JSON 参数").fill(JSON.stringify({
+          work_order, operation: "assembly", quantity: 10, wip_inputs: [source.report.id],
+          expected_cursor: cursor, idempotency_key: "blocked-shop-report",
+        }));
+        await button("调用工具").click();
+        await expect(status).toContainText('"code": "QUALITY_HOLD"');
+        const held = await invoke("get_wip", { work_order, wip_id: source.report.id });
+        expect(held.lots[0]).toMatchObject({ status: "held", blocking: "QUALITY_HOLD", movement: { destination_operation: "assembly" } });
+        expect(held.lots[0].consumed_by).toBeUndefined();
+        const other = await invoke("reconcile_work_order", { work_order: "WO-2" });
+        expect(other.settlement.blocking).not.toContain("QUALITY_HOLD");
+        return;
+      }
       const output = await write("post_operation_report", { work_order, operation: "assembly", quantity: 10, wip_inputs: [source.report.id] });
       const current = await invoke("get_wip", { work_order, wip_id: source.report.id });
       expect(current.lots[0]).toMatchObject({ status: "consumed", consumed_by: output.report.id });

@@ -4772,11 +4772,17 @@ fn run_wip_scenario(version: u64) {
 enum QualityCheckpoint {
     Output,
     Replenishment,
+    CrossShop,
 }
 
 #[test]
 fn p9d_18_replenish_after_reinspection() {
     run_wip_scenario_with_quality(42, Some(QualityCheckpoint::Replenishment));
+}
+
+#[test]
+fn p9d_20_cross_shop_quality_scope() {
+    run_wip_scenario_with_quality(42, Some(QualityCheckpoint::CrossShop));
 }
 
 fn run_wip_scenario_with_quality(version: u64, quality_recovery: Option<QualityCheckpoint>) {
@@ -5097,7 +5103,21 @@ async fn move_and_consume_wip(
         "WIP_QUANTITY_MISMATCH"
     );
     report["quantity"] = json!(4);
-    let consumed = apply("post_operation_report", "consume", report.clone()).await;
+    let consume_key = if quality_recovery == Some(QualityCheckpoint::CrossShop) {
+        Box::pin(recover_quality(
+            client,
+            run,
+            order,
+            "post_operation_report",
+            &report,
+            QualityCheckpoint::CrossShop,
+        ))
+        .await;
+        "quality-recovered"
+    } else {
+        "consume"
+    };
+    let consumed = apply("post_operation_report", consume_key, report.clone()).await;
     assert_eq!(
         consumed["report"]["serial_numbers"],
         first["report"]["serial_numbers"]
@@ -5330,6 +5350,51 @@ async fn recover_quality(
     assert_eq!(account["settlement"]["quality"], "QUALITY_HOLD");
     assert_eq!(account["balanced"], true);
     assert_eq!(account["settlement"]["output_receipts"], json!([]));
+    if checkpoint == QualityCheckpoint::CrossShop {
+        let result = invoke("get_wip", json!({"work_order":order})).await;
+        let lots = result["lots"].as_array().unwrap();
+        assert_eq!(lots.len(), 2);
+        assert!(
+            lots.iter()
+                .all(|lot| lot["status"] == "held" && lot["blocking"] == "QUALITY_HOLD")
+        );
+        let staged = lots
+            .iter()
+            .find(|lot| lot["movement"]["destination_operation"] == "assembly")
+            .unwrap();
+        assert_eq!(staged["wip_id"], arguments["wip_inputs"][0]);
+        let source = lots
+            .iter()
+            .find(|lot| lot.get("movement").is_none())
+            .unwrap();
+        let forbidden = write(
+            "move_wip",
+            "held-source",
+            json!({"work_order":order,"wip_id":source["wip_id"],
+            "destination_operation":"assembly","reason":"next batch"}),
+        )
+        .await;
+        assert_eq!(forbidden["code"], "QUALITY_HOLD", "{forbidden}");
+        assert_eq!(cursor().await, before);
+        let other = invoke("reconcile_work_order", json!({"work_order":"WO-2"})).await;
+        assert_ne!(other["settlement"]["quality"], "QUALITY_HOLD");
+        let selection = json!({"item_id":"FRAME","inspection_plan_id":"QA"});
+        let readiness = invoke(
+            "get_release_readiness",
+            json!({"work_order":"WO-2","definition_selection":selection}),
+        )
+        .await;
+        assert_eq!(readiness["ready"], true, "{readiness}");
+        let released = write(
+            "release_work_order",
+            "unaffected-release",
+            json!({"work_order":"WO-2","definition_selection":selection,
+            "snapshot_fingerprint":readiness["definition_snapshot"]["fingerprint"]}),
+        )
+        .await;
+        assert_eq!(released["ok"], true, "{released}");
+    }
+
     assert_eq!(
         invoke(
             "get_stock_balance",
@@ -5387,6 +5452,21 @@ async fn recover_quality(
     );
     assert_eq!(available["wip"], account["wip"]);
     assert_eq!(available["issues"], account["issues"]);
+    if checkpoint == QualityCheckpoint::CrossShop {
+        let lots = invoke("get_wip", json!({"work_order":order})).await;
+        let lots = lots["lots"].as_array().unwrap();
+        assert_eq!(
+            lots.iter().filter(|lot| lot["status"] == "moved").count(),
+            1
+        );
+        assert_eq!(
+            lots.iter()
+                .filter(|lot| lot["status"] == "available")
+                .count(),
+            1
+        );
+    }
+
     if checkpoint == QualityCheckpoint::Replenishment {
         let stock = invoke(
             "get_stock_balance",
