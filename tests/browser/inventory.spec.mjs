@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -168,6 +168,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9D-17 Recover a quality-held output", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, outputReceipt: true, reconciliation: true, qualityRecovery: true },
   { title: "P9D-19 Replenish after a quality reinspection", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", replenish: true },
   { title: "P9D-21 Hold WIP across workshops", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, crossShopHold: true },
+  { title: "P9D-23 Trace SMT placement through the common stock ledger", scenario: "smt@3", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true },
   { title: "P9D-09 Split and merge WIP lots", scenario: "cnc@39", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, splitWip: true },
   { title: "P9D-07 Reverse a WIP movement", scenario: "cnc@38", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, reverseWip: true },
   { title: "P9D-05 Trace an issued lot and serial", scenario: "cnc@37", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, genealogy: true },
@@ -192,20 +193,21 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     }
     let cursor = 0;
     async function write(name, args) {
-      const result = await invoke(name, { ...args, expected_cursor: cursor, idempotency_key: name + cursor });
+      const expected = sharedSmt && ["smt_load", "smt_aoi", "smt_split"].includes(name) ? {} : { expected_cursor: cursor };
+      const result = await invoke(name, { ...args, ...expected, idempotency_key: name + cursor });
       expect(result.ok, JSON.stringify(result)).toBe(true);
       cursor = result.cursor;
       return result;
     }
 
-    for (const [item_id, base_unit] of [["FRAME", "each"], ["WIRE", "m"]]) {
+    for (const [item_id, base_unit] of [["FRAME", "each"], ["WIRE", sharedSmt ? "each" : "m"]]) {
       await write("create_item", { item_id, base_unit });
       await write("create_item_revision", { item_id, revision: 1, name: item_id });
       await write("activate_revision", { item_id, revision: 1, revision_type: "item" });
     }
     const frame = { item_id: "FRAME", revision: 1 };
     await write("create_bom_revision", frame);
-    await write("set_bom_components", { ...frame, components: { WIRE: { revision: 1, quantity: 2, unit: "m" } } });
+    await write("set_bom_components", { ...frame, components: { WIRE: { revision: 1, quantity: sharedSmt ? 1 : 2, unit: sharedSmt ? "each" : "m" } } });
     await write("activate_revision", { ...frame, revision_type: "bom" });
     await write("create_route_revision", frame);
     const route = { [operation]: { work_center, predecessors: [] } };
@@ -220,10 +222,30 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     const ready = await invoke("get_release_readiness", order);
     await write("release_work_order", { ...order, snapshot_fingerprint: ready.definition_snapshot.fingerprint });
     const receipt = { receipt_id: "RC-1" };
-    const lot = { lot_id: "LOT-1" };
+    const lot = { lot_id: sharedSmt ? "REEL-C" : "LOT-1" };
     await write("create_receipt", { ...receipt, item_id: "WIRE", revision: 1, quantity: "2", requires_inspection: false });
     await write("assign_receipt_tracking", { ...receipt, ...lot, supplier_lot: "SUP-42", location: "RAW-02" });
     await write("post_receipt", receipt);
+    if (sharedSmt) {
+      const reservation_id = "RS-1";
+      await write("reserve_material", { ...lot, reservation_id, work_order, quantity: "2" });
+      await write("pick_material", { reservation_id });
+      await write("issue_material_to_operation", { reservation_id, operation });
+      await write("smt_load", { slot: "F1", reel: lot.lot_id });
+      const placed = await write("smt_place", { panel: "P-A", slot: "F1", reservation_id });
+      await write("smt_aoi", { panel: "P-A", result: "pass" });
+      await write("smt_split", { panel: "P-A" });
+      await button("搜索工具").click();
+      await page.getByLabel("匹配工具").selectOption("trace_serial_backward");
+      await page.getByLabel("JSON 参数").fill(JSON.stringify({ serial_number: "A-01" }));
+      await button("调用工具").click();
+      await expect(status).toContainText('"reservation_id": "RS-1"');
+      const trace = JSON.parse(await status.textContent());
+      expect(trace.edges[0]).toMatchObject({ source: { id: lot.lot_id }, target: { id: placed.report_id }, quantity: "2" });
+      expect((await invoke("get_stock_balance", { item_id: "WIRE", location: "RAW-02" })).balance.on_hand).toBe("0");
+      return;
+    }
+
     if (partial) {
       await write("create_stock_transfer", {
         ...lot, transfer_id: "TR-1", child_lot_id: "LOT-2", quantity: "0.75",

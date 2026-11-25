@@ -977,3 +977,19 @@ spec = "acceptance/P9D.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P9D-21 Hold WIP across workshops" }
+
+[[case]]
+id = "P9D-22"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9d_22_smt_shared_material_and_genealogy" }
+
+[[case]]
+id = "P9D-23"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P9D-23 Trace SMT placement through the common stock ledger" }
