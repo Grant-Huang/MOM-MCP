@@ -27,6 +27,14 @@ export MOM_PROBE_DATABASE="$scratch/probe.sqlite3"
     export MOM_RECOVERY_REPORT="$project/test-results/agentnexus-recovery.json"
     rm -f "$MOM_RECOVERY_REPORT"
     rm -f "$MOM_INDUSTRY_REPORT"
-    cargo test --locked -p an-agents --test mom_industries
+    if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P9D ]]; then
+      export MOM_P9D_CNC_INPUT="$project/test-results/p9d-cnc-closure.json"
+      export MOM_P9D_AGENT_REPORT="$project/test-results/p9d-agentnexus-cnc-closure.json"
+      test -s "$MOM_P9D_CNC_INPUT"
+      cargo test --locked -p an-agents --test mom_industries
+      test -s "$MOM_P9D_AGENT_REPORT"
+    else
+      cargo test --locked -p an-agents --test mom_industries -- --skip p9d_agentnexus_cnc_closure
+    fi
   fi
 )

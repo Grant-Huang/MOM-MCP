@@ -1073,3 +1073,11 @@ spec = "acceptance/P9D.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P9D-33 Release a held SMT reel and resume placement" }
+
+[[case]]
+id = "P9D-34"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration", "agentnexus"]
+tests = { rust-integration = "p9d_34_cnc_single_run_exit_evidence", agentnexus = "p9d_agentnexus_cnc_closure" }

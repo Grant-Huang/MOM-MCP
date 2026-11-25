@@ -54,6 +54,32 @@ async fn connect_options(
     )
 }
 
+tokio::task_local! {
+    static ACCEPTANCE_CALLS: std::cell::RefCell<Vec<Value>>;
+}
+
+async fn capture_p9d_evidence(name: &str, flow: impl std::future::Future<Output = ()>) {
+    let calls = ACCEPTANCE_CALLS
+        .scope(std::cell::RefCell::new(Vec::new()), async {
+            flow.await;
+            ACCEPTANCE_CALLS.with(|calls| calls.take())
+        })
+        .await;
+    let opened = calls
+        .iter()
+        .find(|call| call["tool"] == "open_scenario")
+        .unwrap();
+    let run = &opened["response"]["run_id"];
+    assert!(run.is_string());
+    assert!(
+        calls
+            .iter()
+            .filter(|call| call["tool"] == "call_tool")
+            .all(|call| call["arguments"]["run_id"] == *run)
+    );
+    write_acceptance_evidence(name, json!({"run_id":run,"calls":calls}));
+}
+
 async fn call(client: &RunningService<RoleClient, ()>, name: &str, args: Value) -> Value {
     let action = args.get("name").and_then(Value::as_str);
     let request = CallToolRequestParams::new(name.to_owned())
@@ -63,7 +89,13 @@ async fn call(client: &RunningService<RoleClient, ()>, name: &str, args: Value) 
         .unwrap_or_else(|_| panic!("MCP request timed out after {WAIT:?}: {name} {action:?}"))
         .unwrap();
     assert_ne!(response.is_error, Some(true));
-    response.structured_content.unwrap()
+    let result = response.structured_content.unwrap();
+    let _ = ACCEPTANCE_CALLS.try_with(|calls| {
+        calls
+            .borrow_mut()
+            .push(json!({"tool":name,"arguments":args,"response":result}));
+    });
+    result
 }
 
 #[tokio::test]
@@ -4299,9 +4331,15 @@ fn run_assembly_material_scenario(version: u64) {
                 .enable_all()
                 .build()
                 .unwrap()
-                .block_on(operation_issue_scenarios(&[(
-                    "assembly", version, "WO-E", "build", "CELL-A",
-                )]));
+                .block_on(async move {
+                    let scenarios = [("assembly", version, "WO-E", "build", "CELL-A")];
+                    let flow = operation_issue_scenarios(&scenarios);
+                    if version == 29 {
+                        capture_p9d_evidence("p9d-assembly-closure.json", flow).await;
+                    } else {
+                        flow.await;
+                    }
+                });
         })
         .unwrap()
         .join()
@@ -4989,6 +5027,11 @@ fn p9d_28_coating_handoff_and_quality_recovery() {
     run_wip_scenario_with_quality(45, Some(QualityCheckpoint::CrossShop));
 }
 
+#[test]
+fn p9d_34_cnc_single_run_exit_evidence() {
+    run_wip_scenario_with_quality(45, Some(QualityCheckpoint::Replenishment));
+}
+
 fn run_wip_scenario_with_quality(version: u64, quality_recovery: Option<QualityCheckpoint>) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
@@ -4998,10 +5041,15 @@ fn run_wip_scenario_with_quality(version: u64, quality_recovery: Option<QualityC
                 .enable_all()
                 .build()
                 .unwrap()
-                .block_on(operation_issue_scenarios_with_quality(
-                    &[("cnc", version, "WO-1", "machining", "MACH-01")],
-                    quality_recovery,
-                ));
+                .block_on(async move {
+                    let scenarios = [("cnc", version, "WO-1", "machining", "MACH-01")];
+                    let flow = operation_issue_scenarios_with_quality(&scenarios, quality_recovery);
+                    if version == 45 && quality_recovery == Some(QualityCheckpoint::Replenishment) {
+                        capture_p9d_evidence("p9d-cnc-closure.json", flow).await;
+                    } else {
+                        flow.await;
+                    }
+                });
         })
         .unwrap()
         .join()
@@ -5770,6 +5818,15 @@ async fn recover_quality(
     let before = cursor().await;
     let gated = write(blocked_action, "quality-recovered", arguments.clone()).await;
     assert_eq!(gated["code"], "QUALITY_HOLD", "{gated}");
+    assert_eq!(
+        write(
+            "close_work_order",
+            "close-frozen",
+            json!({"work_order":order})
+        )
+        .await["code"],
+        "QUALITY_HOLD"
+    );
     assert_eq!(cursor().await, before);
     let account = invoke("reconcile_work_order", json!({"work_order":order})).await;
     assert_eq!(account["settlement"]["quality"], "QUALITY_HOLD");
@@ -6737,7 +6794,7 @@ async fn p9d_22_smt_shared_material_and_genealogy() {
 
 #[tokio::test]
 async fn p9d_32_smt_lot_hold_recovery() {
-    smt_shared_material(4).await;
+    capture_p9d_evidence("p9d-smt-lot-holds.json", smt_shared_material(4)).await;
 }
 
 async fn smt_shared_material(version: u64) {
