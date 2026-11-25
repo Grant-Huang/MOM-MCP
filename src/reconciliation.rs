@@ -176,7 +176,11 @@ pub(crate) fn read(
         .filter(|report| report.order == order)
         .partition(|report| !report.reversed);
     let production = |step| {
-        let matching = || active.iter().filter(|report| report.step == step);
+        let matching = || {
+            active
+                .iter()
+                .filter(|report| report.step == step && report.wip_sources.is_empty())
+        };
         (
             matching().map(|report| report.quantity).sum::<usize>(),
             matching()

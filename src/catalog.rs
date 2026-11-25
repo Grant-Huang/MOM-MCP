@@ -29,6 +29,7 @@ pub enum Action {
     ReconcileWorkOrder,
     SplitWip,
     MergeWip,
+    ConsolidateWip,
     MoveWip,
     ListStockLocations,
     GetStockBalance,
@@ -213,6 +214,7 @@ impl Action {
             Self::ReconcileWorkOrder,
             Self::SplitWip,
             Self::MergeWip,
+            Self::ConsolidateWip,
             Self::MoveWip,
             Self::ListStockLocations,
             Self::GetStockBalance,
@@ -294,6 +296,7 @@ impl Action {
             Self::ReconcileWorkOrder => "reconcile_work_order",
             Self::ReceiveWorkOrderOutput => "receive_work_order_output",
             Self::SplitWip => "split_wip",
+            Self::ConsolidateWip => "consolidate_wip",
             Self::MergeWip => "merge_wip",
             Self::ReverseWipMovement => "reverse_wip_movement",
             Self::MoveWip => "move_wip",
@@ -478,6 +481,9 @@ impl Action {
         )
     }
     pub fn spec(self) -> Spec {
+        if self == Self::ConsolidateWip {
+            return crate::wip::consolidation_spec();
+        }
         if matches!(self, Self::HoldStockLot | Self::ReleaseStockLotHold) {
             return crate::lot_quality::spec(self);
         }

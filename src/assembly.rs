@@ -1004,6 +1004,8 @@ fn apply(
                     wip_movement_reversals: Vec::new(),
                     wip_partitions: Vec::new(),
                     wip_inputs: Vec::new(),
+                    wip_sources: Vec::new(),
+                    consolidated_into: None,
                 };
                 let response = json!({"ok":true,"report":report,"serial_numbers":[serial],"reported_quantity":1,"remaining":0});
                 order.build_reports.push(report);

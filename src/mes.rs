@@ -459,6 +459,7 @@ pub fn spec(action: Action) -> Spec {
                 "wip_move":crate::wip::movement_schema(),
                 "wip_movement_reversals":{"type":"array","items":crate::wip::reversal_schema()},
                 "wip_inputs":crate::wip::inputs_schema(),
+                "consolidated_into":crate::inventory::id_schema(),
                 "wip_partitions":{"type":"array","items":crate::wip::partition_schema()},
                 "material_inputs":{"type":"array","items":object(
                     &["reservation_id","lot_id","quantity","unit"],
@@ -663,6 +664,10 @@ pub(crate) struct Report {
     pub(crate) wip_partitions: Vec<crate::wip::Partition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) wip_inputs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) wip_sources: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) consolidated_into: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1217,7 +1222,9 @@ pub fn invoke(
         let reports: Vec<_> = state
             .reports
             .iter()
-            .filter(|report| report.order == order && report.step == step)
+            .filter(|report| {
+                report.order == order && report.step == step && report.wip_sources.is_empty()
+            })
             .collect();
         return Ok((
             json!({"ok":true,"work_order":order,"operation":operation,"reports":reports}),
@@ -1352,7 +1359,7 @@ pub fn invoke(
         let reports: Vec<_> = state
             .reports
             .iter()
-            .filter(|report| report.order == id)
+            .filter(|report| report.order == id && report.wip_sources.is_empty())
             .collect();
         return Ok((
             json!({"ok":true,"work_order":id,"state":order,"on_hand":state.stock,"location":"RAW-01",
@@ -1428,6 +1435,25 @@ pub fn invoke(
             &mut state.reports,
             args,
             cursor + 1,
+        )?
+    } else if action == Action::ConsolidateWip {
+        let order_id = args["work_order"].as_str().unwrap();
+        let Some(order) = state.orders.get(order_id) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        if matches!(
+            order.phase,
+            Phase::Complete | Phase::Closed | Phase::Cancelled
+        ) {
+            return Ok((error("WIP_NOT_AVAILABLE"), false));
+        }
+        crate::wip::consolidate(
+            tx,
+            run,
+            &mut state.reports,
+            args,
+            cursor + 1,
+            order.hold_reason.is_some(),
         )?
     } else if matches!(action, Action::SplitWip | Action::MergeWip) {
         let order_id = args["work_order"].as_str().unwrap();
@@ -1871,7 +1897,9 @@ fn apply(
                 let used: usize = state
                     .reports
                     .iter()
-                    .filter(|report| report.order == id && report.step == 0)
+                    .filter(|report| {
+                        report.order == id && report.step == 0 && report.wip_sources.is_empty()
+                    })
                     .map(|report| report.quantity)
                     .sum();
                 (used + 1..=used + quantity)
@@ -1894,6 +1922,8 @@ fn apply(
                 wip_movement_reversals: Vec::new(),
                 wip_partitions: Vec::new(),
                 wip_inputs: Vec::new(),
+                wip_sources: Vec::new(),
+                consolidated_into: None,
             };
             if order.step == 0 {
                 order.units.extend(report.serial_numbers.iter().cloned());
@@ -1974,6 +2004,8 @@ fn apply(
                 .iter()
                 .any(|later| later.order == id && later.step == report.step && !later.reversed);
             if report.reversed
+                || !report.wip_sources.is_empty()
+                || report.consolidated_into.is_some()
                 || crate::wip::active_partition(report).is_some()
                 || report.wip_move.is_some()
                 || !(same_step || previous_step)
@@ -2015,7 +2047,12 @@ fn apply(
 fn reported_quantity(reports: &[Report], order: &str, step: usize) -> usize {
     reports
         .iter()
-        .filter(|report| report.order == order && report.step == step && !report.reversed)
+        .filter(|report| {
+            report.order == order
+                && report.step == step
+                && !report.reversed
+                && report.wip_sources.is_empty()
+        })
         .map(|report| report.quantity)
         .sum()
 }

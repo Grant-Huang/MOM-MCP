@@ -498,6 +498,8 @@ pub fn invoke(
             wip_movement_reversals: Vec::new(),
             wip_partitions: Vec::new(),
             wip_inputs: Vec::new(),
+            wip_sources: Vec::new(),
+            consolidated_into: None,
         };
         response["report_id"] = json!(report.id);
         state.material_reports.push(report);
