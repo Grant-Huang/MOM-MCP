@@ -1081,3 +1081,35 @@ spec = "acceptance/P9D.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["rust-integration", "agentnexus"]
 tests = { rust-integration = "p9d_34_cnc_single_run_exit_evidence", agentnexus = "p9d_agentnexus_cnc_closure" }
+
+[[case]]
+id = "P10-01"
+phase = "P10"
+spec = "acceptance/P10.md"
+features = ["F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p10_01_cnc_tool_setup_and_reassignment" }
+
+[[case]]
+id = "P10-UI"
+phase = "P10"
+spec = "acceptance/P10.md"
+features = ["F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P10-UI CNC tool setup and report provenance" }
+
+[[case]]
+id = "P10-02"
+phase = "P10"
+spec = "acceptance/P10.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p10_02_cnc_first_article_and_process_inspections" }
+
+[[case]]
+id = "P10-03"
+phase = "P10"
+spec = "acceptance/P10.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["playwright"]
+tests = { playwright = "P10-03 Release CNC first article and process inspection" }

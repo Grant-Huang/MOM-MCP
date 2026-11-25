@@ -7,7 +7,7 @@ export function validateTrace({ map, stages, read }) {
   for (const phase of stages) {
     const path = `acceptance/${phase}.md`;
     const spec = read(`docs/${path}`);
-    const cases = [...spec.matchAll(/^\| (P\d[A-Z]?-\d+) \|/gm)].map((match) => match[1]);
+    const cases = [...spec.matchAll(/^\| (P\d+[A-Z]?-\d+) \|/gm)].map((match) => match[1]);
     for (const id of [`${phase}-UI`, ...cases]) {
       if (expected.has(id) || !id.startsWith(`${phase}-`)) {
         throw new Error(`Duplicate or misplaced acceptance case: ${id}`);

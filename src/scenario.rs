@@ -424,6 +424,32 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         "work in process split and merge require movement reversal and genealogy"
     );
     anyhow::ensure!(
+        definition.capabilities.contains(&Action::SetOperationTool)
+            == definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| !setup.qualified_tools.is_empty()),
+        "operation tool setup requires qualified tools"
+    );
+    anyhow::ensure!(
+        !definition
+            .manufacturing
+            .as_ref()
+            .is_some_and(|setup| setup.machining_inspections)
+            || ([
+                Action::SetOperationTool,
+                Action::PostOperationReport,
+                Action::CompleteOperation,
+                Action::CreateInspection,
+                Action::CompleteInspection,
+                Action::ActivateInspectionPlanRevision
+            ]
+            .iter()
+            .all(|action| definition.capabilities.contains(action))
+                && !definition.capabilities.contains(&Action::ReportOperation)),
+        "machining inspections require tool setups, versioned inspections and controlled reporting"
+    );
+    anyhow::ensure!(
         !definition.capabilities.contains(&Action::CompleteCoating)
             || definition.capabilities.contains(&Action::ConsolidateWip),
         "coating handoff requires work in process consolidation"
@@ -736,6 +762,10 @@ impl Scenarios {
                  specification_version TEXT NOT NULL,
                  PRIMARY KEY (run, id)
              );
+             CREATE TABLE IF NOT EXISTS quality_machining_inspections (
+                 run TEXT NOT NULL, inspection TEXT NOT NULL, report TEXT NOT NULL,
+                 kind TEXT NOT NULL, PRIMARY KEY(run,inspection)
+             );
              CREATE TABLE IF NOT EXISTS quality_measurements (
                  run TEXT NOT NULL, inspection TEXT NOT NULL, characteristic TEXT NOT NULL,
                  value REAL NOT NULL, unit TEXT NOT NULL, lower_limit REAL NOT NULL,
@@ -812,6 +842,8 @@ impl Scenarios {
             include_str!("../fixtures/cnc-lot-quality-scope.json"),
             include_str!("../fixtures/cnc-cross-source-wip.json"),
             include_str!("../fixtures/cnc-coating-handoff.json"),
+            include_str!("../fixtures/cnc-tool-setup.json"),
+            include_str!("../fixtures/cnc-machining-inspections.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-closed-loop.json"),
@@ -1169,6 +1201,14 @@ impl Scenarios {
         {
             spec.input["properties"]["receipt_id"] = catalog::text();
         }
+        if matches!(action, Action::CreateInspection | Action::GetInspection)
+            && definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| setup.machining_inspections)
+        {
+            crate::quality::add_machining_inspection_schema(action, &mut spec);
+        }
         if action == Action::PostOperationReport && !definition.issued_report_inputs() {
             spec.input["properties"]
                 .as_object_mut()
@@ -1338,7 +1378,16 @@ impl Scenarios {
                 } else if let Some(actual) = actual
                     && matches!(actual.status, "dispatched" | "running")
                     && actual.blocking.is_none()
-                    && actual.work_center.as_deref() == center
+                    && (actual.work_center.as_deref() == center
+                        || definition.manufacturing.as_ref().is_some_and(|setup| {
+                            !setup.qualified_tools.is_empty()
+                                && operation == crate::mes::MATERIAL_INPUT_OPERATION
+                                && center.zip(actual.work_center.as_deref()).is_some_and(
+                                    |(primary, assigned)| {
+                                        crate::mes::eligible_center(setup, primary, assigned)
+                                    },
+                                )
+                        }))
                 {
                     Ok(actual.work_center.clone())
                 } else {
