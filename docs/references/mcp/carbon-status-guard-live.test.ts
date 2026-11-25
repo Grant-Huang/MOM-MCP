@@ -229,14 +229,18 @@ it.each(["status guard", "release workflow"] as const)(
 						.is("parentMaterialId", null)
 						.single();
 					expect(method.error).toBeNull();
-					const operation = await admin.from("jobOperation").insert({
-						jobId: id,
-						jobMakeMethodId: method.data!.id,
-						processId,
-						description: "Adapter release fixture",
-						companyId: company,
-						createdBy: actorId,
-					});
+					const operation = await admin
+						.from("jobOperation")
+						.insert({
+							jobId: id,
+							jobMakeMethodId: method.data!.id,
+							processId,
+							description: "Adapter release fixture",
+							companyId: company,
+							createdBy: actorId,
+						})
+						.select("id")
+						.single();
 					expect(operation.error).toBeNull();
 
 					const setQuantity = async (quantity: number) => {
@@ -252,14 +256,96 @@ it.each(["status guard", "release workflow"] as const)(
 					await setQuantity(0);
 					await expectBlocked("nothing to make");
 					await setQuantity(1);
-					const result = await releaseJobs(ctx, { jobIds: [id] });
-					expect(result.error).toBeNull();
-					expect(result.data?.failed).toEqual([]);
-					expect(result.data?.warnings).toEqual([]);
-					expect(result.data?.released.map((job) => job.jobId)).toEqual([id]);
-					expect(result.data?.scheduled).toBe(true);
-					read("Ready");
 
+					const settings = await admin
+						.from("companySettings")
+						.select("requireBackflushStorageUnit")
+						.eq("id", company)
+						.single();
+					expect(settings.error).toBeNull();
+					const originalStrict = settings.data!.requireBackflushStorageUnit;
+					const setStrict = async (value: boolean) => {
+						const changed = await admin
+							.from("companySettings")
+							.update({ requireBackflushStorageUnit: value })
+							.eq("id", company)
+							.select("id")
+							.single();
+						expect(changed.error).toBeNull();
+					};
+					const bin = await admin
+						.from("storageUnit")
+						.insert({
+							name: `adapter-bin-${randomUUID()}`,
+							locationId: releaseLocationId,
+							companyId: company,
+							createdBy: actorId,
+							active: true,
+						})
+						.select("id")
+						.single();
+					expect(bin.error).toBeNull();
+					const workCenter = await admin
+						.from("workCenter")
+						.insert({
+							name: `adapter-center-${randomUUID()}`,
+							locationId: releaseLocationId,
+							companyId: company,
+							createdBy: actorId,
+							active: true,
+						})
+						.select("id")
+						.single();
+					expect(workCenter.error).toBeNull();
+					const item = await admin
+						.from("item")
+						.select("id,unitOfMeasureCode")
+						.eq("companyId", company)
+						.neq("id", sample.data!.itemId)
+						.neq("itemTrackingType", "Non-Inventory")
+						.limit(1)
+						.single();
+					expect(item.error).toBeNull();
+					const material = await admin
+						.from("jobMaterial")
+						.insert({
+							jobId: id,
+							jobMakeMethodId: method.data!.id,
+							jobOperationId: operation.data!.id,
+							itemId: item.data!.id,
+							itemType: "Part",
+							methodType: "Pull from Inventory",
+							description: "Adapter pull-from fixture",
+							quantity: 1,
+							estimatedQuantity: 1,
+							unitOfMeasureCode: item.data!.unitOfMeasureCode,
+							companyId: company,
+							createdBy: actorId,
+						})
+						.select("id")
+						.single();
+					expect(material.error).toBeNull();
+					try {
+						await setStrict(true);
+						await expectBlocked("set a Pull From storage unit");
+						const updated = await admin
+							.from("jobMaterial")
+							.update({ storageUnitId: bin.data!.id })
+							.eq("id", material.data!.id)
+							.eq("companyId", company)
+							.select("id")
+							.single();
+						expect(updated.error).toBeNull();
+						const ready = await releaseJobs(ctx, { jobIds: [id] });
+						expect(ready.error).toBeNull();
+						expect(ready.data?.failed).toEqual([]);
+						expect(ready.data?.warnings).toEqual([]);
+						expect(ready.data?.scheduled).toBe(true);
+						expect(ready.data?.released.map((job) => job.jobId)).toEqual([id]);
+						read("Ready");
+					} finally {
+						await setStrict(originalStrict);
+					}
 					const released = await caller
 						.from("job")
 						.select("releasedDate")
