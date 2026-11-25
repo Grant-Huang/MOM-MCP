@@ -311,6 +311,21 @@ pub(crate) fn reported_material_quantity(
     }))
 }
 
+pub(crate) fn genealogy(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    action: Action,
+    args: &Map<String, Value>,
+) -> anyhow::Result<Value> {
+    let reports: Vec<_> = load(tx, run, setup)?
+        .orders
+        .into_values()
+        .flat_map(|order| order.build_reports)
+        .collect();
+    crate::genealogy::read(tx, run, action, &reports, args)
+}
+
 fn has_build(order: &Order) -> bool {
     !order.installed.is_empty() || order.build_reports.iter().any(|report| !report.reversed)
 }

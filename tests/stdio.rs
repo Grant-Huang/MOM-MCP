@@ -4280,9 +4280,32 @@ async fn p9c_14_operation_material_reversals() {
     operation_issue_scenarios(&[("cnc", 33, "WO-1", "machining", "MACH-01")]).await;
 }
 
-#[tokio::test]
-async fn p9c_16_assembly_material_reconciliation() {
-    operation_issue_scenarios(&[("assembly", 27, "WO-E", "build", "CELL-A")]).await;
+#[test]
+fn p9c_16_assembly_material_reconciliation() {
+    run_assembly_material_scenario(27);
+}
+
+#[test]
+fn p9d_30_assembly_shared_closed_loop() {
+    run_assembly_material_scenario(29);
+}
+
+fn run_assembly_material_scenario(version: u64) {
+    // The inventory and quality flows compose large futures in debug builds.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(operation_issue_scenarios(&[(
+                    "assembly", version, "WO-E", "build", "CELL-A",
+                )]));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[tokio::test]
@@ -4455,6 +4478,7 @@ async fn assembly_material_reconciliation(
     order: &str,
     operation: &str,
     center: &str,
+    closed_loop: bool,
 ) {
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
@@ -4602,6 +4626,53 @@ async fn assembly_material_reconciliation(
     report["material_inputs"] = json!({"RS-2":"2"});
     apply("post_operation_report", "report-assembly-again", report).await;
     apply("complete_operation", "complete-assembly", build).await;
+    if closed_loop {
+        let forward = invoke(
+            "trace_lot_forward",
+            json!({"lot_id":"LOT-1","work_order":order}),
+        )
+        .await;
+        let edges = forward["edges"].as_array().unwrap();
+        assert_eq!(
+            edges
+                .iter()
+                .filter(|edge| edge["kind"] == "material_input"
+                    && edge["status"] == "active"
+                    && edge["reservation_id"] == "RS-2")
+                .count(),
+            1
+        );
+        assert_eq!(
+            edges
+                .iter()
+                .filter(|edge| edge["kind"] == "material_input"
+                    && edge["status"] == "reversed"
+                    && edge["reservation_id"] == "RS-1")
+                .count(),
+            1
+        );
+        let backward = invoke(
+            "trace_serial_backward",
+            json!({"serial_number":"UNIT-E-01"}),
+        )
+        .await;
+        assert!(
+            backward["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|edge| edge["kind"] == "serial_output" && edge["status"] == "active")
+        );
+        assert_eq!(
+            invoke(
+                "trace_lot_forward",
+                json!({"lot_id":"LOT-1","work_order":"WO-L"})
+            )
+            .await["edges"],
+            json!([])
+        );
+        Box::pin(assembly_quality_close(client, run, order)).await;
+    }
     assert_eq!(stock("RAW-02").await["balance"]["on_hand"], "0");
     apply("create_receipt","spare-receipt",json!({"receipt_id":"RC-2","item_id":"WIRE","revision":1,"quantity":"1","requires_inspection":false})).await;
     apply(
@@ -4620,6 +4691,124 @@ async fn assembly_material_reconciliation(
         )
         .await["movements"][0]["receipt_id"],
         "RC-2"
+    );
+}
+
+async fn assembly_quality_close(client: &RunningService<RoleClient, ()>, run: &Value, order: &str) {
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["expected_cursor"] = cursor().await;
+        args["idempotency_key"] = json!(key);
+        business(client, run, name, args).await
+    };
+    let header = json!({"work_order":order});
+    assert_eq!(
+        mes(
+            client,
+            run,
+            "assembly_start_test",
+            order,
+            "start-final",
+            json!({})
+        )
+        .await["ok"],
+        true
+    );
+    let tick = advance(client, run, 10).await;
+    assert_eq!(tick["ok"], true, "{tick}");
+    let result = mes(
+        client,
+        run,
+        "assembly_finish_test",
+        order,
+        "finish-final",
+        json!({}),
+    )
+    .await;
+    assert_eq!(result["state"]["phase"], "passed", "{result}");
+    let inspect = async |id: &str, value: f64, prior: Option<&str>| {
+        let mut args =
+            json!({"work_order":order,"inspection_id":id,"specification_version":"QA@1"});
+        if let Some(prior) = prior {
+            args["reinspection_of"] = json!(prior);
+        }
+        assert_eq!(
+            write("create_inspection", &format!("create-{id}"), args).await["ok"],
+            true
+        );
+        assert_eq!(write("record_measurement", &format!("measure-{id}"),json!({"inspection_id":id,"characteristic":"width","unit":"mm","value":value,"lower_limit":1,"upper_limit":2})).await["ok"],true);
+        write(
+            "complete_inspection",
+            &format!("finish-{id}"),
+            json!({"inspection_id":id}),
+        )
+        .await
+    };
+    assert_eq!(
+        inspect("FAIL", 3.0, None).await["inspection"]["status"],
+        "failed"
+    );
+    let review = json!({"inspection_id":"FAIL","responsible":"QA-01","reason":"dimensional review","evidence":"LOG-1"});
+    for (action, key) in [
+        ("open_nonconformance", "open"),
+        ("place_quality_hold", "hold"),
+    ] {
+        assert_eq!(write(action, key, review.clone()).await["ok"], true);
+    }
+    let before = cursor().await;
+    for action in ["complete_work_order", "close_work_order"] {
+        assert_eq!(
+            write(action, action, header.clone()).await["code"],
+            "QUALITY_HOLD"
+        );
+    }
+    assert_eq!(
+        mes(
+            client,
+            run,
+            "assembly_deliver",
+            order,
+            "deliver-final",
+            json!({})
+        )
+        .await["code"],
+        "QUALITY_HOLD"
+    );
+    assert_eq!(cursor().await, before);
+    assert_eq!(
+        inspect("PASS", 1.5, Some("FAIL")).await["inspection"]["status"],
+        "passed"
+    );
+    let mut disposition = review.clone();
+    disposition["decision"] = json!("reinspection");
+    disposition["reinspection_id"] = json!("PASS");
+    assert_eq!(
+        write("disposition_nonconformance", "dispose", disposition).await["ok"],
+        true
+    );
+    assert_eq!(
+        write("release_quality_hold", "release-hold", review).await["ok"],
+        true
+    );
+    assert_eq!(
+        write("complete_work_order", "complete", header.clone()).await["status"],
+        "completed"
+    );
+    assert_eq!(
+        mes(
+            client,
+            run,
+            "assembly_deliver",
+            order,
+            "deliver-final",
+            json!({})
+        )
+        .await["ok"],
+        true
+    );
+    assert_eq!(
+        write("close_work_order", "close", header).await["status"],
+        "closed"
     );
 }
 
@@ -6116,7 +6305,10 @@ async fn operation_issue_scenarios_with_quality(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
-    let (client, _child) = connect_mode(&db, "0", true).await;
+    let needs_clock_control = scenarios
+        .iter()
+        .any(|(scenario, version, ..)| *scenario == "assembly" && *version == 29);
+    let (client, _child) = connect_options(&db, "0", true, needs_clock_control).await;
     timeout(Duration::from_secs(30), Box::pin(async {
         for &(scenario,version,order,operation,center) in scenarios {
             let opened=call(&client,"open_scenario",json!({"scenario_id":scenario,"version":version})).await;
@@ -6177,8 +6369,8 @@ async fn operation_issue_scenarios_with_quality(
                 Box::pin(partial_lot_transfer(&client,run,order,operation,center)).await;
                 continue;
             }
-            if scenario == "assembly" && version == 27 {
-                Box::pin(assembly_material_reconciliation(&client, run, order, operation, center)).await;
+            if scenario == "assembly" && matches!(version, 27 | 29) {
+                Box::pin(assembly_material_reconciliation(&client, run, order, operation, center, version == 29)).await;
                 continue;
             }
             if version == 32 {

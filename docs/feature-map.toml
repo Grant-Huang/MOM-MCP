@@ -1041,3 +1041,19 @@ spec = "acceptance/P9D.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P9D-29 Complete coating and hand off split WIP" }
+
+[[case]]
+id = "P9D-30"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9d_30_assembly_shared_closed_loop" }
+
+[[case]]
+id = "P9D-31"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P9D-31 Trace corrected assembly inputs" }

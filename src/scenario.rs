@@ -389,11 +389,18 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             .iter()
             .any(|action| action.is_genealogy_action())
             || definition.capabilities.contains(&Action::MoveWip)
+            || (definition
+                .assembly
+                .as_ref()
+                .is_some_and(|setup| setup.issued_report_inputs)
+                && definition
+                    .capabilities
+                    .contains(&Action::PostOperationReport))
             || definition
                 .smt
                 .as_ref()
                 .is_some_and(|setup| setup.shared_material),
-        "genealogy requires recorded material inputs and work-in-process movement"
+        "genealogy requires recorded material inputs"
     );
     anyhow::ensure!(
         !definition
@@ -807,6 +814,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-coating-handoff.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
+            include_str!("../fixtures/assembly-closed-loop.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
@@ -1837,6 +1845,18 @@ impl Scenarios {
                 tx.commit()?;
             }
             return Ok(Ok(response));
+        }
+        if action.is_genealogy_action()
+            && let Some(setup) = definition.assembly.as_ref()
+        {
+            if let Some(order) = parameters.get("work_order").and_then(Value::as_str)
+                && !definition.work_orders.iter().any(|id| id == order)
+            {
+                return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
+            }
+            return Ok(Ok(crate::assembly::genealogy(
+                &tx, run, setup, action, parameters,
+            )?));
         }
         if let Some(setup) = shared_smt {
             if action.is_genealogy_action() {

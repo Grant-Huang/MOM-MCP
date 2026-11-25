@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -160,6 +160,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9C-13 Reverse a posted receipt", scenario: "cnc@32", work_order: "WO-1", operation: "machining", work_center: "MACH-01", receiptReversal: true },
   { title: "P9C-15 Reverse issue and return movements", scenario: "cnc@33", work_order: "WO-1", operation: "machining", work_center: "MACH-01", operationReversal: true },
   { title: "P9C-17 Reconcile issued material in assembly", scenario: "assembly@27", work_order: "WO-E", operation: "build", work_center: "CELL-A", assemblyLedger: true },
+  { title: "P9D-31 Trace corrected assembly inputs", scenario: "assembly@29", work_order: "WO-E", operation: "build", work_center: "CELL-A", assemblyLedger: true, assemblyClosure: true },
   { title: "P9C-19 Transfer and reverse a partial lot", scenario: "cnc@34", work_order: "WO-1", operation: "machining", work_center: "MACH-01", partial: true },
   { title: "P9D-UI Find actual output in work in process", scenario: "cnc@35", work_order: "WO-1", operation: "machining", work_center: "MACH-01", wip: true },
   { title: "P9D-11 Reconcile CNC material and WIP", scenario: "cnc@40", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, reconcileWip: true },
@@ -647,6 +648,16 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       expect(actual.report.material_inputs).toMatchObject([{ lot_id: "LOT-1", quantity: "2" }]);
       cursor = actual.cursor;
       await write("reverse_operation_report", { work_order, report_id: actual.report.id, reason: "incorrect report" });
+      if (assemblyClosure) {
+        await page.getByLabel("匹配工具").selectOption("trace_lot_forward");
+        await page.getByLabel("JSON 参数").fill(JSON.stringify({ work_order, lot_id: "LOT-1" }));
+        await button("调用工具").click();
+        await expect(status).toContainText('"status": "reversed"');
+        const trace = JSON.parse(await status.textContent());
+        expect(trace.edges).toContainEqual(expect.objectContaining({ kind: "material_input", reservation_id: "RS-1", status: "reversed" }));
+        const backward = await invoke("trace_serial_backward", { serial_number: actual.report.serial_numbers[0] });
+        expect(backward.edges).toContainEqual(expect.objectContaining({ kind: "serial_output", status: "reversed" }));
+      }
       await write("return_unused_material", { ...reservation, movement_id: "RET-1", quantity: "2", reason: "unused" });
       const balance = await invoke("get_stock_balance", { item_id: "WIRE", location: "RAW-02" });
       expect(balance.balance).toMatchObject({ on_hand: "2", available: "2" });
