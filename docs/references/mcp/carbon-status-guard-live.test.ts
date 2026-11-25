@@ -199,7 +199,28 @@ it.each(["status guard", "release workflow"] as const)(
 					.single();
 				expect(process.error).toBeNull();
 				const processId = process.data!.id;
+				const expectBlocked = async (reason: string) => {
+					const blocked = await releaseJobs(ctx, { jobIds: [id] });
+					expect(blocked.error).toBeNull();
+					expect(blocked.data?.released).toEqual([]);
+					expect(blocked.data?.failed).toEqual([
+						expect.objectContaining({
+							jobId: id,
+							message: expect.stringContaining(reason),
+						}),
+					]);
+					expect(raiseMoment).not.toHaveBeenCalled();
+					const row = await caller
+						.from("job")
+						.select("releasedDate")
+						.eq("id", id)
+						.single();
+					expect(row.error).toBeNull();
+					expect(row.data?.releasedDate).toBeNull();
+					read("Draft");
+				};
 				try {
+					await expectBlocked("no operations");
 					const method = await admin
 						.from("jobMakeMethod")
 						.select("id")
@@ -218,6 +239,19 @@ it.each(["status guard", "release workflow"] as const)(
 					});
 					expect(operation.error).toBeNull();
 
+					const setQuantity = async (quantity: number) => {
+						const updated = await admin
+							.from("job")
+							.update({ quantity })
+							.eq("id", id)
+							.eq("companyId", company)
+							.select("id")
+							.single();
+						expect(updated.error).toBeNull();
+					};
+					await setQuantity(0);
+					await expectBlocked("nothing to make");
+					await setQuantity(1);
 					const result = await releaseJobs(ctx, { jobIds: [id] });
 					expect(result.error).toBeNull();
 					expect(result.data?.failed).toEqual([]);
