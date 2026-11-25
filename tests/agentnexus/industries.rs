@@ -232,3 +232,80 @@ async fn p8c_agentnexus_cnc_des_recovery() {
         std::fs::write(output, serde_json::to_vec_pretty(&json!({"agent_trace":agent.trace,"replay_verified":true})).unwrap()).unwrap();
     }
 }
+
+fn rebind_run_values(value: &mut Value, bindings: &std::collections::BTreeMap<String, String>) {
+    match value {
+        Value::Object(fields) => fields.values_mut().for_each(|value| rebind_run_values(value, bindings)),
+        Value::Array(items) => items.iter_mut().for_each(|value| rebind_run_values(value, bindings)),
+        Value::String(text) => {
+            if let Some(rebound) = bindings.get(text) {
+                *text = rebound.clone();
+            }
+        }
+        _ => {}
+    }
+}
+
+#[tokio::test]
+async fn p9d_agentnexus_cnc_closure() {
+    let input = std::env::var("MOM_P9D_CNC_INPUT").unwrap();
+    let evidence: Value = serde_json::from_slice(&std::fs::read(input).unwrap()).unwrap();
+    let original_run = &evidence["run_id"];
+    let calls = evidence["calls"].as_array().unwrap();
+    let (open, calls) = calls.split_first().unwrap();
+    assert_eq!(open["tool"], "open_scenario");
+    assert_eq!(open["arguments"]["scenario_id"], "cnc");
+    assert_eq!(open["arguments"]["version"], 45);
+
+    let bindings = [
+        ("open_scenario", "workspace_write"),
+        ("get_run", "read_only"),
+        ("call_tool", "workspace_write"),
+    ].map(|(name, effect)| json!({
+        "name":name,"effect":effect,"description":name,"capability_id":format!("mom.closure.{name}")
+    }));
+    let db = format!("{}-closure.sqlite3", std::env::var("MOM_PROBE_DATABASE").unwrap());
+    let config: McpServerConfig = serde_json::from_value(json!({
+        "id":"mom","transport":"stdio","command":std::env::var("MOM_PROBE_BINARY").unwrap(),
+        "args":["stdio","--scenario-tools","--db",db],"timeout_ms":5000,"tools":bindings
+    })).unwrap();
+    let mut session = Session { tools: connect(&[config]).await.unwrap(), trace: vec![] };
+    let opened = session.call("open_scenario", open["arguments"].clone()).await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    assert!(run.is_string() && run != original_run);
+    let mut run_values = std::collections::BTreeMap::from([(
+        original_run.as_str().unwrap().to_owned(), run.as_str().unwrap().to_owned(),
+    )]);
+    for entry in calls {
+        let tool = entry["tool"].as_str().unwrap();
+        assert!(matches!(tool, "get_run" | "call_tool"), "{tool}");
+        let mut arguments = entry["arguments"].clone();
+        assert_eq!(arguments["run_id"], *original_run);
+        rebind_run_values(&mut arguments, &run_values);
+        let actual = session.call(tool, arguments).await;
+        let mut expected = entry["response"].clone();
+        if entry["arguments"]["name"] == "get_release_readiness" && expected["ready"] == true {
+            let fingerprint = |response: &Value| response["definition_snapshot"]["fingerprint"].as_str().unwrap().to_owned();
+            let original = fingerprint(&expected);
+            let current = fingerprint(&actual);
+            if let Some(previous) = run_values.insert(original, current.clone()) {
+                assert_eq!(previous, current);
+            }
+        }
+        rebind_run_values(&mut expected, &run_values);
+        assert_eq!(actual, expected, "{tool} {}", entry["arguments"]["name"]);
+    }
+    let final_state = session.business(run, "reconcile_work_order", json!({"work_order":"WO-1"})).await;
+    assert_eq!(final_state["balanced"], true);
+    let settlement = &final_state["settlement"];
+    assert_eq!(settlement["closed"], true);
+    assert_eq!(settlement["differences"], json!([]));
+    assert_eq!(settlement["blocking"], json!([]));
+    assert_eq!(settlement["production"]["received"], 10);
+    assert_eq!(settlement["production"]["wip_open"], 0);
+    let output = std::env::var("MOM_P9D_AGENT_REPORT").unwrap();
+    std::fs::write(output, serde_json::to_vec_pretty(&json!({
+        "run_id":run,"agent_trace":session.trace,"settlement":settlement
+    })).unwrap()).unwrap();
+}
