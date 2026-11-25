@@ -2,6 +2,10 @@
 # Run from the OpenMES backend directory after installing its Composer dependencies.
 set -eu
 umask 077
+if [ "${MOM_OPENMES_LIFECYCLE:-0}" = 1 ] && [ ! -x "${MOM_OPENMES_ADAPTER_SMOKE:-}" ]; then
+    echo "MOM_OPENMES_LIFECYCLE requires MOM_OPENMES_ADAPTER_SMOKE" >&2
+    exit 1
+fi
 sandbox=$(mktemp -d)
 server_pid=
 cleanup() {
@@ -41,27 +45,35 @@ $actor = createOperator($line);
 $witness = createOperator($otherLine);
 $visible = WorkOrder::factory()->create(['line_id' => $line->id]);
 $hidden = WorkOrder::factory()->create(['line_id' => $otherLine->id]);
-file_put_contents(getenv('ADAPTER_FIXTURE'), json_encode([
+$fixture = [
     'visible' => $visible->id,
     'hidden' => $hidden->id,
     'token' => $actor->createToken('adapter-http-sample')->plainTextToken,
     'witness_token' => $witness->createToken('adapter-http-witness')->plainTextToken,
-], JSON_THROW_ON_ERROR));
+];
+if (getenv('MOM_OPENMES_LIFECYCLE') === '1') {
+    $admin = User::factory()->create();
+    $admin->assignRole('Admin');
+    $fixture['accept_token'] = $admin->createToken('adapter-source-transition')->plainTextToken;
+}
+file_put_contents(getenv('ADAPTER_FIXTURE'), json_encode($fixture, JSON_THROW_ON_ERROR));
 PHP
 (cd public && exec php -S 127.0.0.1:18765 ../vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php) > "$sandbox/server.log" 2>&1 &
 server_pid=$!
 if ! php <<'PHP'
 <?php
 $fixture = json_decode(file_get_contents(getenv('ADAPTER_FIXTURE')), true, flags: JSON_THROW_ON_ERROR);
-function request(int $id, ?string $token): array {
+function request(int $id, ?string $token, bool $accept = false): array {
     $headers = "Accept: application/json\r\n";
     if ($token !== null) {
         $headers .= "Authorization: Bearer $token\r\n";
     }
     $context = stream_context_create(['http' => [
+        'method' => $accept ? 'POST' : 'GET',
         'header' => $headers, 'ignore_errors' => true, 'timeout' => 3, 'follow_location' => 0,
     ]]);
-    $stream = @fopen("http://127.0.0.1:18765/api/v1/work-orders/$id", 'r', false, $context);
+    $path = "http://127.0.0.1:18765/api/v1/work-orders/$id" . ($accept ? '/accept' : '');
+    $stream = @fopen($path, 'r', false, $context);
     if ($stream === false) {
         return [0, null];
     }
@@ -101,28 +113,40 @@ foreach ([
     echo json_encode($evidence, JSON_THROW_ON_ERROR), PHP_EOL;
 }
 
+function checkAdapter(string $adapter, int $visible, int $hidden, string $token, string $expected): void {
+    $env = getenv();
+    unset($env['MOM_ODOO_WITNESS_TOKEN']);
+    $env['MOM_SAMPLE_TOKEN'] = $token;
+    $process = proc_open(
+        [$adapter, 'openmes', 'http://127.0.0.1:18765', (string) $visible, (string) $hidden, $expected],
+        [STDIN, STDOUT, STDERR],
+        $pipes,
+        null,
+        $env,
+    );
+    if (!is_resource($process) || proc_close($process) !== 0) {
+        throw new RuntimeException("OpenMES Rust Adapter smoke check failed for $expected");
+    }
+}
+
 $adapter = getenv('MOM_OPENMES_ADAPTER_SMOKE');
 if ($adapter !== false) {
     if (!is_file($adapter) || !is_executable($adapter)) {
         throw new RuntimeException('MOM_OPENMES_ADAPTER_SMOKE must name an executable');
     }
-    foreach ([
-        [$fixture['visible'], $fixture['hidden'], $fixture['token']],
-        [$fixture['hidden'], $fixture['visible'], $fixture['witness_token']],
-    ] as [$visible, $hidden, $token]) {
-        $env = getenv();
-        unset($env['MOM_ODOO_WITNESS_TOKEN']);
-        $env['MOM_SAMPLE_TOKEN'] = $token;
-        $process = proc_open(
-            [$adapter, 'openmes', 'http://127.0.0.1:18765', (string) $visible, (string) $hidden, 'PENDING'],
-            [STDIN, STDOUT, STDERR],
-            $pipes,
-            null,
-            $env,
-        );
-        if (!is_resource($process) || proc_close($process) !== 0) {
-            throw new RuntimeException('OpenMES Rust Adapter smoke check failed');
+    $visible = $fixture['visible'];
+    $hidden = $fixture['hidden'];
+    checkAdapter($adapter, $visible, $hidden, $fixture['token'], 'PENDING');
+    checkAdapter($adapter, $hidden, $visible, $fixture['witness_token'], 'PENDING');
+
+    if (isset($fixture['accept_token'])) {
+        [$status] = request($visible, $fixture['accept_token'], accept: true);
+        if ($status !== 200) {
+            throw new RuntimeException("OpenMES acceptance expected HTTP 200, received $status");
         }
+        checkAdapter($adapter, $visible, $hidden, $fixture['token'], 'ACCEPTED');
+        checkAdapter($adapter, $hidden, $visible, $fixture['witness_token'], 'PENDING');
+        echo "OpenMES lifecycle: PENDING -> ACCEPTED confirmed by the read-only adapter", PHP_EOL;
     }
 }
 PHP

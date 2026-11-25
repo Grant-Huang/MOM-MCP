@@ -65,6 +65,8 @@ Odoo 已观测到的空数组和 OpenMES 的 403／404 须分别解释。适配�
 
 要在同一组样本上复跑 Rust Adapter，先在 MOM-MCP 执行 `cargo build --locked --example external_order_smoke`，再在 OpenMES backend 运行上述脚本，并用环境变量 `MOM_OPENMES_ADAPTER_SMOKE` 指定该二进制在同一运行环境中的绝对路径。脚本在六项 HTTP 检查后交换两套 Operator 身份。固定 OpenMES 版本和 PHP 8.5.13 下，两次 Rust 直连均投影本产线的 `PENDING` 工单，并将另一产线的 403 归为 `NotVisible`。
 
+在同一命令额外设置 `MOM_OPENMES_LIFECYCLE=1`，可验证实际来源状态转换。脚本只在新建的隔离 SQLite 实例中授权临时 Admin 接受第一张合成工单。转换前后分别用原 Operator 凭据读取相同工单 ID，Adapter 读回 `PENDING → ACCEPTED`。另一条产线工单保持 `PENDING`，两个方向跨产线仍返回 `NotVisible`。固定 OpenMES 版本、PHP 8.5.13 和 MOM-MCP `8298bea` 的 Rust 示例实测通过。
+
 AgentNexus `8debd3e` 已合并 M2-5 远程 DES 浏览器验收。其 DES Observe 当前按 `world_id` 读取已发布的模拟快照。生产工单读取需要 M3 绑定与对象选择契约，联审需确认生产身份、授权范围、适配调用位置和响应错误归属。 [DES Observe 实现](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/8debd3e/crates/server/src/mom_world_des.rs#L680)
 
 ## Carbon 样本验证
