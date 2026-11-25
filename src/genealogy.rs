@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::Transaction;
 use serde::Serialize;
@@ -126,11 +126,30 @@ pub(crate) fn read(
         .iter()
         .filter(|report| report.step == 0 && order.is_none_or(|order| report.order == order))
     {
+        let consolidated = !report.wip_sources.is_empty();
+        let source_serials: BTreeSet<_> = lot
+            .filter(|_| consolidated)
+            .into_iter()
+            .flat_map(|lot| {
+                reports.iter().filter(move |source| {
+                    report.wip_sources.contains(&source.id)
+                        && source
+                            .material_inputs
+                            .iter()
+                            .any(|input| input.lot_id == lot)
+                })
+            })
+            .flat_map(|source| source.serial_numbers.iter())
+            .collect();
         if lot.is_some_and(|lot| {
-            !report
-                .material_inputs
-                .iter()
-                .any(|input| input.lot_id == lot)
+            if consolidated {
+                source_serials.is_empty()
+            } else {
+                !report
+                    .material_inputs
+                    .iter()
+                    .any(|input| input.lot_id == lot)
+            }
         }) || serial.is_some_and(|serial| {
             !report
                 .serial_numbers
@@ -163,7 +182,28 @@ pub(crate) fn read(
                 reservation_id: Some(&input.reservation_id),
             });
         }
-        for (index, number) in report.serial_numbers.iter().enumerate() {
+        if let Some(target) = &report.consolidated_into {
+            edges.push(Edge {
+                edge_id: format!("{}-consolidate-{target}", report.id),
+                kind: "wip_merge",
+                work_order,
+                source: wip(),
+                target: Node {
+                    kind: "wip_lot",
+                    id: target,
+                },
+                status: status(report.reversed),
+                quantity: None,
+                unit: None,
+                reservation_id: None,
+            });
+        }
+        for (index, number) in report
+            .serial_numbers
+            .iter()
+            .filter(|_| !consolidated)
+            .enumerate()
+        {
             if serial.is_some_and(|serial| number != serial) {
                 continue;
             }
@@ -208,7 +248,13 @@ pub(crate) fn read(
             for child in &split.children {
                 if serial.is_some_and(|serial| {
                     !child.serial_numbers.iter().any(|number| number == serial)
-                }) {
+                }) || (consolidated
+                    && lot.is_some()
+                    && !child
+                        .serial_numbers
+                        .iter()
+                        .any(|number| source_serials.contains(number)))
+                {
                     continue;
                 }
                 let child_node = || Node {

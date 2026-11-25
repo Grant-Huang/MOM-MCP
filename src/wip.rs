@@ -16,7 +16,6 @@ pub(crate) fn spec() -> Spec {
     let row = object(
         &[
             "wip_id",
-            "report_id",
             "work_order",
             "source_operation",
             "quantity",
@@ -27,8 +26,8 @@ pub(crate) fn spec() -> Spec {
         ],
         json!({"wip_id":id_schema(),"report_id":id_schema(),"work_order":id_schema(),"source_operation":id_schema(),
              "quantity":{"type":"integer","minimum":1},"unit":{"const":"each"},
-             "status":{"enum":["available","moved","consumed","held","scrapped","reversed","split","merged"]},
-             "parent_wip_id":id_schema(),"partitions":{"type":"array","items":partition_schema()},
+             "status":{"enum":["available","moved","consumed","held","scrapped","reversed","split","merged","consolidated"]},
+             "parent_wip_id":id_schema(),"source_wip_ids":inputs_schema(),"consolidated_into":id_schema(),"partitions":{"type":"array","items":partition_schema()},
              "movement":movement_schema(),"movement_reversals":{"type":"array","items":reversal_schema()},"consumed_by":id_schema(),
              "serial_numbers":{"type":"array","items":id_schema()},
              "material_inputs":{"type":"array","items":input_row},
@@ -94,7 +93,7 @@ pub(crate) fn read(
         } else if order_held {
             Some("WORK_ORDER_HELD")
         } else {
-            material_held(tx, run, report)?.then_some("MATERIAL_HELD")
+            lot.held(tx, run, reports)?.then_some("MATERIAL_HELD")
         };
         let consumed = consumer(reports, order, lot.id());
         let status = inactive.unwrap_or_else(|| match blocking {
@@ -107,6 +106,17 @@ pub(crate) fn read(
         let mut row = json!({"wip_id":lot.id(),"report_id":report.id,"work_order":order,
             "source_operation":MATERIAL_INPUT_OPERATION,"quantity":lot.quantity(),"unit":"each","status":status,
             "serial_numbers":lot.serials(),"material_inputs": if lot.child.is_some() { json!([]) } else { json!(report.material_inputs) }});
+        if !report.wip_sources.is_empty() {
+            row.as_object_mut().unwrap().remove("report_id");
+            row["source_wip_ids"] = json!(
+                lot.sources(reports)
+                    .map(|source| &source.id)
+                    .collect::<Vec<_>>()
+            );
+        }
+        if let Some(target) = &report.consolidated_into {
+            row["consolidated_into"] = json!(target);
+        }
         if lot.child.is_some() {
             row["parent_wip_id"] = json!(report.id);
         } else if !report.wip_partitions.is_empty() {
@@ -348,7 +358,7 @@ pub(crate) fn move_lot(
     if lot.inactive().is_some() || lot.movement().is_some() {
         return Ok(json!({"ok":false,"code":"WIP_NOT_AVAILABLE"}));
     }
-    if material_held(tx, run, lot.report)? {
+    if lot.held(tx, run, reports)? {
         return Ok(json!({"ok":false,"code":"MATERIAL_HELD"}));
     }
     let (movement, _) = movement_state(reports, order, id).expect("active lot");
@@ -380,7 +390,7 @@ pub(crate) fn has_available(
     for lot in
         lots(reports, order).filter(|lot| lot.inactive().is_none() && lot.movement().is_some())
     {
-        if consumer(reports, order, lot.id()).is_none() && !material_held(tx, run, lot.report)? {
+        if consumer(reports, order, lot.id()).is_none() && !lot.held(tx, run, reports)? {
             return Ok(true);
         }
     }
@@ -413,7 +423,7 @@ pub(crate) fn select_inputs(
         if consumer(reports, order, id).is_some() {
             return Ok(Err("WIP_ALREADY_CONSUMED"));
         }
-        if material_held(tx, run, lot.report)? {
+        if lot.held(tx, run, reports)? {
             return Ok(Err("MATERIAL_HELD"));
         }
         ids.push(id.to_owned());
@@ -564,10 +574,19 @@ pub(crate) fn partition_lot(
         return fail("WIP_NOT_FOUND");
     };
     let report = &reports[index];
-    if report.reversed || report.wip_move.is_some() || consumer(reports, order, id).is_some() {
+    if report.reversed
+        || report.consolidated_into.is_some()
+        || report.wip_move.is_some()
+        || consumer(reports, order, id).is_some()
+    {
         return fail("WIP_NOT_AVAILABLE");
     }
-    if material_held(tx, run, report)? {
+    if (Lot {
+        report,
+        child: None,
+    })
+    .held(tx, run, reports)?
+    {
         return fail("MATERIAL_HELD");
     }
     if action == Action::SplitWip {
@@ -654,11 +673,42 @@ impl<'a> Lot<'a> {
             })
     }
 
+    fn sources<'b>(&'b self, reports: &'b [Report]) -> impl Iterator<Item = &'b Report> {
+        self.report.wip_sources.iter().filter_map(move |id| {
+            reports.iter().find(|source| {
+                source.id == *id
+                    && source.order == self.report.order
+                    && source
+                        .serial_numbers
+                        .iter()
+                        .any(|serial| self.serials().contains(serial))
+            })
+        })
+    }
+
+    pub(crate) fn held(
+        &self,
+        tx: &Transaction<'_>,
+        run: &str,
+        reports: &[Report],
+    ) -> rusqlite::Result<bool> {
+        if self.report.wip_sources.is_empty() {
+            return material_held(tx, run, self.report);
+        }
+        for source in self.sources(reports) {
+            if material_held(tx, run, source)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(crate) fn inactive(&self) -> Option<&'static str> {
         match self.child {
             Some((split, _)) if split.merged_cursor.is_some() => Some("merged"),
             Some(_) => None,
             None if self.report.reversed => Some("reversed"),
+            None if self.report.consolidated_into.is_some() => Some("consolidated"),
             None if active_partition(self.report).is_some() => Some("split"),
             None => None,
         }
@@ -769,7 +819,7 @@ pub(crate) fn reconcile(
         .iter()
         .filter(|report| report.order == order && !report.reversed)
     {
-        if report.step == 0 {
+        if report.step == 0 && report.wip_sources.is_empty() {
             machined += report.quantity;
         } else if report.step == 1 {
             assembly_reported += report.quantity;
@@ -823,7 +873,7 @@ pub(crate) fn reconcile(
         } else {
             at_source += lot.quantity();
         }
-        material_blocked |= material_held(tx, run, lot.report)?;
+        material_blocked |= lot.held(tx, run, reports)?;
     }
     if machined != at_source + at_destination + consumed {
         discrepancies.insert("WIP_QUANTITY_MISMATCH");
@@ -844,4 +894,130 @@ pub(crate) fn reconcile(
         result["blocking"] = json!(blocking);
     }
     Ok(result)
+}
+
+pub(crate) fn consolidation_spec() -> Spec {
+    Spec {
+        name: Action::ConsolidateWip.name(),
+        description: "合并同一工单来源工序的在制批次并保留序列号来源",
+        domain: "production",
+        effect: "write",
+        input: object(
+            &[
+                "work_order",
+                "source_wip_ids",
+                "reason",
+                "expected_cursor",
+                "idempotency_key",
+            ],
+            json!({"work_order":id_schema(),"source_wip_ids":{"type":"array","items":id_schema(),"minItems":2,"maxItems":10,"uniqueItems":true},
+                "reason":text(),"expected_cursor":{"type":"integer","minimum":0,"maximum":i64::MAX},"idempotency_key":text()}),
+        ),
+        output: json!({"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"},
+            "work_order":id_schema(),"wip_id":id_schema(),"source_wip_ids":inputs_schema(),
+            "serial_numbers":{"type":"array","items":id_schema()},"reason":text(),
+            "cursor":{"type":"integer","minimum":1},"code":text()}}),
+        preconditions: &["run_open", "tool_enabled_in_scenario"],
+        side_effect: "consolidate_work_in_process",
+        errors: &[
+            "INVALID_ARGUMENT",
+            "WORK_ORDER_NOT_FOUND",
+            "WORK_ORDER_HELD",
+            "QUALITY_HOLD",
+            "QUALITY_SCRAPPED",
+            "WIP_NOT_FOUND",
+            "WIP_NOT_AVAILABLE",
+            "MATERIAL_HELD",
+            "WIP_SERIAL_MISMATCH",
+            "VERSION_CONFLICT",
+            "IDEMPOTENCY_CONFLICT",
+        ],
+        visibility: "run",
+    }
+}
+
+pub(crate) fn consolidate(
+    tx: &Transaction<'_>,
+    run: &str,
+    reports: &mut Vec<Report>,
+    args: &Map<String, Value>,
+    cursor: i64,
+    order_held: bool,
+) -> rusqlite::Result<Value> {
+    use std::collections::BTreeSet;
+    let order = args["work_order"].as_str().unwrap();
+    let reason = args["reason"].as_str().unwrap();
+    let fail = |code| Ok(json!({"ok":false,"code":code}));
+    let ids: Vec<_> = args["source_wip_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    let unique: BTreeSet<_> = ids.iter().copied().collect();
+    if unique.len() != ids.len() || !ids.iter().all(|id| identifier(id)) || reason.trim().is_empty()
+    {
+        return fail("INVALID_ARGUMENT");
+    }
+    if order_held {
+        return fail("WORK_ORDER_HELD");
+    }
+    if let Some(code) = crate::quality::blocking(tx, run, order)? {
+        return Ok(json!({"ok":false,"code":code}));
+    }
+    let mut indices = Vec::new();
+    let mut serials = BTreeSet::new();
+    for id in &ids {
+        let Some(index) = reports
+            .iter()
+            .position(|report| report.order == order && report.step == 0 && report.id == *id)
+        else {
+            return fail("WIP_NOT_FOUND");
+        };
+        let source = &reports[index];
+        if source.reversed
+            || source.wip_move.is_some()
+            || !source.wip_sources.is_empty()
+            || source.consolidated_into.is_some()
+            || active_partition(source).is_some()
+            || consumer(reports, order, id).is_some()
+        {
+            return fail("WIP_NOT_AVAILABLE");
+        }
+        if material_held(tx, run, source)? {
+            return fail("MATERIAL_HELD");
+        }
+        for serial in &source.serial_numbers {
+            if !serials.insert(serial.clone()) {
+                return fail("WIP_SERIAL_MISMATCH");
+            }
+        }
+        indices.push(index);
+    }
+    let id = format!("WIP-{cursor}");
+    for index in indices {
+        reports[index].consolidated_into = Some(id.clone());
+    }
+    let serial_numbers: Vec<_> = serials.into_iter().collect();
+    reports.push(Report {
+        id: id.clone(),
+        order: order.to_owned(),
+        step: 0,
+        batch: None,
+        quantity: serial_numbers.len(),
+        reversed: false,
+        serial_numbers,
+        components: Default::default(),
+        material_inputs: Vec::new(),
+        wip_move: None,
+        wip_movement_reversals: Vec::new(),
+        wip_partitions: Vec::new(),
+        wip_inputs: Vec::new(),
+        wip_sources: ids.iter().map(|id| (*id).to_owned()).collect(),
+        consolidated_into: None,
+    });
+    Ok(
+        json!({"ok":true,"work_order":order,"wip_id":id,"reason":reason,
+        "source_wip_ids":ids,"serial_numbers":reports.last().unwrap().serial_numbers}),
+    )
 }

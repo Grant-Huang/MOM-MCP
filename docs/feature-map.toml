@@ -1009,3 +1009,19 @@ spec = "acceptance/P9D.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P9D-25 Block only WIP with a held input lot" }
+
+[[case]]
+id = "P9D-26"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9d_26_cross_source_wip" }
+
+[[case]]
+id = "P9D-27"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P9D-27 Consolidate WIP from two source reports" }
