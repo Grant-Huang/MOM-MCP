@@ -43,7 +43,7 @@ pub(crate) fn receipt_schema() -> Value {
             "status":{"enum":["draft","tracked","posted"]},"lot_id":{"type":["string","null"]},
             "supplier_lot":{"type":["string","null"]},"location":{"type":["string","null"]},
             "posted_cursor":{"type":["integer","null"],"minimum":1},
-            "availability":{"enum":[null,"pending_inspection","available"]},
+            "availability":{"enum":[null,"pending_inspection","available","held"]},
             "released_inspection_id":id_schema(),"released_cursor":{"type":"integer","minimum":1},"parent_lot_id":id_schema(),"work_order":id_schema(),"serial_numbers":{"type":"array","items":id_schema()}}),
     )
 }
@@ -109,7 +109,7 @@ pub(crate) fn spec(action: Action) -> Spec {
                 json!({"item_id":id_schema(),"revision":{"type":["integer","null"]},
                     "location":{"type":["string","null"]},"unit":text(),
                     "on_hand":quantity_schema(),"pending_inspection":quantity_schema(),
-                    "available":quantity_schema(),"reserved":quantity_schema()}))}),
+                    "available":quantity_schema(),"reserved":quantity_schema(),"held_unallocated":quantity_schema()}))}),
             )
         }
         Action::ListLots | Action::ListInventoryMovements => {
@@ -334,10 +334,16 @@ pub(crate) fn read(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Resul
     .optional()
 }
 
+const LOT_HELD_COLUMN: &str = "EXISTS(SELECT 1 FROM stock_scoped_lot_holds h
+    WHERE h.run=stock_receipts.run AND h.batch=stock_receipts.lot)";
+
 fn lot_record(row: &Row<'_>) -> rusqlite::Result<Value> {
     let mut lot = record(row)?;
     if let Some(parent) = row.get::<_, Option<String>>(14)? {
         lot["parent_lot_id"] = json!(parent);
+    }
+    if row.get::<_, bool>(15)? {
+        lot["availability"] = json!("held");
     }
     Ok(lot)
 }
@@ -381,7 +387,7 @@ fn query(
             let lot = tx
                 .query_row(
                     &format!(
-                        "SELECT {RECEIPT_COLUMNS},parent_lot FROM stock_available_lots AS stock_receipts
+                        "SELECT {RECEIPT_COLUMNS},parent_lot,{LOT_HELD_COLUMN} FROM stock_available_lots AS stock_receipts
                 WHERE run=?1 AND lot=?2 AND posted_cursor IS NOT NULL"
                     ),
                     params![run, args["lot_id"].as_str().unwrap()],
@@ -409,10 +415,14 @@ fn query(
             {
                 return Ok(Err(reject("ITEM_REVISION_NOT_FOUND", "revision")));
             }
-            let (on_hand, pending, reserved) =
+            let (on_hand, pending, reserved, held) =
                 balance(tx, run, item.unwrap(), revision, location, None)?;
-            json!({"balance":{"item_id":item,"revision":revision,"location":location,"unit":unit,
-                "on_hand":quantity(on_hand),"pending_inspection":quantity(pending),"reserved":quantity(reserved),"available":quantity(on_hand-pending-reserved)}})
+            let mut result = json!({"balance":{"item_id":item,"revision":revision,"location":location,"unit":unit,
+                "on_hand":quantity(on_hand),"pending_inspection":quantity(pending),"reserved":quantity(reserved),"available":quantity(on_hand-pending-reserved-held)}});
+            if held > 0 {
+                result["balance"]["held_unallocated"] = json!(quantity(held));
+            }
+            result
         }
         _ => {
             let by_lot = action == Action::ListLots
@@ -447,8 +457,13 @@ fn query(
             } else {
                 "NULL"
             };
+            let held = if action == Action::ListLots {
+                LOT_HELD_COLUMN
+            } else {
+                "0"
+            };
             let mut statement = tx.prepare(&format!(
-                "SELECT {RECEIPT_COLUMNS},{parent} FROM {source} AS stock_receipts
+                "SELECT {RECEIPT_COLUMNS},{parent},{held} FROM {source} AS stock_receipts
                 WHERE run=?1 AND {sort_column}>?2 AND posted_cursor IS NOT NULL
                 AND (?3 IS NULL OR item=?3) AND (?4 IS NULL OR revision=?4)
                 AND (?5 IS NULL OR location=?5) AND (?7 OR {parent} IS NULL)
@@ -656,19 +671,24 @@ pub(crate) fn balance(
     revision: Option<i64>,
     location: Option<&str>,
     lot: Option<&str>,
-) -> rusqlite::Result<(i64, i64, i64)> {
+) -> rusqlite::Result<(i64, i64, i64, i64)> {
     tx.query_row(
-        "SELECT COALESCE(SUM(s.quantity - COALESCE((SELECT SUM(x.quantity-COALESCE(t.quantity,0)) FROM stock_reservations x
+        "WITH positions AS (
+            SELECT s.quantity-COALESCE((SELECT SUM(x.quantity-COALESCE(t.quantity,0)) FROM stock_reservations x
              LEFT JOIN stock_effective_return_totals t ON t.run=x.run AND t.reservation=x.reservation
-             WHERE x.run=s.run AND x.lot=s.lot AND x.status='issued'),0)),0),
-         COALESCE(SUM(CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END),0),
-         COALESCE(SUM((SELECT SUM(x.quantity) FROM stock_reservations x
-             WHERE x.run=s.run AND x.lot=s.lot AND x.status IN ('reserved','picked'))),0)
-         FROM stock_available_lots s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
-         WHERE s.run=?1 AND s.item=?2 AND s.posted_cursor IS NOT NULL
-         AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)
-         AND (?5 IS NULL OR s.lot=?5)",
-        params![run,item,revision,location,lot],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+             WHERE x.run=s.run AND x.lot=s.lot AND x.status='issued'),0) AS on_hand,
+            CASE WHEN s.requires_inspection AND r.receipt IS NULL THEN s.quantity ELSE 0 END AS pending,
+            COALESCE((SELECT SUM(x.quantity) FROM stock_reservations x
+             WHERE x.run=s.run AND x.lot=s.lot AND x.status IN ('reserved','picked')),0) AS reserved,
+            EXISTS(SELECT 1 FROM stock_scoped_lot_holds h WHERE h.run=s.run AND h.batch=s.lot) AS held
+            FROM stock_available_lots s LEFT JOIN stock_receipt_releases r ON r.run=s.run AND r.receipt=s.receipt
+            WHERE s.run=?1 AND s.item=?2 AND s.posted_cursor IS NOT NULL
+            AND (?3 IS NULL OR s.revision=?3) AND (?4 IS NULL OR s.location=?4)
+            AND (?5 IS NULL OR s.lot=?5))
+         SELECT COALESCE(SUM(on_hand),0),COALESCE(SUM(pending),0),COALESCE(SUM(reserved),0),
+            COALESCE(SUM(CASE WHEN held THEN MAX(0,on_hand-pending-reserved) ELSE 0 END),0)
+         FROM positions",
+        params![run,item,revision,location,lot],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
     )
 }
 
@@ -818,8 +838,9 @@ pub(crate) fn requirements(
     };
     let mut requirements = Vec::with_capacity(expansion.quantities.len());
     for ((item, revision, unit), required) in expansion.quantities {
-        let (on_hand, pending, reserved) = balance(tx, run, &item, Some(revision), None, None)?;
-        let available = on_hand - pending - reserved;
+        let (on_hand, pending, reserved, held) =
+            balance(tx, run, &item, Some(revision), None, None)?;
+        let available = on_hand - pending - reserved - held;
         let assigned =
             crate::reservations::order_quantity_by_state(tx, run, order, &item, revision, false)?;
         let issued =

@@ -204,6 +204,21 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     )
     .map_err(|reason| anyhow::anyhow!("model configuration: {reason}"))?;
     if let Some(setup) = &definition.smt {
+        anyhow::ensure!(
+            !setup.shared_material
+                || (definition.capabilities.contains(&Action::GetOrderSnapshot)
+                    && definition
+                        .capabilities
+                        .contains(&Action::IssueMaterialToOperation)
+                    && !definition.capabilities.iter().any(|action| matches!(
+                        action,
+                        Action::SmtRelease
+                            | Action::SmtRework
+                            | Action::ReturnUnusedMaterial
+                            | Action::ReverseInventoryMovement
+                    ))),
+            "shared SMT inventory requires frozen order release and placement-only consumption"
+        );
         setup.validate(
             &definition.work_orders,
             &definition.model,
@@ -242,8 +257,12 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     anyhow::ensure!(
         !definition.capabilities.contains(&Action::ReleaseWorkOrder)
             || definition.assembly.is_some()
-            || definition.manufacturing.is_some(),
-        "work order release requires assembly or manufacturing setup"
+            || definition.manufacturing.is_some()
+            || definition
+                .smt
+                .as_ref()
+                .is_some_and(|setup| setup.shared_material),
+        "work order release requires assembly, manufacturing, or shared SMT setup"
     );
     anyhow::ensure!(
         (!definition.capabilities.contains(&Action::CreateWorkOrder)
@@ -369,7 +388,11 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             .capabilities
             .iter()
             .any(|action| action.is_genealogy_action())
-            || definition.capabilities.contains(&Action::MoveWip),
+            || definition.capabilities.contains(&Action::MoveWip)
+            || definition
+                .smt
+                .as_ref()
+                .is_some_and(|setup| setup.shared_material),
         "genealogy requires recorded material inputs and work-in-process movement"
     );
     anyhow::ensure!(
@@ -594,6 +617,21 @@ impl Scenarios {
                  SELECT t.* FROM stock_transfers t WHERE NOT EXISTS(SELECT 1 FROM stock_lot_splits p
                    WHERE p.run=t.run AND (p.transfer=t.transfer OR EXISTS(SELECT 1 FROM stock_transfer_reversals r
                       WHERE r.run=t.run AND r.reversal=t.transfer AND r.original=p.transfer)));
+             CREATE TABLE IF NOT EXISTS stock_quality_holds (
+                 run TEXT NOT NULL, hold TEXT NOT NULL, lot TEXT NOT NULL,
+                 reason TEXT NOT NULL, held_cursor INTEGER NOT NULL,
+                 release_reason TEXT, released_cursor INTEGER,
+                 PRIMARY KEY(run,hold)
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS active_stock_quality_hold ON stock_quality_holds(run,lot)
+                 WHERE released_cursor IS NULL;
+             CREATE VIEW IF NOT EXISTS stock_scoped_lot_holds AS
+                 SELECT run,lot AS batch FROM stock_quality_holds WHERE released_cursor IS NULL
+                 UNION
+                 SELECT o.run,o.lot FROM stock_lot_origins o JOIN stock_quality_holds h
+                     ON h.run=o.run AND h.lot=o.parent_lot WHERE h.released_cursor IS NULL;
+             CREATE VIEW IF NOT EXISTS stock_effective_lot_holds AS
+                 SELECT run,batch FROM stock_lot_holds UNION SELECT run,batch FROM stock_scoped_lot_holds;
              CREATE VIEW IF NOT EXISTS stock_lot_holds AS
                  SELECT run,batch FROM scenario_holds
                  UNION
@@ -760,6 +798,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-finished-output-receipt.json"),
             include_str!("../fixtures/cnc-work-order-reconciliation.json"),
             include_str!("../fixtures/cnc-full-order-reconciliation.json"),
+            include_str!("../fixtures/cnc-lot-quality-scope.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
@@ -779,6 +818,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-lot.json"),
             include_str!("../fixtures/smt.json"),
             include_str!("../fixtures/smt-production.json"),
+            include_str!("../fixtures/smt-shared-ledger.json"),
             include_str!("../fixtures/assembly.json"),
             include_str!("../fixtures/assembly-production.json"),
             include_str!("../fixtures/assembly-public-orders.json"),
@@ -1125,6 +1165,13 @@ impl Scenarios {
         {
             spec.input["properties"]["wip_inputs"] = crate::wip::inputs_schema();
         }
+        let shared_smt = definition
+            .smt
+            .as_ref()
+            .filter(|setup| setup.shared_material);
+        if action == Action::SmtPlace && shared_smt.is_some() {
+            spec = crate::smt::placement_spec(spec);
+        }
         if name == "describe_tool" {
             return Ok(Ok(json!({"ok":true,"tool":spec})));
         }
@@ -1190,12 +1237,10 @@ impl Scenarios {
                 (_, Err(error)) => return Ok(Err(error)),
             }
         }
+        if matches!(action, Action::HoldStockLot | Action::ReleaseStockLotHold) {
+            return crate::lot_quality::invoke(tx, run, action, parameters, cursor);
+        }
         if action.is_reservation_action() {
-            let quantity = if definition.manufacturing.is_some() {
-                crate::mes::QUANTITY as i64
-            } else {
-                1
-            };
             let order = match action {
                 Action::ReserveMaterial => {
                     Some(parameters["work_order"].as_str().unwrap().to_owned())
@@ -1209,9 +1254,17 @@ impl Scenarios {
                     .optional()?,
                 _ => None,
             };
+            let quantity = if let (Some(setup), Some(order)) = (shared_smt, order.as_deref()) {
+                crate::smt::planned_units(setup, order)
+            } else if definition.manufacturing.is_some() {
+                crate::mes::QUANTITY as i64
+            } else {
+                1
+            };
             let eligible = if let Some(order) = &order {
                 read_work_order(&tx, run, &definition, order)?.is_some_and(|order| {
                     order["completion_confirmed"] != true
+                        && !(shared_smt.is_some() && order["status"] == "complete")
                         && !matches!(
                             order["status"].as_str(),
                             Some("planned" | "cancelled" | "closed" | "completed")
@@ -1242,6 +1295,15 @@ impl Scenarios {
                     } else {
                         "QUALITY_HOLD"
                     })
+                } else if let Some(setup) = shared_smt {
+                    if operation != crate::smt::PLACEMENT || center != Some(crate::smt::WORK_CENTER)
+                    {
+                        Err("ISSUE_OPERATION_NOT_FOUND")
+                    } else if crate::smt::can_issue(&tx, run, setup, order)? {
+                        Ok(Some(crate::smt::WORK_CENTER.to_owned()))
+                    } else {
+                        Err("ISSUE_OPERATION_NOT_ELIGIBLE")
+                    }
                 } else if center.is_none() || actual.is_none() {
                     Err("ISSUE_OPERATION_NOT_FOUND")
                 } else if definition
@@ -1275,17 +1337,15 @@ impl Scenarios {
             );
         }
         if action == Action::GetMaterialRequirements {
-            let quantity = if definition.manufacturing.is_some() {
+            let order = parameters["work_order"].as_str().unwrap();
+            let quantity = if let Some(setup) = shared_smt {
+                crate::smt::planned_units(setup, order)
+            } else if definition.manufacturing.is_some() {
                 crate::mes::QUANTITY as i64
             } else {
                 1
             };
-            return crate::inventory::requirements(
-                &tx,
-                run,
-                parameters["work_order"].as_str().unwrap(),
-                quantity,
-            );
+            return crate::inventory::requirements(&tx, run, order, quantity);
         }
         if matches!(
             action,
@@ -1772,16 +1832,51 @@ impl Scenarios {
             }
             return Ok(Ok(response));
         }
-        if crate::smt::TOOLS.iter().any(|tool| tool.0 == action) {
+        if let Some(setup) = shared_smt {
+            if action.is_genealogy_action() {
+                if let Some(order) = parameters.get("work_order").and_then(Value::as_str)
+                    && !definition.work_orders.iter().any(|id| id == order)
+                {
+                    return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
+                }
+                return Ok(Ok(crate::smt::genealogy(
+                    &tx, run, setup, action, parameters,
+                )?));
+            }
+            if action == Action::GetReleaseReadiness {
+                let order = parameters["work_order"].as_str().unwrap();
+                let snapshot = definition_snapshot.as_ref().expect("configured snapshot");
+                let route_ok = crate::smt::valid_frozen_placement(snapshot);
+                let planned = crate::smt::work_order_status(&tx, run, setup, order)? == "planned";
+                return Ok(Ok(
+                    json!({"ok":true,"work_order":order,"ready":route_ok && planned,
+                    "blocking":if !planned {Some("INVALID_STATE")} else if !route_ok {Some("CELL_NOT_CAPABLE")} else {None},
+                    "cursor":cursor,"definition_snapshot":snapshot}),
+                ));
+            }
+        }
+        if crate::smt::TOOLS.iter().any(|tool| tool.0 == action)
+            || (shared_smt.is_some() && action == Action::ReleaseWorkOrder)
+        {
             let Some(setup) = &definition.smt else {
                 return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
             };
             let events = stored
                 .as_ref()
                 .map_or(&[][..], |state| state.timeline.events.as_slice());
-            let (response, changed) =
+            if action == Action::ReleaseWorkOrder
+                && !definition_snapshot
+                    .as_ref()
+                    .is_some_and(crate::smt::valid_frozen_placement)
+            {
+                return Ok(Ok(json!({"ok":false,"code":"CELL_NOT_CAPABLE"})));
+            }
+            let (mut response, changed) =
                 crate::smt::invoke(&tx, run, setup, action, parameters, cursor, events)?;
             if changed {
+                if let Some(snapshot) = definition_snapshot.as_ref() {
+                    crate::snapshots::freeze(&tx, run, parameters, snapshot, &mut response)?;
+                }
                 tx.commit()?;
             }
             return Ok(Ok(response));

@@ -264,7 +264,7 @@ fn return_unused(
     let issue = tx
         .query_row(
             "SELECT r.work_order,s.unit,r.quantity-COALESCE(t.quantity,0),
-            EXISTS(SELECT 1 FROM stock_lot_holds h WHERE h.run=r.run AND h.batch=r.lot)
+            EXISTS(SELECT 1 FROM stock_effective_lot_holds h WHERE h.run=r.run AND h.batch=r.lot)
          FROM stock_operation_issues i
          JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
          JOIN stock_lot_origins s ON s.run=r.run AND s.lot=r.lot
@@ -464,6 +464,9 @@ pub(crate) fn invoke(
         let Some((item, revision, unit, on_hand, pending)) = stock else {
             return Ok(Err(reject("LOT_NOT_FOUND", "lot_id")));
         };
+        if crate::lot_quality::held(&tx, run, lot)? {
+            return Ok(Err(reject("MATERIAL_HELD", "lot_id")));
+        }
         if pending {
             return Ok(Err(reject("LOT_PENDING_INSPECTION", "lot_id")));
         }
@@ -510,7 +513,7 @@ pub(crate) fn invoke(
         }
         if action == Action::IssueMaterialToOperation {
             let held: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM stock_lot_holds WHERE run=?1 AND batch=?2)",
+                "SELECT EXISTS(SELECT 1 FROM stock_effective_lot_holds WHERE run=?1 AND batch=?2)",
                 params![run, row["lot_id"].as_str().unwrap()],
                 |row| row.get(0),
             )?;

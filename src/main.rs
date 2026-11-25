@@ -6,6 +6,7 @@ mod finished_output;
 mod genealogy;
 mod inventory;
 mod items;
+mod lot_quality;
 mod mes;
 mod operation_reversals;
 mod operations;

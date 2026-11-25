@@ -119,6 +119,8 @@ pub fn spec(action: Action) -> Spec {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Setup {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shared_material: bool,
     reels: BTreeMap<String, usize>,
     panels: BTreeMap<String, PanelDefinition>,
 }
@@ -185,6 +187,8 @@ struct State {
     boards: BTreeMap<String, Board>,
     isolated: BTreeSet<usize>,
     remaining: BTreeMap<String, usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    material_reports: Vec<crate::mes::Report>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -232,7 +236,11 @@ fn load(tx: &Transaction<'_>, run: &str, setup: &Setup) -> anyhow::Result<State>
     Ok(stored.map_or_else(
         || {
             Ok(State {
-                remaining: setup.reels.clone(),
+                remaining: if setup.shared_material {
+                    BTreeMap::new()
+                } else {
+                    setup.reels.clone()
+                },
                 ..State::default()
             })
         },
@@ -281,6 +289,81 @@ pub fn work_order_status(
             })
         });
     Ok(if complete { "complete" } else { "released" })
+}
+
+pub(crate) const PLACEMENT: &str = "placement";
+pub(crate) const WORK_CENTER: &str = "SMT-1";
+
+pub(crate) fn valid_frozen_placement(snapshot: &Value) -> bool {
+    let placement = &snapshot["route"]["operations"][PLACEMENT];
+    placement["work_center"] == WORK_CENTER && placement["predecessors"] == json!([])
+}
+
+pub(crate) fn planned_units(setup: &Setup, order: &str) -> i64 {
+    setup
+        .panels
+        .values()
+        .filter(|panel| panel.order == order)
+        .map(|panel| panel.serials.len() as i64)
+        .sum()
+}
+
+pub(crate) fn can_issue(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    order: &str,
+) -> anyhow::Result<bool> {
+    let state = load(tx, run, setup)?;
+    Ok(state.released.contains(order)
+        && setup
+            .panels
+            .iter()
+            .any(|(id, panel)| panel.order == order && !state.panels.contains_key(id)))
+}
+
+pub(crate) fn genealogy(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    action: Action,
+    args: &Map<String, Value>,
+) -> anyhow::Result<Value> {
+    crate::genealogy::read(
+        tx,
+        run,
+        action,
+        &load(tx, run, setup)?.material_reports,
+        args,
+    )
+}
+
+pub(crate) fn placement_spec(mut spec: Spec) -> Spec {
+    spec.input["properties"]["reservation_id"] = crate::inventory::id_schema();
+    spec.input["properties"]["expected_cursor"] =
+        json!({"type":"integer","minimum":0,"maximum":i64::MAX});
+    spec.input["required"]
+        .as_array_mut()
+        .unwrap()
+        .extend([json!("reservation_id"), json!("expected_cursor")]);
+    spec.errors = &[
+        "INVALID_ARGUMENT",
+        "INVALID_STATE",
+        "WORK_ORDER_NOT_FOUND",
+        "PANEL_NOT_FOUND",
+        "FEEDER_EMPTY",
+        "VERSION_CONFLICT",
+        "IDEMPOTENCY_CONFLICT",
+        "REEL_RECALLED",
+        "QUALITY_HOLD",
+        "QUALITY_SCRAPPED",
+        "MATERIAL_HELD",
+        "MATERIAL_ISSUE_NOT_FOUND",
+        "MATERIAL_ISSUE_QUANTITY_EXCEEDED",
+        "FEEDER_LOT_MISMATCH",
+        "MATERIAL_UNIT_MISMATCH",
+    ];
+    spec
 }
 
 pub fn invoke(
@@ -349,9 +432,75 @@ pub fn invoke(
             false,
         ));
     }
+    if matches!(action, Action::ReleaseWorkOrder)
+        || (setup.shared_material && action == Action::SmtPlace)
+    {
+        if args["expected_cursor"].as_i64() != Some(cursor) {
+            return Ok((failure("VERSION_CONFLICT"), false));
+        }
+    }
+    if setup.shared_material {
+        let affected = match action {
+            Action::SmtPlace | Action::SmtAoi | Action::SmtSplit => {
+                args.get("panel").and_then(Value::as_str)
+            }
+            Action::SmtFinish => args
+                .get("serial")
+                .and_then(Value::as_str)
+                .and_then(|serial| state.boards.get(serial))
+                .map(|board| board.panel.as_str()),
+            _ => None,
+        };
+        if let Some(panel) = affected.and_then(|id| setup.panels.get(id))
+            && let Some(code) = crate::quality::blocking(tx, run, &panel.order)?
+        {
+            return Ok((failure(&code), false));
+        }
+    }
     let mut response = apply(&mut state, setup, action, args, events);
     if response["ok"] != true {
         return Ok((response, false));
+    }
+    if setup.shared_material && action == Action::SmtPlace {
+        let panel = args["panel"].as_str().unwrap();
+        let definition = &setup.panels[panel];
+        let reservation = args["reservation_id"].as_str().unwrap();
+        let amount = definition.serials.len();
+        let query =
+            json!({"operation":PLACEMENT,"material_inputs":{(reservation):amount.to_string()}});
+        let inputs = match crate::mes::report_material_inputs(
+            tx,
+            run,
+            &state.material_reports,
+            &definition.order,
+            query.as_object().unwrap(),
+        )? {
+            Ok(inputs) => inputs,
+            Err(code) => return Ok((failure(code), false)),
+        };
+        if inputs[0].unit != "each" {
+            return Ok((failure("MATERIAL_UNIT_MISMATCH"), false));
+        }
+        if inputs[0].lot_id != state.panels[panel].reel {
+            return Ok((failure("FEEDER_LOT_MISMATCH"), false));
+        }
+        let report = crate::mes::Report {
+            id: format!("report-{}", cursor + 1),
+            order: definition.order.clone(),
+            step: 0,
+            batch: Some(inputs[0].lot_id.clone()),
+            quantity: amount,
+            reversed: false,
+            serial_numbers: definition.serials.clone(),
+            components: BTreeMap::new(),
+            material_inputs: inputs,
+            wip_move: None,
+            wip_movement_reversals: Vec::new(),
+            wip_partitions: Vec::new(),
+            wip_inputs: Vec::new(),
+        };
+        response["report_id"] = json!(report.id);
+        state.material_reports.push(report);
     }
     response["cursor"] = (cursor + 1).into();
     tx.execute(
@@ -379,7 +528,7 @@ fn apply(
     let string = |field: &str| args[field].as_str().unwrap();
     let recalled = |reel: &str| events.iter().any(|event| recall(event) == Some(reel));
     match action {
-        Action::SmtRelease => {
+        Action::SmtRelease | Action::ReleaseWorkOrder => {
             let order = string("work_order");
             if !setup.panels.values().any(|panel| panel.order == order) {
                 return failure("WORK_ORDER_NOT_FOUND");
@@ -426,11 +575,13 @@ fn apply(
             if recalled(reel) {
                 return failure("REEL_RECALLED");
             }
-            let available = state.remaining.get_mut(reel).unwrap();
-            if *available < spec.serials.len() {
-                return failure("MATERIAL_SHORTAGE");
+            if !setup.shared_material {
+                let available = state.remaining.get_mut(reel).unwrap();
+                if *available < spec.serials.len() {
+                    return failure("MATERIAL_SHORTAGE");
+                }
+                *available -= spec.serials.len();
             }
-            *available -= spec.serials.len();
             state.panels.insert(
                 id.into(),
                 Panel {

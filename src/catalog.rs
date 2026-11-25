@@ -83,6 +83,8 @@ pub enum Action {
     CloseWorkOrder,
     GetMaterial,
     HoldMaterial,
+    HoldStockLot,
+    ReleaseStockLotHold,
     MesStatus,
     ReleaseOrder,
     ReviseRoute,
@@ -259,6 +261,8 @@ impl Action {
             Self::UpdateDraftOrder,
             Self::GetMaterial,
             Self::HoldMaterial,
+            Self::HoldStockLot,
+            Self::ReleaseStockLotHold,
         ]
         .into_iter()
         .find(|action| action.name() == name)
@@ -345,6 +349,8 @@ impl Action {
             Self::UpdateDraftOrder => "update_draft_order",
             Self::GetMaterial => "get_material",
             Self::HoldMaterial => "hold_material",
+            Self::HoldStockLot => "hold_stock_lot",
+            Self::ReleaseStockLotHold => "release_stock_lot_hold",
             _ => {
                 crate::mes::TOOLS
                     .iter()
@@ -472,6 +478,9 @@ impl Action {
         )
     }
     pub fn spec(self) -> Spec {
+        if matches!(self, Self::HoldStockLot | Self::ReleaseStockLotHold) {
+            return crate::lot_quality::spec(self);
+        }
         if self == Self::ReconcileWorkOrder {
             return crate::reconciliation::spec();
         }

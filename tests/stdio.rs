@@ -4785,6 +4785,11 @@ fn p9d_20_cross_shop_quality_scope() {
     run_wip_scenario_with_quality(42, Some(QualityCheckpoint::CrossShop));
 }
 
+#[test]
+fn p9d_24_actual_input_lot_hold_scope() {
+    run_wip_scenario(43);
+}
+
 fn run_wip_scenario_with_quality(version: u64, quality_recovery: Option<QualityCheckpoint>) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
@@ -4830,8 +4835,8 @@ async fn move_and_consume_wip(
     };
     let prep = json!({"work_order":order,"operation":operation});
     let assembly = json!({"work_order":order,"operation":"assembly"});
-    if genealogy || version == 42 {
-        let location = if version == 42 { "RAW-01" } else { "RAW-02" };
+    if genealogy || version >= 42 {
+        let location = if version >= 42 { "RAW-01" } else { "RAW-02" };
         Box::pin(setup_genealogy_second_lot(
             client,
             run,
@@ -4884,7 +4889,7 @@ async fn move_and_consume_wip(
         apply("issue_material_to_operation", "quality-recovered", issue).await;
     }
     let mut second_args = machining_report(6, if legacy_reconciliation { "0.75" } else { "1" });
-    if genealogy || version == 42 {
+    if genealogy || version >= 42 {
         second_args["material_inputs"] = json!({"RS-2":"1"});
     }
     let second = apply("post_operation_report", "source2", second_args).await;
@@ -5103,6 +5108,67 @@ async fn move_and_consume_wip(
         "WIP_QUANTITY_MISMATCH"
     );
     report["quantity"] = json!(4);
+    if version == 43 {
+        let mut hold = json!({"hold_id":"HQ-2","lot_id":"LOT-2","reason":"supplier review","idempotency_key":"hold-second","expected_cursor":cursor().await});
+        let held = invoke("hold_stock_lot", hold.clone()).await;
+        assert_eq!(held["held"], true, "{held}");
+        assert_eq!(invoke("hold_stock_lot", hold.clone()).await, held);
+        let results = invoke("get_wip", json!({"work_order":order})).await;
+        let lots = results["lots"].as_array().unwrap();
+        assert_eq!(
+            lots.iter().find(|lot| lot["wip_id"] == *first_id).unwrap()["status"],
+            "moved"
+        );
+        assert_eq!(
+            lots.iter().find(|lot| lot["wip_id"] == *second_id).unwrap()["blocking"],
+            "MATERIAL_HELD"
+        );
+        let mut blocked = movement.clone();
+        blocked["wip_id"] = second_id.clone();
+        let before = cursor().await;
+        assert_eq!(
+            write("move_wip", "hold-blocks-handoff", blocked).await["code"],
+            "MATERIAL_HELD"
+        );
+        assert_eq!(cursor().await, before);
+        hold["hold_id"] = json!("HQ-1");
+        hold["lot_id"] = json!("LOT-1");
+        let temporary = apply("hold_stock_lot", "hold-first", hold).await;
+        assert_eq!(temporary["held"], true);
+        assert_eq!(
+            invoke("get_lot", json!({"lot_id":"LOT-1"})).await["lot"]["availability"],
+            "held"
+        );
+        let blocked_reserve = write(
+            "reserve_material",
+            "frozen-reserve",
+            json!({
+                "reservation_id":"FROZEN-RS","work_order":order,"lot_id":"LOT-1","quantity":"0.25"
+            }),
+        )
+        .await;
+        assert_eq!(blocked_reserve["code"], "MATERIAL_HELD");
+
+        let stock = invoke(
+            "get_stock_balance",
+            json!({"item_id":"WIRE","location":"RAW-02"}),
+        )
+        .await;
+        assert_eq!(stock["balance"]["on_hand"], "0.5");
+        assert_eq!(stock["balance"]["held_unallocated"], "0.5");
+        assert_eq!(stock["balance"]["available"], "0");
+        assert_eq!(
+            write("post_operation_report", "held-actual", report.clone()).await["code"],
+            "MATERIAL_HELD"
+        );
+        let released = apply(
+            "release_stock_lot_hold",
+            "release-first",
+            json!({"hold_id":"HQ-1","reason":"review cleared"}),
+        )
+        .await;
+        assert_eq!(released["held"], false);
+    }
     let consume_key = if quality_recovery == Some(QualityCheckpoint::CrossShop) {
         Box::pin(recover_quality(
             client,
@@ -5181,7 +5247,7 @@ async fn move_and_consume_wip(
             "WIP_MOVEMENT_NOT_ACTIVE"
         );
     }
-    if version == 42 {
+    if version >= 42 {
         let check =
             invoke("reconcile_work_order", json!({"work_order":order})).await["settlement"].clone();
         assert_eq!(check["production"]["wip_open"], 10);
@@ -5197,13 +5263,22 @@ async fn move_and_consume_wip(
         reconsumed["report"]["serial_numbers"],
         consumed["report"]["serial_numbers"]
     );
+    if version == 43 {
+        let released = apply(
+            "release_stock_lot_hold",
+            "release-second",
+            json!({"hold_id":"HQ-2","reason":"review cleared"}),
+        )
+        .await;
+        assert_eq!(released["held"], false);
+    }
     movement["wip_id"] = second_id.clone();
     apply("move_wip", "move-second", movement).await;
     report["quantity"] = json!(6);
     report["wip_inputs"] = json!([second_id]);
     apply("post_operation_report", "consume-second", report).await;
     apply("complete_operation", "complete-assembly", assembly).await;
-    if version == 42 {
+    if version >= 42 {
         apply(
             "return_unused_material",
             "return-surplus",
@@ -5231,7 +5306,7 @@ async fn move_and_consume_wip(
             run,
             order,
             &first["report"]["serial_numbers"][0],
-            version == 42,
+            version >= 42,
             quality_recovery == Some(QualityCheckpoint::Output),
         ))
         .await;
@@ -5273,7 +5348,7 @@ async fn move_and_consume_wip(
         )
         .await["balance"]["on_hand"],
         match version {
-            42 => "1.5",
+            42 | 43 => "1.5",
             40 => "0.75",
             _ => "0.5",
         }
@@ -5885,7 +5960,7 @@ async fn operation_issue_scenarios_with_quality(
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=42) {
+            if matches!(version,36..=43) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
             }
             if version >= 41 {
@@ -6116,7 +6191,7 @@ async fn operation_issue_scenarios_with_quality(
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if matches!(version,36..=42) {
+            if matches!(version,36..=43) {
                 Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version,quality_recovery)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
@@ -6282,4 +6357,108 @@ async fn operation_issue_scenarios_with_quality(
             assert_eq!(invoke("list_inventory_movements",json!({})).await["movements"][0]["quantity"],"2");
         }
     })).await.unwrap();
+}
+
+#[tokio::test]
+async fn p9d_22_smt_shared_material_and_genealogy() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("smt-ledger.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    timeout(WAIT, async {
+        let opened = call(&client,"open_scenario",json!({"scenario_id":"smt","version":3})).await;
+        assert_eq!(opened["ok"],true,"{opened}");
+        let run=&opened["run_id"];
+        let invoke=async |name:&str,args| business(&client,run,name,args).await;
+        let cursor=async || call(&client,"get_run",json!({"run_id":run})).await["cursor"].clone();
+        let write=async |name:&str,key:&str,mut args:Value| {
+            args["idempotency_key"]=json!(key);
+            if !matches!(name,"smt_load"|"smt_aoi"|"smt_split"|"smt_finish") {
+                args["expected_cursor"]=cursor().await;
+            }
+            invoke(name,args).await
+        };
+        let apply=async |name:&str,key:&str,args| {
+            let value=write(name,key,args).await;
+            assert_eq!(value["ok"],true,"{name}: {value}");
+            value
+        };
+        for (index,(name,args)) in [
+            ("create_item",json!({"item_id":"BOARD","base_unit":"each"})),
+            ("create_item",json!({"item_id":"COMPONENT","base_unit":"each"})),
+            ("create_item_revision",json!({"item_id":"BOARD","revision":1,"name":"Board"})),
+            ("create_item_revision",json!({"item_id":"COMPONENT","revision":1,"name":"Component"})),
+            ("activate_revision",json!({"revision_type":"item","item_id":"BOARD","revision":1})),
+            ("activate_revision",json!({"revision_type":"item","item_id":"COMPONENT","revision":1})),
+            ("create_bom_revision",json!({"item_id":"BOARD","revision":1})),
+            ("set_bom_components",json!({"item_id":"BOARD","revision":1,"components":{"COMPONENT":{"revision":1,"quantity":1,"unit":"each"}}})),
+            ("activate_revision",json!({"revision_type":"bom","item_id":"BOARD","revision":1})),
+            ("create_route_revision",json!({"item_id":"BOARD","revision":1})),
+            ("set_route_operations",json!({"item_id":"BOARD","revision":1,"operations":{"placement":{"work_center":"SMT-1","predecessors":[]}}})),
+            ("activate_revision",json!({"revision_type":"route","item_id":"BOARD","revision":1})),
+            ("create_inspection_plan_revision",json!({"plan_id":"QA","revision":1,"characteristics":{"width":{"unit":"mm","lower_limit":1,"upper_limit":2}}})),
+            ("activate_inspection_plan_revision",json!({"plan_id":"QA","revision":1})),
+        ].into_iter().enumerate() {
+            apply(name,&format!("setup-{index}"),args).await;
+        }
+        let mut release=json!({"work_order":"WO-A","definition_selection":{"item_id":"BOARD","inspection_plan_id":"QA"}});
+        let readiness=invoke("get_release_readiness",release.clone()).await;
+        assert_eq!(readiness["ready"],true,"{readiness}");
+        release["snapshot_fingerprint"]=readiness["definition_snapshot"]["fingerprint"].clone();
+        assert_eq!(apply("release_work_order","release",release).await["definition_snapshot"],readiness["definition_snapshot"]);
+        let required=invoke("get_material_requirements",json!({"work_order":"WO-A"})).await;
+        assert_eq!(required["requirements"][0]["required"],"2");
+        apply("create_receipt","reel-receipt",json!({"receipt_id":"RC-1","item_id":"COMPONENT","revision":1,"quantity":"3","requires_inspection":false})).await;
+        apply("assign_receipt_tracking","reel-tracking",json!({"receipt_id":"RC-1","lot_id":"REEL-C","supplier_lot":"SUP-C","location":"RAW-01"})).await;
+        apply("post_receipt","reel-post",json!({"receipt_id":"RC-1"})).await;
+        let mut reservation=json!({"reservation_id":"RS-1","work_order":"WO-A","lot_id":"REEL-C","quantity":"3"});
+        assert_eq!(write("reserve_material","excess-demand",reservation.clone()).await["code"],"ORDER_REQUIREMENT_EXCEEDED");
+        reservation["quantity"]=json!("2");
+        apply("reserve_material","reserve",reservation).await;
+        apply("pick_material","pick",json!({"reservation_id":"RS-1"})).await;
+        let issue=json!({"reservation_id":"RS-1","operation":"placement"});
+        let placement=json!({"panel":"P-A","slot":"F1","reservation_id":"RS-1"});
+        apply("smt_load","load-other",json!({"slot":"F1","reel":"REEL-R"})).await;
+        assert_eq!(write("smt_place","unissued",placement.clone()).await["code"],"MATERIAL_ISSUE_NOT_FOUND");
+        apply("create_inspection","inspect",json!({"work_order":"WO-A","inspection_id":"INS-1","specification_version":"QA@1"})).await;
+        apply("record_measurement","measure",json!({"inspection_id":"INS-1","characteristic":"width","value":3,"unit":"mm","lower_limit":1,"upper_limit":2})).await;
+        apply("complete_inspection","complete-inspection",json!({"inspection_id":"INS-1"})).await;
+        let review=json!({"inspection_id":"INS-1","responsible":"QA","reason":"placement investigation","evidence":"QA-LOG"});
+        apply("open_nonconformance","open",review.clone()).await;
+        apply("place_quality_hold","hold",review.clone()).await;
+        let frozen=cursor().await;
+        assert_eq!(write("issue_material_to_operation","issue",issue.clone()).await["code"],"QUALITY_HOLD");
+        assert_eq!(write("smt_place","place",placement.clone()).await["code"],"QUALITY_HOLD");
+        assert_eq!(cursor().await,frozen);
+        let mut conceded=review.clone();
+        conceded["decision"]=json!("concession");
+        apply("disposition_nonconformance","disposition",conceded).await;
+        apply("release_quality_hold","release-quality",review).await;
+        let issued=apply("issue_material_to_operation","issue",issue).await;
+        assert_eq!(issued["reservation"]["work_center"],"SMT-1");
+        assert_eq!(write("smt_place","wrong-reel",placement.clone()).await["code"],"FEEDER_LOT_MISMATCH");
+        apply("smt_load","load-reel",json!({"slot":"F1","reel":"REEL-C"})).await;
+        let mut placement=placement;
+        placement["expected_cursor"]=cursor().await;
+        placement["idempotency_key"]=json!("place");
+        let placed=invoke("smt_place",placement.clone()).await;
+        assert_eq!(placed["ok"],true,"{placed}");
+        assert_eq!(invoke("smt_place",placement).await,placed);
+        apply("smt_aoi","aoi",json!({"panel":"P-A","result":"pass"})).await;
+        let split=apply("smt_split","split",json!({"panel":"P-A"})).await;
+        assert_eq!(split["serial_numbers"],json!(["A-01","A-02"]));
+        assert_eq!(invoke("get_stock_balance",json!({"item_id":"COMPONENT","location":"RAW-01"})).await["balance"]["on_hand"],"1");
+        let forward=invoke("trace_lot_forward",json!({"lot_id":"REEL-C"})).await;
+        assert_eq!(forward["edges"].as_array().unwrap().len(),3);
+        assert_eq!(forward["edges"][0]["reservation_id"],"RS-1");
+        let (peer,_child)=connect_mode(&db,"0",true).await;
+        let backward=business(&peer,run,"trace_serial_backward",json!({"serial_number":"A-01"})).await;
+        assert_eq!(backward["edges"][0]["source"]["id"],"REEL-C");
+        assert_eq!(backward["edges"][0]["quantity"],"2");
+        let cnc=call(&client,"open_scenario",json!({"scenario_id":"cnc","version":42})).await;
+        for name in ["reserve_material","issue_material_to_operation","trace_lot_forward","trace_serial_backward"] {
+            let smt=call(&client,"describe_tool",json!({"run_id":run,"name":name})).await;
+            let cnc=call(&client,"describe_tool",json!({"run_id":cnc["run_id"],"name":name})).await;
+            assert_eq!(smt["tool"],cnc["tool"],"{name}");
+        }
+    }).await.unwrap();
 }

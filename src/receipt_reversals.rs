@@ -113,7 +113,7 @@ pub(crate) fn reverse(
     let original = tx.query_row(
         "SELECT s.posted_cursor IS NOT NULL,
           EXISTS(SELECT 1 FROM stock_receipt_reversals r WHERE r.run=s.run AND r.receipt=s.receipt),
-          EXISTS(SELECT 1 FROM scenario_holds h WHERE h.run=s.run AND h.batch=s.lot),
+          EXISTS(SELECT 1 FROM stock_effective_lot_holds h WHERE h.run=s.run AND h.batch=s.lot),
           EXISTS(SELECT 1 FROM stock_reservations r WHERE r.run=s.run AND r.lot=s.lot
             AND (r.status IN ('reserved','picked','issued') OR EXISTS(SELECT 1 FROM stock_operation_issues i
                 WHERE i.run=r.run AND i.reservation=r.reservation)))

@@ -1078,7 +1078,7 @@ pub(crate) fn report_material_inputs(
         let issue = tx
             .query_row(
                 "SELECT r.lot,s.unit,r.quantity-COALESCE(t.quantity,0),EXISTS(
-                 SELECT 1 FROM stock_lot_holds h WHERE h.run=r.run AND h.batch=r.lot)
+                 SELECT 1 FROM stock_effective_lot_holds h WHERE h.run=r.run AND h.batch=r.lot)
              FROM stock_operation_issues i
              JOIN stock_reservations r ON r.run=i.run AND r.reservation=i.reservation
              JOIN stock_lot_origins s ON s.run=r.run AND s.lot=r.lot

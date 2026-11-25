@@ -471,7 +471,7 @@ fn transferable_quantity(
 ) -> rusqlite::Result<Result<i64, Rejection>> {
     let lot_stock = tx.query_row(
         "SELECT s.location,s.quantity,s.requires_inspection AND q.receipt IS NULL,
-            EXISTS(SELECT 1 FROM stock_lot_holds h WHERE h.run=s.run AND h.batch=s.lot),
+            EXISTS(SELECT 1 FROM stock_effective_lot_holds h WHERE h.run=s.run AND h.batch=s.lot),
             EXISTS(SELECT 1 FROM stock_reservations r LEFT JOIN stock_effective_return_totals t ON t.run=r.run AND t.reservation=r.reservation
                 WHERE r.run=s.run AND r.lot=s.lot AND (r.status IN ('reserved','picked')
                     OR (r.status='issued' AND r.quantity>COALESCE(t.quantity,0))))
