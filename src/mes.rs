@@ -573,6 +573,8 @@ pub fn spec(action: Action) -> Spec {
                 "OPERATION_OUT_OF_SEQUENCE",
                 "MATERIAL_SHORTAGE",
                 "MATERIAL_HELD",
+                "MACHINING_INSPECTION_REQUIRED",
+                "FIRST_ARTICLE_QUANTITY_REQUIRED",
                 "TOOL_SETUP_REQUIRED",
                 "REPORT_EXCEEDS_REMAINING",
                 "WIP_INPUTS_REQUIRED",
@@ -649,6 +651,8 @@ pub struct Setup {
     pub alternate_centers: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub qualified_tools: BTreeMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub machining_inspections: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_centers: Option<[String; 3]>,
 }
@@ -1492,6 +1496,36 @@ pub fn invoke(
     {
         return Ok((error(&code), false));
     }
+    if setup.machining_inspections
+        && matches!(
+            action,
+            Action::PostOperationReport | Action::CompleteOperation
+        )
+        && args["operation"] == MATERIAL_INPUT_OPERATION
+        && let Some(order) = state.orders.get(args["work_order"].as_str().unwrap())
+        && order.phase == Phase::Running
+        && order.step == 0
+    {
+        let order_id = args["work_order"].as_str().unwrap();
+        if let Some(code) = crate::quality::blocking(tx, run, order_id)? {
+            return Ok((error(&code), false));
+        }
+        let reports: Vec<_> = active_machining_reports(&state, order_id).collect();
+        if let Some(last) = reports.last()
+            && !crate::quality::machining_passed(tx, run, &last.id)?
+        {
+            return Ok((error("MACHINING_INSPECTION_REQUIRED"), false));
+        }
+        if action == Action::PostOperationReport
+            && !reports.iter().any(|report| {
+                report.tool_setup.as_ref().map(|tool| tool.cursor)
+                    == order.tool_setup.as_ref().map(|tool| tool.cursor)
+            })
+            && args["quantity"] != 1
+        {
+            return Ok((error("FIRST_ARTICLE_QUANTITY_REQUIRED"), false));
+        }
+    }
     let mut response = if action == Action::ReceiveWorkOrderOutput {
         let order_id = args["work_order"].as_str().unwrap();
         let Some(order) = state.orders.get(order_id) else {
@@ -1728,6 +1762,42 @@ pub fn invoke(
         params![run, key, request, response.to_string()],
     )?;
     Ok((response, true))
+}
+
+fn active_machining_reports<'a>(
+    state: &'a State,
+    order: &'a str,
+) -> impl Iterator<Item = &'a Report> {
+    state.reports.iter().filter(move |report| {
+        report.order == order && report.step == 0 && !report.reversed && report.tool_setup.is_some()
+    })
+}
+
+pub(crate) fn machining_inspection_kind(
+    tx: &Transaction<'_>,
+    run: &str,
+    order: &str,
+    report_id: &str,
+) -> anyhow::Result<Option<&'static str>> {
+    let stored: Option<String> = tx
+        .query_row("SELECT state FROM mes_runs WHERE run=?1", [run], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    let Some(stored) = stored else {
+        return Ok(None);
+    };
+    let state: State = serde_json::from_str(&stored)?;
+    let Some(report) =
+        active_machining_reports(&state, order).find(|report| report.id == report_id)
+    else {
+        return Ok(None);
+    };
+    let setup = report.tool_setup.as_ref().unwrap().cursor;
+    let first = active_machining_reports(&state, order)
+        .find(|report| report.tool_setup.as_ref().unwrap().cursor == setup)
+        .is_some_and(|first| first.id == report_id);
+    Ok(Some(if first { "first_article" } else { "in_process" }))
 }
 
 fn release_blocker(phase: &Phase, stock: usize, held: bool) -> Option<&'static str> {

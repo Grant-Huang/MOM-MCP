@@ -5037,6 +5037,11 @@ fn p10_01_cnc_tool_setup_and_reassignment() {
     run_wip_scenario(46);
 }
 
+#[test]
+fn p10_02_cnc_first_article_and_process_inspections() {
+    run_wip_scenario(47);
+}
+
 fn run_wip_scenario_with_quality(version: u64, quality_recovery: Option<QualityCheckpoint>) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
@@ -6290,6 +6295,112 @@ async fn setup_genealogy_second_lot(
         .await;
     }
 }
+async fn cnc_machining_inspections(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    order: &str,
+) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["expected_cursor"] = cursor().await;
+        args["idempotency_key"] = json!(key);
+        invoke(name, args).await
+    };
+    let apply = async |name: &str, key: &str, args| {
+        let result = write(name, key, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    };
+    let op = json!({"work_order":order,"operation":"machining"});
+    apply("start_operation", "start-inspection", op.clone()).await;
+    let report = |quantity, amount| json!({"work_order":order,"operation":"machining","quantity":quantity,"material_inputs":{"RS-1":amount}});
+    let before = cursor().await;
+    assert_eq!(
+        write(
+            "post_operation_report",
+            "skip-first-piece",
+            report(2, "0.5")
+        )
+        .await["code"],
+        "FIRST_ARTICLE_QUANTITY_REQUIRED"
+    );
+    assert_eq!(cursor().await, before);
+    let first = apply("post_operation_report", "first-piece", report(1, "0.5")).await;
+    let first_id = &first["report"]["id"];
+    let before = cursor().await;
+    assert_eq!(
+        write("post_operation_report", "uninspected-first", report(9, "1")).await["code"],
+        "MACHINING_INSPECTION_REQUIRED"
+    );
+    assert_eq!(cursor().await, before);
+    let inspect = async |id: &str, report_id: &Value, value, prior: Option<&str>| {
+        let mut args = json!({"work_order":order,"inspection_id":id,"report_id":report_id,"specification_version":"QA@1"});
+        if let Some(prior) = prior {
+            args["reinspection_of"] = json!(prior);
+        }
+        let created = apply("create_inspection", &format!("create-{id}"), args).await;
+        apply(
+            "record_measurement",
+            &format!("measure-{id}"),
+            json!({"inspection_id":id,"characteristic":"width",
+            "value":value,"unit":"mm","lower_limit":1,"upper_limit":2}),
+        )
+        .await;
+        let result = apply(
+            "complete_inspection",
+            &format!("complete-{id}"),
+            json!({"inspection_id":id}),
+        )
+        .await;
+        (created, result)
+    };
+    let (created, result) = inspect("FIRST", first_id, 1.5, None).await;
+    assert_eq!(created["machining_inspection"]["kind"], "first_article");
+    assert_eq!(result["inspection"]["status"], "passed");
+    let other = apply("post_operation_report", "rest", report(9, "1")).await;
+    let other_id = &other["report"]["id"];
+    assert_eq!(
+        write("complete_operation", "early-complete", op.clone()).await["code"],
+        "MACHINING_INSPECTION_REQUIRED"
+    );
+    let (created, result) = inspect("PROCESS", other_id, 3.0, None).await;
+    assert_eq!(created["machining_inspection"]["kind"], "in_process");
+    assert_eq!(result["inspection"]["status"], "failed");
+    assert_eq!(
+        write("complete_operation", "failed-complete", op.clone()).await["code"],
+        "QUALITY_HOLD"
+    );
+    let invalid = json!({"work_order":order,"inspection_id":"WRONG","report_id":first_id,"specification_version":"QA@1","reinspection_of":"PROCESS"});
+    assert_eq!(
+        write("create_inspection", "wrong-reinspection", invalid).await["code"],
+        "REINSPECTION_NOT_ACCEPTABLE"
+    );
+    let review = json!({"inspection_id":"PROCESS","responsible":"QA-01","reason":"dimensional check","evidence":"QA-MEASURE"});
+    apply("open_nonconformance", "process-open", review.clone()).await;
+    apply("place_quality_hold", "process-hold", review.clone()).await;
+    let (_, result) = inspect("PROCESS-PASS", other_id, 1.5, Some("PROCESS")).await;
+    assert_eq!(result["inspection"]["status"], "passed");
+    let mut disposition = review.clone();
+    disposition["decision"] = json!("reinspection");
+    disposition["reinspection_id"] = json!("PROCESS-PASS");
+    apply(
+        "disposition_nonconformance",
+        "process-disposition",
+        disposition,
+    )
+    .await;
+    apply("release_quality_hold", "process-release", review).await;
+    apply("complete_operation", "inspected-complete", op.clone()).await;
+    let original = invoke("get_inspection", json!({"inspection_id":"PROCESS"})).await;
+    assert_eq!(original["machining_inspection"]["report_id"], *other_id);
+    assert_eq!(original["inspection"]["status"], "failed");
+    assert_eq!(
+        invoke("reconcile_work_order", json!({"work_order":order})).await["balanced"],
+        true
+    );
+}
+
 async fn assert_genealogy(
     client: &RunningService<RoleClient, ()>,
     run: &Value,
@@ -6417,10 +6528,10 @@ async fn operation_issue_scenarios_with_quality(
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=46) {
+            if matches!(version,36..=47) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
             }
-            if matches!(version,45 | 46) {
+            if matches!(version,45..=47) {
                 route["coating"]=json!({"work_center":"COAT-01","predecessors":["machining"]});
                 route["assembly"]["predecessors"]=json!(["coating"]);
             }
@@ -6637,7 +6748,7 @@ async fn operation_issue_scenarios_with_quality(
             apply("pick_material","pick",json!({"reservation_id":"RS-1"})).await;
             assert_eq!(write("issue_material_to_operation","issue",issue.clone()).await["code"],"ISSUE_OPERATION_NOT_ELIGIBLE");
             apply("dispatch_operation","dispatch",json!({"work_order":order,"operation":operation,"work_center":center})).await;
-            if version == 46 {
+            if matches!(version,46 | 47) {
                 let prep=json!({"work_order":order,"operation":operation});
                 let mut setup=json!({"work_order":order,"operation":operation,"tool_id":"CUT-A","reason":"initial setup"});
                 apply("set_operation_tool","mount-primary",setup.clone()).await;
@@ -6662,12 +6773,16 @@ async fn operation_issue_scenarios_with_quality(
             submitted["idempotency_key"]=json!("issue");
             let first=invoke("issue_material_to_operation",submitted.clone()).await;
             assert_eq!(first["reservation"]["status"],"issued","{first}");
-            assert_eq!(first["reservation"]["work_center"],if version == 46 {"MACH-02"} else {center});
+            assert_eq!(first["reservation"]["work_center"],if matches!(version,46 | 47) {"MACH-02"} else {center});
             assert_eq!(balance().await["balance"]["on_hand"],"0.5");
             assert_eq!(balance().await["balance"]["available"],"0.5");
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
+            if version == 47 {
+                Box::pin(cnc_machining_inspections(&client, run, order)).await;
+                continue;
+            }
             if matches!(version,36..=46) {
                 Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version,quality_recovery)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;

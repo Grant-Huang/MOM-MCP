@@ -358,6 +358,56 @@ fn measurements(tx: &Transaction<'_>, run: &str, id: &str) -> rusqlite::Result<V
         .collect()
 }
 
+pub(crate) fn add_machining_inspection_schema(action: Action, spec: &mut crate::catalog::Spec) {
+    if action == Action::CreateInspection {
+        spec.input["properties"]["report_id"] = crate::inventory::id_schema();
+        spec.errors = &[
+            "INVALID_ARGUMENT",
+            "WORK_ORDER_NOT_FOUND",
+            "INSPECTION_ALREADY_EXISTS",
+            "PLAN_REVISION_NOT_FOUND",
+            "PLAN_REVISION_NOT_ACTIVE",
+            "INSPECTION_PLAN_SNAPSHOT_MISMATCH",
+            "RECEIPT_INSPECTION_NOT_PENDING",
+            "REINSPECTION_NOT_ACCEPTABLE",
+            "MACHINING_REPORT_NOT_FOUND",
+            "VERSION_CONFLICT",
+            "IDEMPOTENCY_CONFLICT",
+        ];
+    }
+    spec.output["oneOf"][0]["properties"]["machining_inspection"] = crate::catalog::object(
+        &["report_id", "kind"],
+        json!({"report_id":crate::inventory::id_schema(),"kind":{"enum":["first_article","in_process"]}}),
+    );
+}
+
+fn machining_target(
+    tx: &Transaction<'_>,
+    run: &str,
+    id: &str,
+) -> rusqlite::Result<Option<(String, String)>> {
+    tx.query_row(
+        "SELECT report,kind FROM quality_machining_inspections WHERE run=?1 AND inspection=?2",
+        params![run, id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()
+}
+
+pub(crate) fn machining_passed(
+    tx: &Transaction<'_>,
+    run: &str,
+    report: &str,
+) -> rusqlite::Result<bool> {
+    tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM quality_machining_inspections m
+        JOIN quality_inspection_results r ON r.run=m.run AND r.inspection=m.inspection
+        WHERE m.run=?1 AND m.report=?2 AND r.status='passed')",
+        params![run, report],
+        |row| row.get(0),
+    )
+}
+
 pub(crate) fn invoke(
     tx: Transaction<'_>,
     run: &str,
@@ -426,6 +476,9 @@ pub(crate) fn invoke(
         if let Some(receipt) = receiving_target(&tx, run, id)? {
             response["receipt_id"] = json!(receipt);
         }
+        if let Some((report, kind)) = machining_target(&tx, run, id)? {
+            response["machining_inspection"] = json!({"report_id":report,"kind":kind});
+        }
         if let Some(plan) = plan {
             response["inspection_plan"] = json!(plan);
         }
@@ -482,6 +535,30 @@ pub(crate) fn invoke(
             }
         }
         let reinspection_of = arguments.get("reinspection_of").and_then(Value::as_str);
+        let report = arguments.get("report_id").and_then(Value::as_str);
+        if report.is_some_and(|report| !identifier(report))
+            || (report.is_some() && receipt.is_some())
+        {
+            return Ok(Err(Rejection::invalid("report_id")));
+        }
+        let kind = if let Some(report) = report {
+            let Some(kind) = crate::mes::machining_inspection_kind(&tx, run, work_order, report)?
+            else {
+                return Ok(Err(reject("MACHINING_REPORT_NOT_FOUND", "report_id")));
+            };
+            Some(kind)
+        } else {
+            None
+        };
+        if let Some(original) = reinspection_of {
+            let prior = machining_target(&tx, run, original)?;
+            if prior.as_ref().map(|(report, _)| report.as_str()) != report {
+                return Ok(Err(reject(
+                    "REINSPECTION_NOT_ACCEPTABLE",
+                    "reinspection_of",
+                )));
+            }
+        }
         if versioned_plans {
             let Some(plan) = inspection_plan(&tx, run, specification)? else {
                 return Ok(Err(reject(
@@ -537,8 +614,14 @@ pub(crate) fn invoke(
                 params![run, id, receipt],
             )?;
         }
-        json!({"inspection":{"inspection_id":id,"work_order":work_order,
-            "specification_version":specification,"status":"pending"}})
+        let mut result = json!({"inspection":{"inspection_id":id,"work_order":work_order,
+            "specification_version":specification,"status":"pending"}});
+        if let Some((report, kind)) = report.zip(kind) {
+            tx.execute("INSERT INTO quality_machining_inspections(run,inspection,report,kind) VALUES(?1,?2,?3,?4)",
+                params![run,id,report,kind])?;
+            result["machining_inspection"] = json!({"report_id":report,"kind":kind});
+        }
+        result
     } else {
         let Some(mut inspection) = inspection(&tx, run, id)? else {
             return Ok(Err(reject("INSPECTION_NOT_FOUND", "inspection_id")));

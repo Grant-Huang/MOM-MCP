@@ -1097,3 +1097,19 @@ spec = "acceptance/P10.md"
 features = ["F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P10-UI CNC tool setup and report provenance" }
+
+[[case]]
+id = "P10-02"
+phase = "P10"
+spec = "acceptance/P10.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p10_02_cnc_first_article_and_process_inspections" }
+
+[[case]]
+id = "P10-03"
+phase = "P10"
+spec = "acceptance/P10.md"
+features = ["F08", "F09", "F10", "F11"]
+layers = ["playwright"]
+tests = { playwright = "P10-03 Release CNC first article and process inspection" }

@@ -432,6 +432,24 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         "operation tool setup requires qualified tools"
     );
     anyhow::ensure!(
+        !definition
+            .manufacturing
+            .as_ref()
+            .is_some_and(|setup| setup.machining_inspections)
+            || ([
+                Action::SetOperationTool,
+                Action::PostOperationReport,
+                Action::CompleteOperation,
+                Action::CreateInspection,
+                Action::CompleteInspection,
+                Action::ActivateInspectionPlanRevision
+            ]
+            .iter()
+            .all(|action| definition.capabilities.contains(action))
+                && !definition.capabilities.contains(&Action::ReportOperation)),
+        "machining inspections require tool setups, versioned inspections and controlled reporting"
+    );
+    anyhow::ensure!(
         !definition.capabilities.contains(&Action::CompleteCoating)
             || definition.capabilities.contains(&Action::ConsolidateWip),
         "coating handoff requires work in process consolidation"
@@ -744,6 +762,10 @@ impl Scenarios {
                  specification_version TEXT NOT NULL,
                  PRIMARY KEY (run, id)
              );
+             CREATE TABLE IF NOT EXISTS quality_machining_inspections (
+                 run TEXT NOT NULL, inspection TEXT NOT NULL, report TEXT NOT NULL,
+                 kind TEXT NOT NULL, PRIMARY KEY(run,inspection)
+             );
              CREATE TABLE IF NOT EXISTS quality_measurements (
                  run TEXT NOT NULL, inspection TEXT NOT NULL, characteristic TEXT NOT NULL,
                  value REAL NOT NULL, unit TEXT NOT NULL, lower_limit REAL NOT NULL,
@@ -821,6 +843,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-cross-source-wip.json"),
             include_str!("../fixtures/cnc-coating-handoff.json"),
             include_str!("../fixtures/cnc-tool-setup.json"),
+            include_str!("../fixtures/cnc-machining-inspections.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-closed-loop.json"),
@@ -1177,6 +1200,14 @@ impl Scenarios {
                 .contains(&Action::ReleaseReceiptInspection)
         {
             spec.input["properties"]["receipt_id"] = catalog::text();
+        }
+        if matches!(action, Action::CreateInspection | Action::GetInspection)
+            && definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| setup.machining_inspections)
+        {
+            crate::quality::add_machining_inspection_schema(action, &mut spec);
         }
         if action == Action::PostOperationReport && !definition.issued_report_inputs() {
             spec.input["properties"]
