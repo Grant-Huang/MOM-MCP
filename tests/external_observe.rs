@@ -244,7 +244,7 @@ async fn one_observe_entry_reads_three_authorized_worlds() {
     async fn carbon(Json(request): Json<serde_json::Value>) -> impl IntoResponse {
         let id = &request["id"];
         let result = match request["method"].as_str().unwrap() {
-            "initialize" => json!({"protocolVersion":"2025-11-25"}),
+            "initialize" => json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}),
             "notifications/initialized" => return StatusCode::ACCEPTED.into_response(),
             "tools/call" => {
                 assert_eq!(request["params"]["arguments"]["name"], "production_getJob");
