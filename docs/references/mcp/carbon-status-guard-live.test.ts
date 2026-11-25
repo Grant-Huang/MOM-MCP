@@ -37,6 +37,7 @@ vi.mock("@carbon/lib/telemetry", () => ({
 }));
 
 import { raiseMoment } from "@carbon/lib/workflows";
+import { postPicking } from "../app/modules/inventory/inventory.service";
 import { releaseJobs } from "../app/modules/production/production.server";
 import { updateJobStatus } from "../app/modules/production/production.service";
 
@@ -219,6 +220,7 @@ it.each(["status guard", "release workflow"] as const)(
 					expect(row.data?.releasedDate).toBeNull();
 					read("Draft");
 				};
+				let stockItemId: string | undefined;
 				try {
 					await expectBlocked("no operations");
 					const method = await admin
@@ -304,11 +306,21 @@ it.each(["status guard", "release workflow"] as const)(
 						.select("id,unitOfMeasureCode")
 						.eq("companyId", company)
 						.neq("id", sample.data!.itemId)
-						.neq("itemTrackingType", "Non-Inventory")
+						.eq("itemTrackingType", "Inventory")
 						.eq("replenishmentSystem", "Buy")
 						.limit(1)
 						.single();
 					expect(item.error).toBeNull();
+					const assignCenter = await admin
+						.from("jobOperation")
+						.update({ workCenterId: workCenter.data!.id })
+						.eq("companyId", company)
+						.eq("id", operation.data!.id)
+						.select("id")
+						.single();
+					expect(assignCenter.error).toBeNull();
+					stockItemId = item.data!.id;
+
 					const material = await admin
 						.from("jobMaterial")
 						.insert({
@@ -332,7 +344,7 @@ it.each(["status guard", "release workflow"] as const)(
 						const result = await admin
 							.from("pickingListLine")
 							.select(
-								"id,jobMaterialId,jobOperationId,itemId,quantityToPick,storageUnitId,pickingList!inner(status,locationId)",
+								"id,jobMaterialId,jobOperationId,itemId,quantityToPick,storageUnitId,toStorageUnitId,pickingListId,pickingList!inner(status,locationId)",
 							)
 							.eq("jobId", id)
 							.eq("companyId", company)
@@ -374,6 +386,8 @@ it.each(["status guard", "release workflow"] as const)(
 							itemId: item.data!.id,
 							quantityToPick: 1,
 							storageUnitId: bin.data!.id,
+							toStorageUnitId: expect.any(String),
+							pickingListId: expect.any(String),
 							pickingList: { status: "Draft", locationId: releaseLocationId },
 						},
 					]);
@@ -391,7 +405,93 @@ it.each(["status guard", "release workflow"] as const)(
 						repeated.data?.skipped.map((job) => [job.jobId, job.status]),
 					).toEqual([[id, "Ready"]]);
 					expect(await readPickingLines()).toEqual(picking);
+					const line = picking![0];
+					expect(line.toStorageUnitId).not.toBe(bin.data!.id);
+					await pg
+						.insertInto("itemLedger")
+						.values({
+							itemId: item.data!.id,
+							companyId: company,
+							locationId: releaseLocationId!,
+							storageUnitId: bin.data!.id,
+							quantity: 2,
+							entryType: "Positive Adjmt.",
+							postingDate: new Date().toISOString().slice(0, 10),
+							createdBy: actorId,
+						})
+						.execute();
+					const post = () =>
+						postPicking(ctx, {
+							type: "inventory",
+							pickingListId: line.pickingListId,
+							pickingListLineId: line.id,
+							locationId: releaseLocationId!,
+							quantity: 1,
+						});
+					await post();
+					await expect(post()).rejects.toThrow(
+						"This line is already fully picked",
+					);
+					const posted = await pg
+						.selectFrom("itemLedger")
+						.select(["storageUnitId", "quantity"])
+						.where("documentLineId", "=", line.id)
+						.where("companyId", "=", company)
+						.orderBy("quantity", "asc")
+						.execute();
+					expect(
+						posted.map((entry) => [
+							entry.storageUnitId,
+							Number(entry.quantity),
+						]),
+					).toEqual([
+						[bin.data!.id, -1],
+						[line.toStorageUnitId, 1],
+					]);
+					const totals = await pg
+						.selectFrom("itemLedger")
+						.select(({ fn }) => [
+							"storageUnitId",
+							fn.sum("quantity").as("balance"),
+						])
+						.where("locationId", "=", releaseLocationId!)
+						.where("companyId", "=", company)
+						.where("itemId", "=", item.data!.id)
+						.groupBy("storageUnitId")
+						.execute();
+					expect(
+						Object.fromEntries(
+							totals.map((entry) => [
+								entry.storageUnitId,
+								Number(entry.balance),
+							]),
+						),
+					).toEqual({ [bin.data!.id]: 1, [line.toStorageUnitId!]: 1 });
+					const picked = await admin
+						.from("pickingListLine")
+						.select("quantityPicked,status")
+						.eq("id", line.id)
+						.eq("companyId", company)
+						.single();
+					expect(picked.error).toBeNull();
+					expect(picked.data).toEqual({ quantityPicked: 1, status: "Picked" });
+					const staged = await admin
+						.from("jobMaterial")
+						.select("storageUnitId")
+						.eq("id", material.data!.id)
+						.eq("companyId", company)
+						.single();
+					expect(staged.error).toBeNull();
+					expect(staged.data?.storageUnitId).toBe(line.toStorageUnitId);
 				} finally {
+					if (stockItemId) {
+						await pg
+							.deleteFrom("itemLedger")
+							.where("locationId", "=", releaseLocationId!)
+							.where("companyId", "=", company)
+							.where("itemId", "=", stockItemId)
+							.execute();
+					}
 					await pg.destroy();
 					const deletedPicks = await admin
 						.from("pickingList")
