@@ -167,7 +167,7 @@ impl HttpOrderReader<'_> {
         company_id: i64,
     ) -> Result<Value, ReadError> {
         let response = self
-            .odoo_query(database, path, id, fields, 2)?
+            .odoo_query(database, path, id, fields)?
             .bearer_auth(self.source.token)
             .header(reqwest::header::ACCEPT, "application/json")
             .send()

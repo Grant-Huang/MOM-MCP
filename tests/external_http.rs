@@ -16,13 +16,14 @@ async fn odoo(headers: HeaderMap, Json(request): Json<Value>) -> impl IntoRespon
     assert_eq!(
         request,
         json!({
-            "domain": [["id", "=", id]], "fields": ["id", "name", "state", "write_date"], "limit": 1
+            "domain": [["id", "=", id]], "fields": ["id", "name", "state", "write_date"], "limit": 2
         })
     );
-    Json(if id == 42 {
-        json!([{"id":42,"name":"MO-42","state":"confirmed"}])
-    } else {
-        json!([])
+    let row = json!({"id":id,"name":"MO-42","state":"confirmed"});
+    Json(match id {
+        42 => json!([row]),
+        44 => json!([row, row]),
+        _ => json!([]),
     })
 }
 
@@ -72,6 +73,7 @@ async fn reads_and_classifies_odoo_and_openmes_http_responses() {
 
     assert_eq!(odoo.read_order("42").await.unwrap().display_number, "MO-42");
     assert_eq!(odoo.read_order("43").await, Err(ReadError::NotVisible));
+    assert_eq!(odoo.read_order("44").await, Err(ReadError::InvalidResponse));
     assert_eq!(
         openmes
             .read_order("42")

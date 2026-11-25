@@ -190,7 +190,6 @@ impl<'a> HttpOrderReader<'a> {
         path: &str,
         id: i64,
         fields: &[&str],
-        limit: u8,
     ) -> Result<reqwest::RequestBuilder, ReadError> {
         let url = self
             .origin
@@ -203,7 +202,7 @@ impl<'a> HttpOrderReader<'a> {
             .json(&json!({
                 "domain": [["id", "=", id]],
                 "fields": fields,
-                "limit": limit,
+                "limit": 2,
             })))
     }
 
@@ -222,7 +221,6 @@ impl<'a> HttpOrderReader<'a> {
                     "/json/2/mrp.production/search_read",
                     numeric_id,
                     &["id", "name", "state", "write_date"],
-                    1,
                 )?,
             ),
             HttpSourceKind::OpenMes => (
