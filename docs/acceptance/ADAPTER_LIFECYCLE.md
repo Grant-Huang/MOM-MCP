@@ -10,6 +10,12 @@
 
 当前映射逐项保留源值，`normalized_status` 为空，`mapping_issue=unmapped`。未来提议同一规范状态时，需要核对各来源的操作前置条件、库存或计划副作用、进入状态后的可执行操作及反例。运行 `cargo test --locked --test external_order preserves_source_specific_release_states` 验证实际 Rust 投影器。测试使用来源响应夹具。
 
+## Odoo 同一制造单确认前后复验
+
+从 MOM-MCP 根目录构建 `cargo build --locked --example external_order_smoke`，再运行 `bash docs/references/mcp/odoo-adapter-lifecycle-smoke.sh`。脚本只操作新建的 Odoo 和 PostgreSQL 测试容器，使用回环端口，并在退出时清理本次容器及临时凭据。默认使用能力矩阵所列固定 Odoo 镜像。若运行环境使用同摘要重打包的本地镜像，通过 `MOM_ODOO_TEST_IMAGE` 指定该镜像。
+
+固定 Odoo Community 19 和 PostgreSQL 16 实测通过。同一公司身份先经 Rust Adapter 读到 `draft`，测试夹具在 Odoo 内执行 `action_confirm` 后，按同一制造单 ID 读回 `confirmed`。另一公司制造单仍为 `draft`，交换身份验证双方跨公司不可见。写动作由测试夹具执行，Adapter 只查询。此结果为来源直连证据。
+
 ## Carbon 放行规则与重读复验
 
 在固定 Carbon 提交 `05bd067c0a72ca9f0983f6278d2a7c9bb48b716c` 上，从 `apps/erp` 运行 `node_modules/.bin/vitest run test/release-jobs.test.ts test/job-status-guard.test.ts`。两套共 28 项通过，验证放行顺序和状态守卫，使用测试依赖替身。
