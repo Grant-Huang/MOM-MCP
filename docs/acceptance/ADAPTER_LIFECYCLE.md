@@ -26,7 +26,13 @@
 
 固定 Carbon 提交与隔离社区后端上，`updateJobStatus` 使用真实认证会话和 PostgREST，按公司、Job ID 和前置状态更新一张新建的合成 Job。Rust Adapter 在更新前读到 `Draft`，更新后按同一 ID 读到 `Ready`。重复请求未命中前置状态。每次读回也核对另一公司已知 Job 不可见。测试替身记录到一次放行事件调用，实际事件投递待另验。
 
-复跑时，先构建 MOM-MCP 的 `external_order_smoke`，把 [真实来源测试](../references/mcp/carbon-status-guard-live.test.ts) 复制到固定 Carbon 检出的 `apps/erp/test`，在 `apps/erp` 执行 `node_modules/.bin/vitest run test/carbon-status-guard-live.test.ts`。环境提供回环网关 `MOM_CARBON_REST_ORIGIN`、公开项目键 `MOM_CARBON_PROJECT_KEY`、具备测试公司 Job 更新权限的用户会话 `MOM_SAMPLE_TOKEN`、由另一身份确认存在的 `MOM_CARBON_OTHER_JOB_ID`，以及 Rust 示例的绝对路径 `MOM_CARBON_ADAPTER_SMOKE`。隔离服务凭据 `MOM_CARBON_TEST_SERVICE_KEY` 仅供测试建立和清理合成 Job。CLI 类型生成未启动成功，数据库、认证和 PostgREST 已独立运行并通过此测试。完整 `releaseJobs` 的 MRP、拣料及事件投递仍待复验。
+复跑时，先构建 MOM-MCP 的 `external_order_smoke`，把 [真实来源测试](../references/mcp/carbon-status-guard-live.test.ts) 复制到固定 Carbon 检出的 `apps/erp/test`，在 `apps/erp` 执行 `node_modules/.bin/vitest run test/carbon-status-guard-live.test.ts`。环境提供回环网关 `MOM_CARBON_REST_ORIGIN`、公开项目键 `MOM_CARBON_PROJECT_KEY`、具备测试公司 Job 更新权限的用户会话 `MOM_SAMPLE_TOKEN`、由另一身份确认存在的 `MOM_CARBON_OTHER_JOB_ID`，以及 Rust 示例的绝对路径 `MOM_CARBON_ADAPTER_SMOKE`。隔离服务凭据 `MOM_CARBON_TEST_SERVICE_KEY` 用于夹具设置、清理和 Carbon 内部服务调用。Rust 示例只接收用户会话和公开项目键。CLI 类型生成未启动成功，数据库、认证和 PostgREST 已独立运行并通过此测试。
+
+### 真实 Carbon 最小放行流程
+
+同一测试文件还运行上游 `releaseJobs`。测试额外需要指向隔离 PostgreSQL 的 `SUPABASE_DB_URL`。Carbon 默认的 Vitest 配置使用占位服务凭据，测试只在回环环境为该 worker 设置实际测试栈绑定。用例创建独立库位、Job 和内部工序，运行真实 PostgREST、PostgreSQL 和放行函数。检查该 Job 在成功列表中、返回已调度且无警告，放行日期已写入，Rust 按同一 ID 从 `Draft` 读回 `Ready`。再次放行按 `Ready` 跳过。两个用例均在固定社区后端通过。
+
+此样本覆盖无额外物料的最小放行。MRP 计划结果、自动拣料单、外协采购及实际事件投递需要各自有副作用断言的夹具。事件与遥测模块在本测试中使用替身。
 
 ## 后续验收缺口
 
@@ -35,4 +41,4 @@
 | 正式 Observe 接真实三源，当前 0/3 | 宿主批准身份、绑定、凭据和出站后，先在 Odoo 复验，再跑 OpenMES 与 Carbon Community。每站记录正式入口 401／200／404 和第二源身份对范围外记录的独立确认。 |
 | 正式身份及故障契约 | 在正式服务层记录过期、撤权、跨世界或未绑定引用的拒绝和零来源调用。记录 502／503 的错误分类、脱敏以及其他来源和 Mock 的零回退。AgentNexus #266 已提供 502 夹具证据。 |
 | Carbon 原生 MCP，授权实例 0/1 | 获得启用 MCP 权益的测试实例。确认工具调用、实际公司边界，并用受信侧记录辨明工具拒绝原因。社区版 REST 证据继续独立登记。 |
-| 生命周期与能力扩展 | 真实 Carbon 状态守卫已读回，仍需复验完整放行流程及其权限、MRP、拣料和事件副作用。状态等价、列表、订阅、写入和跨版本兼容随各自切片定义验收。 |
+| 生命周期与能力扩展 | 真实 Carbon 状态守卫和最小放行已读回。仍需验证有物料或外协的放行、MRP 结果、拣料以及事件副作用。状态等价、列表、订阅、写入和跨版本兼容随各自切片定义验收。 |
