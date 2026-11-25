@@ -833,6 +833,7 @@ impl Scenarios {
             include_str!("../fixtures/smt.json"),
             include_str!("../fixtures/smt-production.json"),
             include_str!("../fixtures/smt-shared-ledger.json"),
+            include_str!("../fixtures/smt-lot-holds.json"),
             include_str!("../fixtures/assembly.json"),
             include_str!("../fixtures/assembly-production.json"),
             include_str!("../fixtures/assembly-public-orders.json"),
