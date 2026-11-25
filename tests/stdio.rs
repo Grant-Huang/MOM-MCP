@@ -6732,11 +6732,20 @@ async fn operation_issue_scenarios_with_quality(
 
 #[tokio::test]
 async fn p9d_22_smt_shared_material_and_genealogy() {
+    smt_shared_material(3).await;
+}
+
+#[tokio::test]
+async fn p9d_32_smt_lot_hold_recovery() {
+    smt_shared_material(4).await;
+}
+
+async fn smt_shared_material(version: u64) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("smt-ledger.sqlite3");
     let (client, _child) = connect_mode(&db, "0", true).await;
     timeout(WAIT, async {
-        let opened = call(&client,"open_scenario",json!({"scenario_id":"smt","version":3})).await;
+        let opened = call(&client,"open_scenario",json!({"scenario_id":"smt","version":version})).await;
         assert_eq!(opened["ok"],true,"{opened}");
         let run=&opened["run_id"];
         let invoke=async |name:&str,args| business(&client,run,name,args).await;
@@ -6808,14 +6817,53 @@ async fn p9d_22_smt_shared_material_and_genealogy() {
         assert_eq!(issued["reservation"]["work_center"],"SMT-1");
         assert_eq!(write("smt_place","wrong-reel",placement.clone()).await["code"],"FEEDER_LOT_MISMATCH");
         apply("smt_load","load-reel",json!({"slot":"F1","reel":"REEL-C"})).await;
+        if version == 4 {
+            apply("hold_stock_lot","hold-before-place",json!({"lot_id":"REEL-C","hold_id":"H-PRE","reason":"supplier review"})).await;
+            let before=cursor().await;
+            assert_eq!(write("smt_place","blocked-place",placement.clone()).await["code"],"MATERIAL_HELD");
+            assert_eq!(cursor().await,before);
+            assert_eq!(invoke("trace_lot_forward",json!({"lot_id":"REEL-C"})).await["edges"],json!([]));
+            apply("release_stock_lot_hold","release-before-place",json!({"hold_id":"H-PRE","reason":"review cleared"})).await;
+        }
         let mut placement=placement;
         placement["expected_cursor"]=cursor().await;
         placement["idempotency_key"]=json!("place");
         let placed=invoke("smt_place",placement.clone()).await;
         assert_eq!(placed["ok"],true,"{placed}");
         assert_eq!(invoke("smt_place",placement).await,placed);
+        if version == 4 {
+            apply("hold_stock_lot","hold-after-place",json!({"lot_id":"REEL-C","hold_id":"H-POST","reason":"supplier review"})).await;
+            let before=cursor().await;
+            assert_eq!(write("smt_aoi","aoi",json!({"panel":"P-A","result":"pass"})).await["code"],"MATERIAL_HELD");
+            assert_eq!(write("smt_split","split",json!({"panel":"P-A"})).await["code"],"MATERIAL_HELD");
+            assert_eq!(cursor().await,before);
+            let mut release=json!({"work_order":"WO-B","definition_selection":{"item_id":"BOARD","inspection_plan_id":"QA"}});
+            release["snapshot_fingerprint"]=invoke("get_release_readiness",release.clone()).await["definition_snapshot"]["fingerprint"].clone();
+            apply("release_work_order","release-other-order",release).await;
+            apply("create_receipt","other-receipt",json!({"receipt_id":"RC-2","item_id":"COMPONENT","revision":1,"quantity":"2","requires_inspection":false})).await;
+            apply("assign_receipt_tracking","other-track",json!({"receipt_id":"RC-2","lot_id":"REEL-R","supplier_lot":"SUP-R","location":"RAW-02"})).await;
+            apply("post_receipt","other-post",json!({"receipt_id":"RC-2"})).await;
+            apply("reserve_material","other-reserve",json!({"reservation_id":"RS-2","work_order":"WO-B","lot_id":"REEL-R","quantity":"2"})).await;
+            apply("pick_material","other-pick",json!({"reservation_id":"RS-2"})).await;
+            apply("issue_material_to_operation","other-issue",json!({"reservation_id":"RS-2","operation":"placement"})).await;
+            apply("smt_load","other-feed",json!({"slot":"F2","reel":"REEL-R"})).await;
+            apply("smt_place","other-place",json!({"panel":"P-B","slot":"F2","reservation_id":"RS-2"})).await;
+            apply("smt_aoi","other-aoi",json!({"panel":"P-B","result":"pass"})).await;
+            apply("smt_split","other-split",json!({"panel":"P-B"})).await;
+            apply("smt_finish","other-finish",json!({"serial":"B-01"})).await;
+            assert_eq!(invoke("trace_serial_backward",json!({"serial_number":"B-01"})).await["edges"][0]["source"]["id"],"REEL-R");
+            apply("release_stock_lot_hold","release-after-place",json!({"hold_id":"H-POST","reason":"review cleared"})).await;
+        }
         apply("smt_aoi","aoi",json!({"panel":"P-A","result":"pass"})).await;
         let split=apply("smt_split","split",json!({"panel":"P-A"})).await;
+        if version == 4 {
+            apply("hold_stock_lot","hold-after-split",json!({"lot_id":"REEL-C","hold_id":"H-FIN","reason":"supplier review"})).await;
+            let before=cursor().await;
+            assert_eq!(write("smt_finish","finish-a",json!({"serial":"A-01"})).await["code"],"MATERIAL_HELD");
+            assert_eq!(cursor().await,before);
+            apply("release_stock_lot_hold","release-after-split",json!({"hold_id":"H-FIN","reason":"review cleared"})).await;
+            assert_eq!(apply("smt_finish","finish-a",json!({"serial":"A-01"})).await["finished"],true);
+        }
         assert_eq!(split["serial_numbers"],json!(["A-01","A-02"]));
         assert_eq!(invoke("get_stock_balance",json!({"item_id":"COMPONENT","location":"RAW-01"})).await["balance"]["on_hand"],"1");
         let forward=invoke("trace_lot_forward",json!({"lot_id":"REEL-C"})).await;

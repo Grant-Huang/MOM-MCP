@@ -108,6 +108,7 @@ pub fn spec(action: Action) -> Spec {
             "INVALID_STATE",
             "REEL_RECALLED",
             "QUALITY_HOLD",
+            "MATERIAL_HELD",
             "RETEST_REQUIRED",
             "BOARD_SCRAPPED",
             "IDEMPOTENCY_CONFLICT",
@@ -451,10 +452,20 @@ pub fn invoke(
                 .map(|board| board.panel.as_str()),
             _ => None,
         };
-        if let Some(panel) = affected.and_then(|id| setup.panels.get(id))
-            && let Some(code) = crate::quality::blocking(tx, run, &panel.order)?
-        {
-            return Ok((failure(&code), false));
+        if let Some(panel) = affected.and_then(|id| setup.panels.get(id)) {
+            if let Some(code) = crate::quality::blocking(tx, run, &panel.order)? {
+                return Ok((failure(&code), false));
+            }
+            if action != Action::SmtPlace
+                && let Some(report) = state.material_reports.iter().find(|report| {
+                    report.order == panel.order
+                        && report.serial_numbers == panel.serials
+                        && !report.reversed
+                })
+                && crate::wip::material_held(tx, run, report)?
+            {
+                return Ok((failure("MATERIAL_HELD"), false));
+            }
         }
     }
     let mut response = apply(&mut state, setup, action, args, events);
