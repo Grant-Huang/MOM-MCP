@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -174,6 +174,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9D-25 Block only WIP with a held input lot", scenario: "cnc@43", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, scopedLotHold: true },
   { title: "P9D-27 Consolidate WIP from two source reports", scenario: "cnc@44", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, consolidateWip: true },
   { title: "P9D-29 Complete coating and hand off split WIP", scenario: "cnc@45", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, consolidateWip: true, coatingHandoff: true },
+  { title: "P10-UI CNC tool setup and report provenance", scenario: "cnc@46", work_order: "WO-1", operation: "machining", work_center: "MACH-01", cncToolSetup: true },
   { title: "P9D-09 Split and merge WIP lots", scenario: "cnc@39", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, splitWip: true },
   { title: "P9D-07 Reverse a WIP movement", scenario: "cnc@38", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, reverseWip: true },
   { title: "P9D-05 Trace an issued lot and serial", scenario: "cnc@37", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, genealogy: true },
@@ -216,8 +217,8 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     await write("activate_revision", { ...frame, revision_type: "bom" });
     await write("create_route_revision", frame);
     const route = { [operation]: { work_center, predecessors: [] } };
-    if (moveWip) route.assembly = { work_center: "ASM-01", predecessors: ["machining"] };
-    if (coatingHandoff) {
+    if (moveWip || cncToolSetup) route.assembly = { work_center: "ASM-01", predecessors: ["machining"] };
+    if (coatingHandoff || cncToolSetup) {
       route.coating = { work_center: "COAT-01", predecessors: ["machining"] };
       route.assembly.predecessors = ["coating"];
     }
@@ -344,6 +345,10 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     await write("reserve_material", { ...reservation, ...lot, work_order: order.work_order, quantity: assemblyLedger ? "2" : "1.5" });
     await write("pick_material", reservation);
     await write("dispatch_operation", { work_order: order.work_order, operation, work_center });
+    if (cncToolSetup) {
+      await write("set_operation_tool", { work_order, operation, tool_id: "CUT-A", reason: "initial setup" });
+      await write("reassign_operation", { work_order, operation, work_center: "MACH-02" });
+    }
     await button("搜索工具").click();
     await page.getByLabel("匹配工具").selectOption("issue_material_to_operation");
     await page.getByLabel("JSON 参数").fill(JSON.stringify({ ...reservation, operation, expected_cursor: cursor, idempotency_key: "issue" }));
@@ -390,6 +395,30 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       cursor = JSON.parse(await status.textContent()).cursor;
       const output = await write("post_operation_report", { work_order, operation, quantity: 6, material_inputs: { "RS-2": "1" } });
       expect(output.report.material_inputs).toMatchObject([{ reservation_id: "RS-2", lot_id: "LOT-2", quantity: "1" }]);
+      return;
+    }
+    if (cncToolSetup) {
+      cursor = JSON.parse(await status.textContent()).cursor;
+      const scope = { work_order, operation };
+      const blocked = await invoke("start_operation", { ...scope, expected_cursor: cursor, idempotency_key: "start-without-tool" });
+      expect(blocked.code).toBe("TOOL_SETUP_REQUIRED");
+      await page.getByLabel("匹配工具").selectOption("set_operation_tool");
+      await page.getByLabel("JSON 参数").fill(JSON.stringify({
+        ...scope, tool_id: "CUT-B", reason: "alternate setup", expected_cursor: cursor, idempotency_key: "mount-alternate",
+      }));
+      await button("调用工具").click();
+      await expect(status).toContainText('"tool_id": "CUT-B"');
+      cursor = JSON.parse(await status.textContent()).cursor;
+      await write("start_operation", scope);
+      await write("post_operation_report", { ...scope, quantity: 4, material_inputs: { "RS-1": "0.5" } });
+      await write("pause_operation", { ...scope, reason: "scheduled replacement" });
+      await write("set_operation_tool", { ...scope, tool_id: "CUT-B-SPARE", reason: "scheduled replacement" });
+      await write("resume_operation", scope);
+      await write("post_operation_report", { ...scope, quantity: 6, material_inputs: { "RS-1": "1" } });
+      const reports = await invoke("list_operation_reports", scope);
+      expect(reports.reports.map(({ tool_setup }) => [tool_setup.work_center, tool_setup.tool_id])).toEqual([
+        ["MACH-02", "CUT-B"], ["MACH-02", "CUT-B-SPARE"],
+      ]);
       return;
     }
     if (moveWip) {

@@ -512,6 +512,7 @@ pub fn invoke(
             wip_sources: Vec::new(),
             consolidated_into: None,
             coating: None,
+            tool_setup: None,
         };
         response["report_id"] = json!(report.id);
         state.material_reports.push(report);

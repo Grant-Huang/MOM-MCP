@@ -93,6 +93,7 @@ pub enum Action {
     SetEquipment,
     DispatchOperation,
     ReassignOperation,
+    SetOperationTool,
     IssueMaterial,
     StartOperation,
     PauseOperation,

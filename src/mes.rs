@@ -85,6 +85,12 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "production",
     ),
     (
+        Action::SetOperationTool,
+        "set_operation_tool",
+        "登记已派工或暂停机加工工序的合格刀具",
+        "production",
+    ),
+    (
         Action::ReassignOperation,
         "reassign_operation",
         "将尚未开工的工序改派到可用工作中心",
@@ -213,6 +219,14 @@ pub fn spec(action: Action) -> Spec {
             "expected_cursor",
             "idempotency_key",
         ],
+        Action::SetOperationTool => &[
+            "work_order",
+            "operation",
+            "tool_id",
+            "reason",
+            "expected_cursor",
+            "idempotency_key",
+        ],
         Action::ReassignOperation => &[
             "work_order",
             "operation",
@@ -333,6 +347,38 @@ pub fn spec(action: Action) -> Spec {
             "expected_cursor".into(),
             json!({"type":"integer","minimum":0,"maximum":i64::MAX}),
         );
+    }
+    if action == Action::SetOperationTool {
+        fields["operation"]["enum"] = json!([MATERIAL_INPUT_OPERATION]);
+        fields.insert("tool_id".into(), crate::inventory::id_schema());
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: "write",
+            input: object(required, Value::Object(fields)),
+            output: json!({"oneOf":[object(&["ok","work_order","operation","tool_setup","cursor"],
+                json!({"ok":{"const":true},"work_order":text(),"operation":text(),
+                    "tool_setup":tool_setup_schema(),"cursor":{"type":"integer","minimum":1}})),
+                object(&["ok","code"],json!({"ok":{"const":false},"code":text(),"cursor":{"type":"integer"}}))
+            ]}),
+            preconditions: &["run_open", "work_order_dispatched_or_paused"],
+            side_effect: "record_operation_tool_setup",
+            errors: &[
+                "INVALID_ARGUMENT",
+                "WORK_ORDER_NOT_FOUND",
+                "WORK_ORDER_HELD",
+                "QUALITY_HOLD",
+                "QUALITY_SCRAPPED",
+                "OPERATION_OUT_OF_SEQUENCE",
+                "INVALID_STATE",
+                "TOOL_NOT_QUALIFIED",
+                "EQUIPMENT_UNAVAILABLE",
+                "VERSION_CONFLICT",
+                "IDEMPOTENCY_CONFLICT",
+            ],
+            visibility: "run",
+        };
     }
     if matches!(
         action,
@@ -460,6 +506,7 @@ pub fn spec(action: Action) -> Spec {
                 "wip_movement_reversals":{"type":"array","items":crate::wip::reversal_schema()},
                 "wip_inputs":crate::wip::inputs_schema(),
                 "consolidated_into":crate::inventory::id_schema(),
+                "tool_setup":tool_setup_schema(),
                 "wip_partitions":{"type":"array","items":crate::wip::partition_schema()},
                 "material_inputs":{"type":"array","items":object(
                     &["reservation_id","lot_id","quantity","unit"],
@@ -526,6 +573,7 @@ pub fn spec(action: Action) -> Spec {
                 "OPERATION_OUT_OF_SEQUENCE",
                 "MATERIAL_SHORTAGE",
                 "MATERIAL_HELD",
+                "TOOL_SETUP_REQUIRED",
                 "REPORT_EXCEEDS_REMAINING",
                 "WIP_INPUTS_REQUIRED",
                 "WIP_NOT_AT_OPERATION",
@@ -575,6 +623,7 @@ pub fn spec(action: Action) -> Spec {
             "INVALID_STATE",
             "QUALITY_HOLD",
             "IDEMPOTENCY_CONFLICT",
+            "TOOL_SETUP_REQUIRED",
             "REPORT_EXCEEDS_REMAINING",
             "REPORT_HAS_DEPENDENCIES",
         ],
@@ -598,6 +647,8 @@ pub struct Setup {
     pub finished_output_receipt: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub alternate_centers: BTreeMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub qualified_tools: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_centers: Option<[String; 3]>,
 }
@@ -606,6 +657,8 @@ pub struct Setup {
 struct Order {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     assigned_centers: BTreeMap<usize, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_setup: Option<ToolSetup>,
     #[serde(default, skip_serializing_if = "priority_is_default")]
     priority: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -622,6 +675,24 @@ struct Order {
     batch: Option<String>,
     units: Vec<String>,
     inspection: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct ToolSetup {
+    work_center: String,
+    tool_id: String,
+    reason: String,
+    cursor: i64,
+}
+
+fn tool_setup_schema() -> Value {
+    object(
+        &["work_center", "tool_id", "reason", "cursor"],
+        json!({
+            "work_center":crate::inventory::id_schema(),"tool_id":crate::inventory::id_schema(),
+            "reason":text(),"cursor":{"type":"integer","minimum":1}
+        }),
+    )
 }
 
 fn priority_is_default(value: &u64) -> bool {
@@ -670,6 +741,8 @@ pub(crate) struct Report {
     pub(crate) consolidated_into: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) coating: Option<crate::wip::Coating>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_setup: Option<ToolSetup>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -882,7 +955,7 @@ fn occupant<'a>(state: &'a State, center: &str, except: &str) -> Option<&'a str>
         .map(|(id, _)| id.as_str())
 }
 
-fn eligible_center(setup: &Setup, primary: &str, candidate: &str) -> bool {
+pub(crate) fn eligible_center(setup: &Setup, primary: &str, candidate: &str) -> bool {
     primary == candidate
         || setup
             .alternate_centers
@@ -1288,6 +1361,7 @@ pub fn invoke(
         } else {
             None
         };
+        let tool_required = order.step == 0 && !setup.qualified_tools.is_empty();
         let available = if order.hold_reason.is_some() {
             vec!["resume_work_order"]
         } else {
@@ -1317,8 +1391,13 @@ pub fn invoke(
                     } else {
                         order.batch.is_some()
                     };
-                    if !state.equipment_down && can_start {
-                        actions.push("start_operation");
+                    if !state.equipment_down {
+                        if tool_required {
+                            actions.push("set_operation_tool");
+                        }
+                        if can_start && (!tool_required || order.tool_setup.is_some()) {
+                            actions.push("start_operation");
+                        }
                     }
                     actions
                 }
@@ -1326,6 +1405,13 @@ pub fn invoke(
                     vec!["pause_operation"]
                 }
                 Phase::Paused if setup.equipment_events && state.equipment_down => vec![],
+                Phase::Paused if tool_required => {
+                    let mut actions = vec!["set_operation_tool"];
+                    if order.tool_setup.is_some() {
+                        actions.push("resume_operation");
+                    }
+                    actions
+                }
                 Phase::Paused => vec!["resume_operation"],
                 Phase::Running
                     if !held && reported_quantity(&state.reports, id, order.step) == QUANTITY =>
@@ -1398,6 +1484,13 @@ pub fn invoke(
             json!({"ok":false,"code":"VERSION_CONFLICT","cursor":cursor}),
             false,
         ));
+    }
+    if !setup.qualified_tools.is_empty()
+        && matches!(action, Action::SetOperationTool | Action::ResumeOperation)
+        && let Some(order) = args["work_order"].as_str()
+        && let Some(code) = crate::quality::blocking(tx, run, order)?
+    {
+        return Ok((error(&code), false));
     }
     let mut response = if action == Action::ReceiveWorkOrderOutput {
         let order_id = args["work_order"].as_str().unwrap();
@@ -1686,6 +1779,7 @@ fn apply(
         action,
         Action::DispatchOperation
             | Action::ReassignOperation
+            | Action::SetOperationTool
             | Action::StartOperation
             | Action::PauseOperation
             | Action::ResumeOperation
@@ -1834,6 +1928,9 @@ fn apply(
                         return error("INVALID_STATE");
                     }
                     order.assigned_centers.insert(order.step, center.into());
+                    if order.step == 0 {
+                        order.tool_setup = None;
+                    }
                 }
                 let kind = if action == Action::ReassignOperation {
                     "operation_reassign"
@@ -1859,6 +1956,37 @@ fn apply(
             }
             order.batch = Some(LOT.into());
         }
+        Action::SetOperationTool if matches!(order.phase, Phase::Dispatched | Phase::Paused) => {
+            let tool = args["tool_id"].as_str().unwrap();
+            let reason = args["reason"].as_str().unwrap();
+            if !crate::scenario::identifier(tool) || reason.trim().is_empty() {
+                return error("INVALID_ARGUMENT");
+            }
+            if state.equipment_down {
+                return error("EQUIPMENT_UNAVAILABLE");
+            }
+            let Some(center) = order.assigned_centers.get(&order.step) else {
+                return error("INVALID_STATE");
+            };
+            if !setup
+                .qualified_tools
+                .get(center)
+                .is_some_and(|tools| tools.iter().any(|id| id == tool))
+            {
+                return error("TOOL_NOT_QUALIFIED");
+            }
+            order.tool_setup = Some(ToolSetup {
+                work_center: center.clone(),
+                tool_id: tool.to_owned(),
+                reason: reason.to_owned(),
+                cursor: revision,
+            });
+            state
+                .ledger
+                .push(json!({"kind":"operation_tool_setup","work_order":id,
+                "operation":MATERIAL_INPUT_OPERATION,"tool_setup":order.tool_setup}));
+            return json!({"ok":true,"work_order":id,"operation":MATERIAL_INPUT_OPERATION,"tool_setup":order.tool_setup});
+        }
         Action::PauseOperation if order.phase == Phase::Running => {
             order.phase = Phase::Paused;
             state.ledger.push(
@@ -1867,6 +1995,9 @@ fn apply(
             );
         }
         Action::ResumeOperation if order.phase == Phase::Paused => {
+            if order.step == 0 && !setup.qualified_tools.is_empty() && order.tool_setup.is_none() {
+                return error("TOOL_SETUP_REQUIRED");
+            }
             if held {
                 return error("QUALITY_HOLD");
             }
@@ -1883,6 +2014,9 @@ fn apply(
             state.ledger.push(json!({"kind":"operation_resume","work_order":id,"operation":ROUTE[order.step],"cursor":revision}));
         }
         Action::StartOperation if order.phase == Phase::Dispatched => {
+            if order.step == 0 && !setup.qualified_tools.is_empty() && order.tool_setup.is_none() {
+                return error("TOOL_SETUP_REQUIRED");
+            }
             if state.equipment_down {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
@@ -1898,6 +2032,9 @@ fn apply(
             order.phase = Phase::Running;
         }
         Action::ReportOperation | Action::PostOperationReport if order.phase == Phase::Running => {
+            if order.step == 0 && !setup.qualified_tools.is_empty() && order.tool_setup.is_none() {
+                return error("TOOL_SETUP_REQUIRED");
+            }
             if setup.equipment_events && state.equipment_down {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
@@ -1948,6 +2085,9 @@ fn apply(
                 wip_sources: Vec::new(),
                 consolidated_into: None,
                 coating: None,
+                tool_setup: (order.step == 0)
+                    .then(|| order.tool_setup.clone())
+                    .flatten(),
             };
             if order.step == 0 {
                 order.units.extend(report.serial_numbers.iter().cloned());

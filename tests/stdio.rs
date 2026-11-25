@@ -5032,6 +5032,11 @@ fn p9d_34_cnc_single_run_exit_evidence() {
     run_wip_scenario_with_quality(45, Some(QualityCheckpoint::Replenishment));
 }
 
+#[test]
+fn p10_01_cnc_tool_setup_and_reassignment() {
+    run_wip_scenario(46);
+}
+
 fn run_wip_scenario_with_quality(version: u64, quality_recovery: Option<QualityCheckpoint>) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
@@ -5106,6 +5111,22 @@ async fn move_and_consume_wip(
         machining_report(4, "0.5"),
     )
     .await;
+    if version == 46 {
+        assert_eq!(first["report"]["tool_setup"]["tool_id"], "CUT-B");
+        assert_eq!(first["report"]["tool_setup"]["work_center"], "MACH-02");
+        let replacement = json!({"work_order":order,"operation":operation,"tool_id":"CUT-B-SPARE","reason":"scheduled replacement"});
+        let before = cursor().await;
+        assert_eq!(
+            write("set_operation_tool", "running-change", replacement.clone()).await["code"],
+            "INVALID_STATE"
+        );
+        assert_eq!(cursor().await, before);
+        let mut pause = prep.clone();
+        pause["reason"] = json!("scheduled replacement");
+        apply("pause_operation", "pause-for-tool", pause).await;
+        apply("set_operation_tool", "mount-spare", replacement).await;
+        apply("resume_operation", "resume-after-tool", prep.clone()).await;
+    }
     let first_id = &first["report"]["id"];
     let mut movement = json!({"work_order":order,"wip_id":first_id,"destination_operation":"assembly","reason":"handoff"});
     assert_eq!(
@@ -5140,6 +5161,18 @@ async fn move_and_consume_wip(
         second_args["material_inputs"] = json!({"RS-2":"1"});
     }
     let second = apply("post_operation_report", "source2", second_args).await;
+    if version == 46 {
+        assert_eq!(second["report"]["tool_setup"]["tool_id"], "CUT-B-SPARE");
+        let reports = invoke("list_operation_reports", prep.clone()).await;
+        assert_eq!(
+            reports["reports"][0]["tool_setup"],
+            first["report"]["tool_setup"]
+        );
+        assert_eq!(
+            reports["reports"][1]["tool_setup"],
+            second["report"]["tool_setup"]
+        );
+    }
     let second_id = &second["report"]["id"];
     if quality_recovery == Some(QualityCheckpoint::Replenishment) {
         let pedigree = invoke(
@@ -5177,7 +5210,7 @@ async fn move_and_consume_wip(
         "WIP_NOT_AT_OPERATION"
     );
     assert_eq!(cursor().await, before);
-    let split_ids = if matches!(version, 44 | 45) {
+    let split_ids = if matches!(version, 44..=46) {
         let mut request = json!({"work_order":order,"source_wip_ids":[first_id,second_id],
             "reason":"stage machining outputs together"});
         request["expected_cursor"] = cursor().await;
@@ -5200,7 +5233,7 @@ async fn move_and_consume_wip(
             combined["wip_id"]
         );
         assert_eq!(read(second_id).await["status"], "consolidated");
-        if version == 45 {
+        if version >= 45 {
             let before = cursor().await;
             let id = &combined["wip_id"];
             let split = json!({"work_order":order,"wip_id":id,
@@ -5249,7 +5282,7 @@ async fn move_and_consume_wip(
         );
         let selected_id = &selected["id"];
         let remaining_id = &remaining["id"];
-        if version == 45 {
+        if version >= 45 {
             assert_eq!(
                 read(selected_id).await["coating"]["process_record"],
                 "COAT-1"
@@ -5746,7 +5779,7 @@ async fn move_and_consume_wip(
         )
         .await["balance"]["on_hand"],
         match version {
-            42..=45 => "1.5",
+            42..=46 => "1.5",
             40 => "0.75",
             _ => "0.5",
         }
@@ -6384,10 +6417,10 @@ async fn operation_issue_scenarios_with_quality(
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=45) {
+            if matches!(version,36..=46) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
             }
-            if version == 45 {
+            if matches!(version,45 | 46) {
                 route["coating"]=json!({"work_center":"COAT-01","predecessors":["machining"]});
                 route["assembly"]["predecessors"]=json!(["coating"]);
             }
@@ -6604,6 +6637,22 @@ async fn operation_issue_scenarios_with_quality(
             apply("pick_material","pick",json!({"reservation_id":"RS-1"})).await;
             assert_eq!(write("issue_material_to_operation","issue",issue.clone()).await["code"],"ISSUE_OPERATION_NOT_ELIGIBLE");
             apply("dispatch_operation","dispatch",json!({"work_order":order,"operation":operation,"work_center":center})).await;
+            if version == 46 {
+                let prep=json!({"work_order":order,"operation":operation});
+                let mut setup=json!({"work_order":order,"operation":operation,"tool_id":"CUT-A","reason":"initial setup"});
+                apply("set_operation_tool","mount-primary",setup.clone()).await;
+                apply("reassign_operation","switch-machine",json!({"work_order":order,"operation":operation,"work_center":"MACH-02"})).await;
+                let before=cursor().await;
+                assert_eq!(write("start_operation","start-unconfigured",prep).await["code"],"TOOL_SETUP_REQUIRED");
+                assert_eq!(write("set_operation_tool","wrong-tool",setup.clone()).await["code"],"TOOL_NOT_QUALIFIED");
+                assert_eq!(cursor().await,before);
+                setup["tool_id"]=json!("CUT-B");
+                setup["expected_cursor"]=before;
+                setup["idempotency_key"]=json!("mount-alternate");
+                let configured=invoke("set_operation_tool",setup.clone()).await;
+                assert_eq!(configured["ok"],true,"{configured}");
+                assert_eq!(invoke("set_operation_tool",setup).await,configured);
+            }
             assert_eq!(write("issue_material_to_operation","issue",json!({"reservation_id":"RS-1","operation":"missing"})).await["code"],"ISSUE_OPERATION_NOT_FOUND");
             let balance=||invoke("get_stock_balance",json!({"item_id":"WIRE","location":"RAW-02"}));
             assert_eq!(balance().await["balance"]["on_hand"],"2");
@@ -6613,20 +6662,20 @@ async fn operation_issue_scenarios_with_quality(
             submitted["idempotency_key"]=json!("issue");
             let first=invoke("issue_material_to_operation",submitted.clone()).await;
             assert_eq!(first["reservation"]["status"],"issued","{first}");
-            assert_eq!(first["reservation"]["work_center"],center);
+            assert_eq!(first["reservation"]["work_center"],if version == 46 {"MACH-02"} else {center});
             assert_eq!(balance().await["balance"]["on_hand"],"0.5");
             assert_eq!(balance().await["balance"]["available"],"0.5");
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if matches!(version,36..=45) {
+            if matches!(version,36..=46) {
                 Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version,quality_recovery)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
                 let lots=lots["lots"].as_array().unwrap();
                 assert_eq!(lots.iter().filter(|lot|lot["status"]=="consumed").count(),2);
                 assert_eq!(lots.iter().filter(|lot|lot["status"]=="merged").count(),if matches!(version,39 | 40) {2} else {0});
-                assert_eq!(lots.len(),match version { 44 | 45 => 5, 39 | 40 => 4, _ => 2 });
+                assert_eq!(lots.len(),match version { 44..=46 => 5, 39 | 40 => 4, _ => 2 });
                 continue;
             }
             if version == 35 {

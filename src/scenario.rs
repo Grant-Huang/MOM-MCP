@@ -424,6 +424,14 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         "work in process split and merge require movement reversal and genealogy"
     );
     anyhow::ensure!(
+        definition.capabilities.contains(&Action::SetOperationTool)
+            == definition
+                .manufacturing
+                .as_ref()
+                .is_some_and(|setup| !setup.qualified_tools.is_empty()),
+        "operation tool setup requires qualified tools"
+    );
+    anyhow::ensure!(
         !definition.capabilities.contains(&Action::CompleteCoating)
             || definition.capabilities.contains(&Action::ConsolidateWip),
         "coating handoff requires work in process consolidation"
@@ -812,6 +820,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-lot-quality-scope.json"),
             include_str!("../fixtures/cnc-cross-source-wip.json"),
             include_str!("../fixtures/cnc-coating-handoff.json"),
+            include_str!("../fixtures/cnc-tool-setup.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-closed-loop.json"),
@@ -1338,7 +1347,16 @@ impl Scenarios {
                 } else if let Some(actual) = actual
                     && matches!(actual.status, "dispatched" | "running")
                     && actual.blocking.is_none()
-                    && actual.work_center.as_deref() == center
+                    && (actual.work_center.as_deref() == center
+                        || definition.manufacturing.as_ref().is_some_and(|setup| {
+                            !setup.qualified_tools.is_empty()
+                                && operation == crate::mes::MATERIAL_INPUT_OPERATION
+                                && center.zip(actual.work_center.as_deref()).is_some_and(
+                                    |(primary, assigned)| {
+                                        crate::mes::eligible_center(setup, primary, assigned)
+                                    },
+                                )
+                        }))
                 {
                     Ok(actual.work_center.clone())
                 } else {

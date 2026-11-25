@@ -1030,6 +1030,7 @@ pub(crate) fn consolidate(
         wip_sources: ids.iter().map(|id| (*id).to_owned()).collect(),
         consolidated_into: None,
         coating: None,
+        tool_setup: None,
     });
     Ok(
         json!({"ok":true,"work_order":order,"wip_id":id,"reason":reason,
