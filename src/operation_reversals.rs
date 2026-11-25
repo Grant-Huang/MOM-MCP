@@ -139,7 +139,7 @@ fn target(
     tx.query_row(
         "SELECT r.reservation,r.work_order,r.lot,CASE WHEN ?3 THEN r.quantity ELSE t.quantity END,
             s.quantity,COALESCE(e.quantity,0),s.item,s.revision,s.unit,s.location,
-            EXISTS(SELECT 1 FROM stock_lot_holds h WHERE h.run=r.run AND h.batch=r.lot),
+            EXISTS(SELECT 1 FROM stock_effective_lot_holds h WHERE h.run=r.run AND h.batch=r.lot),
             EXISTS(SELECT 1 FROM stock_transfers m WHERE m.run=r.run AND m.lot=r.lot
                 AND m.posted_cursor>CASE WHEN ?3 THEN i.issued_cursor ELSE t.returned_cursor END)
          FROM stock_reservations r

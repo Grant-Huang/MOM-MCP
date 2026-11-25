@@ -300,7 +300,7 @@ pub(crate) fn material_held(
 ) -> rusqlite::Result<bool> {
     for input in &report.material_inputs {
         if tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM stock_lot_holds WHERE run=?1 AND batch=?2)",
+            "SELECT EXISTS(SELECT 1 FROM stock_effective_lot_holds WHERE run=?1 AND batch=?2)",
             params![run, input.lot_id],
             |row| row.get::<_, bool>(0),
         )? {

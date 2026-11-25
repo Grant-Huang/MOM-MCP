@@ -617,6 +617,21 @@ impl Scenarios {
                  SELECT t.* FROM stock_transfers t WHERE NOT EXISTS(SELECT 1 FROM stock_lot_splits p
                    WHERE p.run=t.run AND (p.transfer=t.transfer OR EXISTS(SELECT 1 FROM stock_transfer_reversals r
                       WHERE r.run=t.run AND r.reversal=t.transfer AND r.original=p.transfer)));
+             CREATE TABLE IF NOT EXISTS stock_quality_holds (
+                 run TEXT NOT NULL, hold TEXT NOT NULL, lot TEXT NOT NULL,
+                 reason TEXT NOT NULL, held_cursor INTEGER NOT NULL,
+                 release_reason TEXT, released_cursor INTEGER,
+                 PRIMARY KEY(run,hold)
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS active_stock_quality_hold ON stock_quality_holds(run,lot)
+                 WHERE released_cursor IS NULL;
+             CREATE VIEW IF NOT EXISTS stock_scoped_lot_holds AS
+                 SELECT run,lot AS batch FROM stock_quality_holds WHERE released_cursor IS NULL
+                 UNION
+                 SELECT o.run,o.lot FROM stock_lot_origins o JOIN stock_quality_holds h
+                     ON h.run=o.run AND h.lot=o.parent_lot WHERE h.released_cursor IS NULL;
+             CREATE VIEW IF NOT EXISTS stock_effective_lot_holds AS
+                 SELECT run,batch FROM stock_lot_holds UNION SELECT run,batch FROM stock_scoped_lot_holds;
              CREATE VIEW IF NOT EXISTS stock_lot_holds AS
                  SELECT run,batch FROM scenario_holds
                  UNION
@@ -783,6 +798,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-finished-output-receipt.json"),
             include_str!("../fixtures/cnc-work-order-reconciliation.json"),
             include_str!("../fixtures/cnc-full-order-reconciliation.json"),
+            include_str!("../fixtures/cnc-lot-quality-scope.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
@@ -1220,6 +1236,9 @@ impl Scenarios {
                 (_, Ok(snapshot)) => definition_snapshot = Some(snapshot),
                 (_, Err(error)) => return Ok(Err(error)),
             }
+        }
+        if matches!(action, Action::HoldStockLot | Action::ReleaseStockLotHold) {
+            return crate::lot_quality::invoke(tx, run, action, parameters, cursor);
         }
         if action.is_reservation_action() {
             let order = match action {

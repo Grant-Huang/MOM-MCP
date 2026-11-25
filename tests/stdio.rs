@@ -4785,6 +4785,11 @@ fn p9d_20_cross_shop_quality_scope() {
     run_wip_scenario_with_quality(42, Some(QualityCheckpoint::CrossShop));
 }
 
+#[test]
+fn p9d_24_actual_input_lot_hold_scope() {
+    run_wip_scenario(43);
+}
+
 fn run_wip_scenario_with_quality(version: u64, quality_recovery: Option<QualityCheckpoint>) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
@@ -4830,8 +4835,8 @@ async fn move_and_consume_wip(
     };
     let prep = json!({"work_order":order,"operation":operation});
     let assembly = json!({"work_order":order,"operation":"assembly"});
-    if genealogy || version == 42 {
-        let location = if version == 42 { "RAW-01" } else { "RAW-02" };
+    if genealogy || version >= 42 {
+        let location = if version >= 42 { "RAW-01" } else { "RAW-02" };
         Box::pin(setup_genealogy_second_lot(
             client,
             run,
@@ -4884,7 +4889,7 @@ async fn move_and_consume_wip(
         apply("issue_material_to_operation", "quality-recovered", issue).await;
     }
     let mut second_args = machining_report(6, if legacy_reconciliation { "0.75" } else { "1" });
-    if genealogy || version == 42 {
+    if genealogy || version >= 42 {
         second_args["material_inputs"] = json!({"RS-2":"1"});
     }
     let second = apply("post_operation_report", "source2", second_args).await;
@@ -5103,6 +5108,67 @@ async fn move_and_consume_wip(
         "WIP_QUANTITY_MISMATCH"
     );
     report["quantity"] = json!(4);
+    if version == 43 {
+        let mut hold = json!({"hold_id":"HQ-2","lot_id":"LOT-2","reason":"supplier review","idempotency_key":"hold-second","expected_cursor":cursor().await});
+        let held = invoke("hold_stock_lot", hold.clone()).await;
+        assert_eq!(held["held"], true, "{held}");
+        assert_eq!(invoke("hold_stock_lot", hold.clone()).await, held);
+        let results = invoke("get_wip", json!({"work_order":order})).await;
+        let lots = results["lots"].as_array().unwrap();
+        assert_eq!(
+            lots.iter().find(|lot| lot["wip_id"] == *first_id).unwrap()["status"],
+            "moved"
+        );
+        assert_eq!(
+            lots.iter().find(|lot| lot["wip_id"] == *second_id).unwrap()["blocking"],
+            "MATERIAL_HELD"
+        );
+        let mut blocked = movement.clone();
+        blocked["wip_id"] = second_id.clone();
+        let before = cursor().await;
+        assert_eq!(
+            write("move_wip", "hold-blocks-handoff", blocked).await["code"],
+            "MATERIAL_HELD"
+        );
+        assert_eq!(cursor().await, before);
+        hold["hold_id"] = json!("HQ-1");
+        hold["lot_id"] = json!("LOT-1");
+        let temporary = apply("hold_stock_lot", "hold-first", hold).await;
+        assert_eq!(temporary["held"], true);
+        assert_eq!(
+            invoke("get_lot", json!({"lot_id":"LOT-1"})).await["lot"]["availability"],
+            "held"
+        );
+        let blocked_reserve = write(
+            "reserve_material",
+            "frozen-reserve",
+            json!({
+                "reservation_id":"FROZEN-RS","work_order":order,"lot_id":"LOT-1","quantity":"0.25"
+            }),
+        )
+        .await;
+        assert_eq!(blocked_reserve["code"], "MATERIAL_HELD");
+
+        let stock = invoke(
+            "get_stock_balance",
+            json!({"item_id":"WIRE","location":"RAW-02"}),
+        )
+        .await;
+        assert_eq!(stock["balance"]["on_hand"], "0.5");
+        assert_eq!(stock["balance"]["held_unallocated"], "0.5");
+        assert_eq!(stock["balance"]["available"], "0");
+        assert_eq!(
+            write("post_operation_report", "held-actual", report.clone()).await["code"],
+            "MATERIAL_HELD"
+        );
+        let released = apply(
+            "release_stock_lot_hold",
+            "release-first",
+            json!({"hold_id":"HQ-1","reason":"review cleared"}),
+        )
+        .await;
+        assert_eq!(released["held"], false);
+    }
     let consume_key = if quality_recovery == Some(QualityCheckpoint::CrossShop) {
         Box::pin(recover_quality(
             client,
@@ -5181,7 +5247,7 @@ async fn move_and_consume_wip(
             "WIP_MOVEMENT_NOT_ACTIVE"
         );
     }
-    if version == 42 {
+    if version >= 42 {
         let check =
             invoke("reconcile_work_order", json!({"work_order":order})).await["settlement"].clone();
         assert_eq!(check["production"]["wip_open"], 10);
@@ -5197,13 +5263,22 @@ async fn move_and_consume_wip(
         reconsumed["report"]["serial_numbers"],
         consumed["report"]["serial_numbers"]
     );
+    if version == 43 {
+        let released = apply(
+            "release_stock_lot_hold",
+            "release-second",
+            json!({"hold_id":"HQ-2","reason":"review cleared"}),
+        )
+        .await;
+        assert_eq!(released["held"], false);
+    }
     movement["wip_id"] = second_id.clone();
     apply("move_wip", "move-second", movement).await;
     report["quantity"] = json!(6);
     report["wip_inputs"] = json!([second_id]);
     apply("post_operation_report", "consume-second", report).await;
     apply("complete_operation", "complete-assembly", assembly).await;
-    if version == 42 {
+    if version >= 42 {
         apply(
             "return_unused_material",
             "return-surplus",
@@ -5231,7 +5306,7 @@ async fn move_and_consume_wip(
             run,
             order,
             &first["report"]["serial_numbers"][0],
-            version == 42,
+            version >= 42,
             quality_recovery == Some(QualityCheckpoint::Output),
         ))
         .await;
@@ -5273,7 +5348,7 @@ async fn move_and_consume_wip(
         )
         .await["balance"]["on_hand"],
         match version {
-            42 => "1.5",
+            42 | 43 => "1.5",
             40 => "0.75",
             _ => "0.5",
         }
@@ -5885,7 +5960,7 @@ async fn operation_issue_scenarios_with_quality(
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=42) {
+            if matches!(version,36..=43) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
             }
             if version >= 41 {
@@ -6116,7 +6191,7 @@ async fn operation_issue_scenarios_with_quality(
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if matches!(version,36..=42) {
+            if matches!(version,36..=43) {
                 Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version,quality_recovery)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;

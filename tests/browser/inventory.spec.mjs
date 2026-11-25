@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -169,6 +169,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9D-19 Replenish after a quality reinspection", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", replenish: true },
   { title: "P9D-21 Hold WIP across workshops", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, crossShopHold: true },
   { title: "P9D-23 Trace SMT placement through the common stock ledger", scenario: "smt@3", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true },
+  { title: "P9D-25 Block only WIP with a held input lot", scenario: "cnc@43", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, scopedLotHold: true },
   { title: "P9D-09 Split and merge WIP lots", scenario: "cnc@39", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, splitWip: true },
   { title: "P9D-07 Reverse a WIP movement", scenario: "cnc@38", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, reverseWip: true },
   { title: "P9D-05 Trace an issued lot and serial", scenario: "cnc@37", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, genealogy: true },
@@ -415,6 +416,24 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       await expect(status).toContainText('"destination_operation": "assembly"');
       const moved = JSON.parse(await status.textContent());
       cursor = moved.cursor;
+      if (scopedLotHold) {
+        await button("搜索工具").click();
+        await page.getByLabel("匹配工具").selectOption("hold_stock_lot");
+        await page.getByLabel("JSON 参数").fill(JSON.stringify({
+          hold_id: "H-1", lot_id: "LOT-1", reason: "inbound review",
+          expected_cursor: cursor, idempotency_key: "scope-hold",
+        }));
+        await button("调用工具").click();
+        await expect(status).toContainText('"held": true');
+        cursor = JSON.parse(await status.textContent()).cursor;
+        const frozen = await invoke("get_wip", { work_order, wip_id: source.report.id });
+        expect(frozen.lots[0]).toMatchObject({ status: "held", blocking: "MATERIAL_HELD",
+          movement: { destination_operation: "assembly" } });
+        const unrelated = await invoke("reconcile_work_order", { work_order: "WO-2" });
+        expect(unrelated.settlement.blocking).not.toContain("MATERIAL_HELD");
+        await write("release_stock_lot_hold", { hold_id: "H-1", reason: "review cleared" });
+      }
+
       if (reverseWip) {
         await button("搜索工具").click();
         await page.getByLabel("匹配工具").selectOption("reverse_wip_movement");

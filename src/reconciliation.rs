@@ -102,7 +102,7 @@ fn material_issues(
     let mut query = tx.prepare(
         "SELECT r.reservation,r.lot,s.item,s.revision,s.unit,r.quantity,
             COALESCE(t.quantity,0),r.status='issued',
-            EXISTS(SELECT 1 FROM stock_lot_holds h WHERE h.run=r.run AND h.batch=r.lot),
+            EXISTS(SELECT 1 FROM stock_effective_lot_holds h WHERE h.run=r.run AND h.batch=r.lot),
             COALESCE((SELECT m.destination FROM stock_whole_transfers m WHERE m.run=i.run AND m.lot=r.lot
               AND m.posted_cursor<i.issued_cursor ORDER BY m.posted_cursor DESC LIMIT 1),s.location)
          FROM stock_operation_issues i
@@ -129,7 +129,7 @@ fn material_issues(
         let unused = net_issued - consumed;
         mismatch |= unused < 0;
         held |= effective && lot_held && issued > returned;
-        let (on_hand, _, _) = balance(tx, run, &item, Some(revision), None, Some(&lot))?;
+        let (on_hand, _, _, _) = balance(tx, run, &item, Some(revision), None, Some(&lot))?;
         result.push(json!({"reservation_id":id,"lot_id":lot,"item_id":item,"revision":revision,
             "issue_location":row.get::<_,String>(9)?,"unit":row.get::<_,String>(4)?,"issued":quantity(issued),
             "returned":quantity(returned),"net_issued":quantity(net_issued.max(0)),"consumed":quantity(consumed),"unused":quantity(unused.max(0)),
@@ -243,7 +243,7 @@ pub(crate) fn read(
                     snapshot["item_id"] != item || snapshot["revision"] != revision
                 });
         }
-        let (on_hand, _, _) = balance(tx, run, &item, Some(revision), None, Some(&lot))?;
+        let (on_hand, _, _, _) = balance(tx, run, &item, Some(revision), None, Some(&lot))?;
         receipts.push(json!({"receipt_id":row.get::<_,String>(0)?,"lot_id":lot,"item_id":item,"revision":revision,
             "posting_location":row.get::<_,String>(4)?,"quantity":quantity(posted),"lot_on_hand":quantity(on_hand),
             "serial_numbers":serials,"reversed":reversed}));
