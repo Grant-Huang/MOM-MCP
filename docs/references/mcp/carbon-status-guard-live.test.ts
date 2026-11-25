@@ -259,15 +259,17 @@ it.each(["status guard", "release workflow"] as const)(
 
 					const settings = await admin
 						.from("companySettings")
-						.select("requireBackflushStorageUnit")
+						.select("requireBackflushStorageUnit,autoPickingListOnRelease")
 						.eq("id", company)
 						.single();
 					expect(settings.error).toBeNull();
-					const originalStrict = settings.data!.requireBackflushStorageUnit;
-					const setStrict = async (value: boolean) => {
+					const originalSettings = settings.data!;
+					const setReleaseSettings = async (
+						values: typeof originalSettings,
+					) => {
 						const changed = await admin
 							.from("companySettings")
-							.update({ requireBackflushStorageUnit: value })
+							.update(values)
 							.eq("id", company)
 							.select("id")
 							.single();
@@ -303,6 +305,7 @@ it.each(["status guard", "release workflow"] as const)(
 						.eq("companyId", company)
 						.neq("id", sample.data!.itemId)
 						.neq("itemTrackingType", "Non-Inventory")
+						.eq("replenishmentSystem", "Buy")
 						.limit(1)
 						.single();
 					expect(item.error).toBeNull();
@@ -325,9 +328,25 @@ it.each(["status guard", "release workflow"] as const)(
 						.select("id")
 						.single();
 					expect(material.error).toBeNull();
+					const readPickingLines = async () => {
+						const result = await admin
+							.from("pickingListLine")
+							.select(
+								"id,jobMaterialId,jobOperationId,itemId,quantityToPick,storageUnitId,pickingList!inner(status,locationId)",
+							)
+							.eq("jobId", id)
+							.eq("companyId", company)
+							.limit(2);
+						expect(result.error).toBeNull();
+						return result.data;
+					};
 					try {
-						await setStrict(true);
+						await setReleaseSettings({
+							requireBackflushStorageUnit: true,
+							autoPickingListOnRelease: true,
+						});
 						await expectBlocked("set a Pull From storage unit");
+						expect(await readPickingLines()).toEqual([]);
 						const updated = await admin
 							.from("jobMaterial")
 							.update({ storageUnitId: bin.data!.id })
@@ -344,8 +363,20 @@ it.each(["status guard", "release workflow"] as const)(
 						expect(ready.data?.released.map((job) => job.jobId)).toEqual([id]);
 						read("Ready");
 					} finally {
-						await setStrict(originalStrict);
+						await setReleaseSettings(originalSettings);
 					}
+					const picking = await readPickingLines();
+					expect(picking).toEqual([
+						{
+							id: expect.any(String),
+							jobMaterialId: material.data!.id,
+							jobOperationId: operation.data!.id,
+							itemId: item.data!.id,
+							quantityToPick: 1,
+							storageUnitId: bin.data!.id,
+							pickingList: { status: "Draft", locationId: releaseLocationId },
+						},
+					]);
 					const released = await caller
 						.from("job")
 						.select("releasedDate")
@@ -359,8 +390,15 @@ it.each(["status guard", "release workflow"] as const)(
 					expect(
 						repeated.data?.skipped.map((job) => [job.jobId, job.status]),
 					).toEqual([[id, "Ready"]]);
+					expect(await readPickingLines()).toEqual(picking);
 				} finally {
 					await pg.destroy();
+					const deletedPicks = await admin
+						.from("pickingList")
+						.delete()
+						.eq("locationId", releaseLocationId)
+						.eq("companyId", company);
+					expect(deletedPicks.error).toBeNull();
 					await admin
 						.from("jobOperation")
 						.delete()
