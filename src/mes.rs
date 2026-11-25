@@ -615,6 +615,7 @@ pub fn spec(action: Action) -> Spec {
             "MATERIAL_HELD",
             "OPERATION_OUT_OF_SEQUENCE",
             "WORK_CENTER_MISMATCH",
+            "COATING_REQUIRED",
             "RESOURCE_BUSY",
             "CELL_NOT_CAPABLE",
             "OPERATION_NOT_DISPATCHABLE",
@@ -655,6 +656,8 @@ pub struct Setup {
     pub qualified_tools: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub machining_inspections: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub operation_genealogy: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_centers: Option<[String; 3]>,
 }
@@ -685,7 +688,7 @@ struct Order {
 
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct ToolSetup {
-    work_center: String,
+    pub(crate) work_center: String,
     tool_id: String,
     reason: String,
     cursor: i64,
@@ -1285,7 +1288,14 @@ pub fn invoke(
             return Ok((error("WORK_ORDER_NOT_FOUND"), false));
         }
         return Ok((
-            crate::genealogy::read(tx, run, action, &state.reports, args)?,
+            crate::genealogy::read(
+                tx,
+                run,
+                action,
+                &state.reports,
+                args,
+                setup.operation_genealogy,
+            )?,
             false,
         ));
     }
@@ -1561,6 +1571,22 @@ pub fn invoke(
         {
             return Ok((error("FIRST_ARTICLE_QUANTITY_REQUIRED"), false));
         }
+    }
+    if setup.operation_genealogy
+        && matches!(
+            action,
+            Action::DispatchOperation | Action::ReassignOperation
+        )
+        && args["operation"] == "assembly"
+        && let Some(order_id) = args["work_order"].as_str()
+        && state
+            .orders
+            .get(order_id)
+            .is_some_and(|order| order.step == 1)
+        && crate::wip::lots(&state.reports, order_id)
+            .any(|lot| lot.inactive().is_none() && !lot.is_coated())
+    {
+        return Ok((error("COATING_REQUIRED"), false));
     }
     let mut response = if action == Action::ReceiveWorkOrderOutput {
         let order_id = args["work_order"].as_str().unwrap();

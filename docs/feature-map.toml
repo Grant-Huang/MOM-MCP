@@ -1129,3 +1129,19 @@ spec = "acceptance/P10.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P10-05 Recover stopped machining on another center" }
+
+[[case]]
+id = "P10-06"
+phase = "P10"
+spec = "acceptance/P10.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p10_06_cnc_operation_genealogy_closeout" }
+
+[[case]]
+id = "P10-07"
+phase = "P10"
+spec = "acceptance/P10.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P10-07 Trace CNC operations through closeout" }

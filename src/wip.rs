@@ -717,6 +717,10 @@ impl<'a> Lot<'a> {
         Ok(false)
     }
 
+    pub(crate) fn is_coated(&self) -> bool {
+        self.report.coating.is_some()
+    }
+
     pub(crate) fn inactive(&self) -> Option<&'static str> {
         match self.child {
             Some((split, _)) if split.merged_cursor.is_some() => Some("merged"),
@@ -1040,9 +1044,9 @@ pub(crate) fn consolidate(
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Coating {
-    cursor: i64,
-    work_center: String,
-    process_record: String,
+    pub(crate) cursor: i64,
+    pub(crate) work_center: String,
+    pub(crate) process_record: String,
 }
 
 fn coating_schema() -> Value {

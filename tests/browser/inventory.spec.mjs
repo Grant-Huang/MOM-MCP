@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup, machiningInspections, deviceRecovery } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup, machiningInspections, deviceRecovery, operationGenealogy } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -174,6 +174,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9D-25 Block only WIP with a held input lot", scenario: "cnc@43", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, scopedLotHold: true },
   { title: "P9D-27 Consolidate WIP from two source reports", scenario: "cnc@44", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, consolidateWip: true },
   { title: "P9D-29 Complete coating and hand off split WIP", scenario: "cnc@45", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, consolidateWip: true, coatingHandoff: true },
+  { title: "P10-07 Trace CNC operations through closeout", scenario: "cnc@49", work_order: "WO-1", operation: "machining", work_center: "MACH-01", cncToolSetup: true, machiningInspections: true, operationGenealogy: true },
   { title: "P10-05 Recover stopped machining on another center", scenario: "cnc@48", work_order: "WO-1", operation: "machining", work_center: "MACH-01", cncToolSetup: true, machiningInspections: true, deviceRecovery: true },
   { title: "P10-03 Release CNC first article and process inspection", scenario: "cnc@47", work_order: "WO-1", operation: "machining", work_center: "MACH-01", cncToolSetup: true, machiningInspections: true },
   { title: "P10-UI CNC tool setup and report provenance", scenario: "cnc@46", work_order: "WO-1", operation: "machining", work_center: "MACH-01", cncToolSetup: true },
@@ -224,7 +225,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       route.coating = { work_center: "COAT-01", predecessors: ["machining"] };
       route.assembly.predecessors = ["coating"];
     }
-    if (outputReceipt) route.inspection = { work_center: "QA-01", predecessors: ["assembly"] };
+    if (outputReceipt || operationGenealogy) route.inspection = { work_center: "QA-01", predecessors: ["assembly"] };
     await write("set_route_operations", { ...frame, operations: route });
     await write("activate_revision", { ...frame, revision_type: "route" });
     const plan = { plan_id: "QA", revision: 1 };
@@ -461,6 +462,40 @@ for (const { title, scenario, work_order, operation, work_center, report, return
         expect(created.machining_inspection.kind).toBe("in_process");
         await pass("PROCESS");
         await write("complete_operation", scope);
+        if (operationGenealogy) {
+          const assembly = { work_order, operation: "assembly" };
+          const dispatch = { ...assembly, work_center: "ASM-01" };
+          const early = await invoke("dispatch_operation", { ...dispatch, expected_cursor: cursor, idempotency_key: "before-coating" });
+          expect(early.code).toBe("COATING_REQUIRED");
+          const merged = await write("consolidate_wip", { work_order, source_wip_ids: [first.report.id, process.report.id], reason: "coating run" });
+          const parent = { work_order, wip_id: merged.wip_id };
+          await write("complete_coating", { ...parent, work_center: "COAT-01", process_record: "COAT-UI" });
+          const [serial_number] = first.report.serial_numbers;
+          const split = await write("split_wip", { ...parent, selected_serial_numbers: [serial_number], reason: "stage assembly" });
+          await write("dispatch_operation", dispatch);
+          const children = split.partition.children;
+          for (const { id } of children) {
+            await write("move_wip", { work_order, wip_id: id, destination_operation: "assembly", reason: "handoff" });
+          }
+          await write("start_operation", assembly);
+          for (const child of children) {
+            await write("post_operation_report", { ...assembly, quantity: child.serial_numbers.length, wip_inputs: [child.id] });
+          }
+          await write("complete_operation", assembly);
+          // Inspection is a separate successor once the assembly quantity is satisfied.
+          await write("dispatch_operation", { work_order, operation: "inspection", work_center: "QA-01" });
+          await write("inspect_units", { work_order, result: "pass" });
+          await write("complete_work_order", { work_order });
+          await write("receive_work_order_output", { work_order, receipt_id: "FG-UI", lot_id: "FG-LOT-UI", location: "RAW-02" });
+          await write("close_work_order", { work_order });
+          await page.getByLabel("匹配工具").selectOption("trace_serial_backward");
+          await page.getByLabel("JSON 参数").fill(JSON.stringify({ work_order, serial_number, limit: 100 }));
+          await button("调用工具").click();
+          await expect(status).toContainText('"kind": "coating_output"');
+          const trace = JSON.parse(await status.textContent());
+          expect(trace.edges).toContainEqual(expect.objectContaining({ kind: "operation_output", operation: "assembly" }));
+          expect(trace.edges).toContainEqual(expect.objectContaining({ kind: "finished_output_receipt", target: { id: "FG-LOT-UI", kind: "stock_lot" } }));
+        }
         return;
       }
       await write("post_operation_report", { ...scope, quantity: 4, material_inputs: { "RS-1": "0.5" } });

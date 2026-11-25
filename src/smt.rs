@@ -336,6 +336,7 @@ pub(crate) fn genealogy(
         action,
         &load(tx, run, setup)?.material_reports,
         args,
+        false,
     )
 }
 
