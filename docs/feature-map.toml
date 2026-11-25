@@ -1025,3 +1025,19 @@ spec = "acceptance/P9D.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P9D-27 Consolidate WIP from two source reports" }
+
+[[case]]
+id = "P9D-28"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p9d_28_coating_handoff_and_quality_recovery" }
+
+[[case]]
+id = "P9D-29"
+phase = "P9D"
+spec = "acceptance/P9D.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P9D-29 Complete coating and hand off split WIP" }

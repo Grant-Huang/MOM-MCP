@@ -668,6 +668,8 @@ pub(crate) struct Report {
     pub(crate) wip_sources: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) consolidated_into: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) coating: Option<crate::wip::Coating>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1436,6 +1438,27 @@ pub fn invoke(
             args,
             cursor + 1,
         )?
+    } else if action == Action::CompleteCoating {
+        let order_id = args["work_order"].as_str().unwrap();
+        let Some(order) = state.orders.get(order_id) else {
+            return Ok((error("WORK_ORDER_NOT_FOUND"), false));
+        };
+        if order.step != 1
+            || !matches!(
+                order.phase,
+                Phase::Ready | Phase::Dispatched | Phase::Running | Phase::Paused
+            )
+        {
+            return Ok((error("WIP_NOT_AVAILABLE"), false));
+        }
+        crate::wip::complete_coating(
+            tx,
+            run,
+            &mut state.reports,
+            args,
+            cursor + 1,
+            order.hold_reason.is_some(),
+        )?
     } else if action == Action::ConsolidateWip {
         let order_id = args["work_order"].as_str().unwrap();
         let Some(order) = state.orders.get(order_id) else {
@@ -1924,6 +1947,7 @@ fn apply(
                 wip_inputs: Vec::new(),
                 wip_sources: Vec::new(),
                 consolidated_into: None,
+                coating: None,
             };
             if order.step == 0 {
                 order.units.extend(report.serial_numbers.iter().cloned());

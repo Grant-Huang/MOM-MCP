@@ -27,7 +27,7 @@ pub(crate) fn spec() -> Spec {
         json!({"wip_id":id_schema(),"report_id":id_schema(),"work_order":id_schema(),"source_operation":id_schema(),
              "quantity":{"type":"integer","minimum":1},"unit":{"const":"each"},
              "status":{"enum":["available","moved","consumed","held","scrapped","reversed","split","merged","consolidated"]},
-             "parent_wip_id":id_schema(),"source_wip_ids":inputs_schema(),"consolidated_into":id_schema(),"partitions":{"type":"array","items":partition_schema()},
+             "parent_wip_id":id_schema(),"source_wip_ids":inputs_schema(),"consolidated_into":id_schema(),"coating":coating_schema(),"partitions":{"type":"array","items":partition_schema()},
              "movement":movement_schema(),"movement_reversals":{"type":"array","items":reversal_schema()},"consumed_by":id_schema(),
              "serial_numbers":{"type":"array","items":id_schema()},
              "material_inputs":{"type":"array","items":input_row},
@@ -113,6 +113,9 @@ pub(crate) fn read(
                     .map(|source| &source.id)
                     .collect::<Vec<_>>()
             );
+        }
+        if let Some(coating) = &report.coating {
+            row["coating"] = json!(coating);
         }
         if let Some(target) = &report.consolidated_into {
             row["consolidated_into"] = json!(target);
@@ -201,6 +204,7 @@ pub(crate) fn move_spec() -> Spec {
             "WIP_NOT_AVAILABLE",
             "WIP_DESTINATION_NOT_ELIGIBLE",
             "MATERIAL_HELD",
+            "COATING_REQUIRED",
             "QUALITY_HOLD",
             "QUALITY_SCRAPPED",
             "VERSION_CONFLICT",
@@ -341,13 +345,12 @@ pub(crate) fn move_lot(
         return Ok(json!({"ok":false,"code":code}));
     }
     let snapshot = crate::snapshots::load(tx, run, order)?;
+    let coated_route = snapshot
+        .as_ref()
+        .is_some_and(|snapshot| coating_center(snapshot).is_some());
     let eligible = target == DESTINATION
-        && snapshot.is_some_and(|snapshot| {
-            snapshot["route"]["operations"][target]["predecessors"]
-                .as_array()
-                .is_some_and(|predecessors| {
-                    predecessors.iter().any(|id| id == MATERIAL_INPUT_OPERATION)
-                })
+        && snapshot.as_ref().is_some_and(|snapshot| {
+            coated_route || has_predecessor(snapshot, target, MATERIAL_INPUT_OPERATION)
         });
     if !eligible {
         return Ok(json!({"ok":false,"code":"WIP_DESTINATION_NOT_ELIGIBLE"}));
@@ -357,6 +360,9 @@ pub(crate) fn move_lot(
     };
     if lot.inactive().is_some() || lot.movement().is_some() {
         return Ok(json!({"ok":false,"code":"WIP_NOT_AVAILABLE"}));
+    }
+    if coated_route && lot.report.coating.is_none() {
+        return Ok(json!({"ok":false,"code":"COATING_REQUIRED"}));
     }
     if lot.held(tx, run, reports)? {
         return Ok(json!({"ok":false,"code":"MATERIAL_HELD"}));
@@ -527,6 +533,7 @@ pub(crate) fn partition_spec(action: Action) -> Spec {
             "QUALITY_HOLD",
             "QUALITY_SCRAPPED",
             "MATERIAL_HELD",
+            "COATING_REQUIRED",
             "WIP_NOT_FOUND",
             "WIP_NOT_AVAILABLE",
             "WIP_SPLIT_NOT_ACTIVE",
@@ -553,7 +560,7 @@ pub(crate) fn partition_lot(
     cursor: i64,
     action: Action,
     order_held: bool,
-) -> rusqlite::Result<Value> {
+) -> anyhow::Result<Value> {
     let order = args["work_order"].as_str().unwrap();
     let id = args["wip_id"].as_str().unwrap();
     let reason = args["reason"].as_str().unwrap();
@@ -590,6 +597,13 @@ pub(crate) fn partition_lot(
         return fail("MATERIAL_HELD");
     }
     if action == Action::SplitWip {
+        if report.coating.is_none()
+            && crate::snapshots::load(tx, run, order)?
+                .as_ref()
+                .is_some_and(|snapshot| coating_center(snapshot).is_some())
+        {
+            return fail("COATING_REQUIRED");
+        }
         if active_partition(report).is_some() {
             return fail("WIP_NOT_AVAILABLE");
         }
@@ -1015,9 +1029,138 @@ pub(crate) fn consolidate(
         wip_inputs: Vec::new(),
         wip_sources: ids.iter().map(|id| (*id).to_owned()).collect(),
         consolidated_into: None,
+        coating: None,
     });
     Ok(
         json!({"ok":true,"work_order":order,"wip_id":id,"reason":reason,
         "source_wip_ids":ids,"serial_numbers":reports.last().unwrap().serial_numbers}),
     )
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct Coating {
+    cursor: i64,
+    work_center: String,
+    process_record: String,
+}
+
+fn coating_schema() -> Value {
+    object(
+        &["cursor", "work_center", "process_record"],
+        json!({"cursor":{"type":"integer","minimum":1},"work_center":id_schema(),"process_record":id_schema()}),
+    )
+}
+
+fn has_predecessor(snapshot: &Value, operation: &str, predecessor: &str) -> bool {
+    snapshot["route"]["operations"][operation]["predecessors"]
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item == predecessor))
+}
+
+fn coating_center(snapshot: &Value) -> Option<&str> {
+    let center = snapshot["route"]["operations"]["coating"]["work_center"].as_str()?;
+    let operations = &snapshot["route"]["operations"];
+    (operations["coating"]["predecessors"] == json!([MATERIAL_INPUT_OPERATION])
+        && operations[DESTINATION]["predecessors"] == json!(["coating"]))
+    .then_some(center)
+}
+
+pub(crate) fn coating_spec() -> Spec {
+    Spec {
+        name: Action::CompleteCoating.name(),
+        description: "记录合批在制品完成冻结工艺路线中的涂装工序",
+        domain: "production",
+        effect: "write",
+        input: object(
+            &[
+                "work_order",
+                "wip_id",
+                "work_center",
+                "process_record",
+                "expected_cursor",
+                "idempotency_key",
+            ],
+            json!({"work_order":id_schema(),"wip_id":id_schema(),"work_center":id_schema(),
+                "process_record":id_schema(),"expected_cursor":{"type":"integer","minimum":0,"maximum":i64::MAX},
+                "idempotency_key":text()}),
+        ),
+        output: json!({"oneOf":[
+            object(&["ok","work_order","wip_id","coating","cursor"], json!({"ok":{"const":true},
+                "work_order":id_schema(),"wip_id":id_schema(),"coating":coating_schema(),
+                "cursor":{"type":"integer","minimum":1}})),
+            object(&["ok","code"],json!({"ok":{"const":false},"code":text()}))
+        ]}),
+        preconditions: &["run_open", "tool_enabled_in_scenario"],
+        side_effect: "complete_coating_operation",
+        errors: &[
+            "INVALID_ARGUMENT",
+            "WORK_ORDER_NOT_FOUND",
+            "WORK_ORDER_HELD",
+            "QUALITY_HOLD",
+            "QUALITY_SCRAPPED",
+            "WIP_NOT_FOUND",
+            "WIP_NOT_AVAILABLE",
+            "MATERIAL_HELD",
+            "COATING_ROUTE_MISMATCH",
+            "VERSION_CONFLICT",
+            "IDEMPOTENCY_CONFLICT",
+        ],
+        visibility: "run",
+    }
+}
+
+pub(crate) fn complete_coating(
+    tx: &Transaction<'_>,
+    run: &str,
+    reports: &mut [Report],
+    args: &Map<String, Value>,
+    cursor: i64,
+    order_held: bool,
+) -> anyhow::Result<Value> {
+    let order = args["work_order"].as_str().unwrap();
+    let id = args["wip_id"].as_str().unwrap();
+    let center = args["work_center"].as_str().unwrap();
+    let process_record = args["process_record"].as_str().unwrap();
+    let fail = |code| Ok(json!({"ok":false,"code":code}));
+    if ![id, center, process_record].into_iter().all(identifier) {
+        return fail("INVALID_ARGUMENT");
+    }
+    if order_held {
+        return fail("WORK_ORDER_HELD");
+    }
+    if let Some(code) = crate::quality::blocking(tx, run, order)? {
+        return Ok(json!({"ok":false,"code":code}));
+    }
+    let snapshot = crate::snapshots::load(tx, run, order)?;
+    if snapshot.as_ref().and_then(coating_center) != Some(center) {
+        return fail("COATING_ROUTE_MISMATCH");
+    }
+    let Some(index) = reports
+        .iter()
+        .position(|report| report.order == order && report.step == 0 && report.id == id)
+    else {
+        return fail("WIP_NOT_FOUND");
+    };
+    let report = &reports[index];
+    let lot = Lot {
+        report,
+        child: None,
+    };
+    if report.wip_sources.is_empty()
+        || lot.inactive().is_some()
+        || report.wip_move.is_some()
+        || report.coating.is_some()
+        || consumer(reports, order, id).is_some()
+    {
+        return fail("WIP_NOT_AVAILABLE");
+    }
+    if lot.held(tx, run, reports)? {
+        return fail("MATERIAL_HELD");
+    }
+    reports[index].coating = Some(Coating {
+        cursor,
+        work_center: center.to_owned(),
+        process_record: process_record.to_owned(),
+    });
+    Ok(json!({"ok":true,"work_order":order,"wip_id":id,"coating":reports[index].coating}))
 }

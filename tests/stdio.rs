@@ -4795,6 +4795,11 @@ fn p9d_26_cross_source_wip() {
     run_wip_scenario(44);
 }
 
+#[test]
+fn p9d_28_coating_handoff_and_quality_recovery() {
+    run_wip_scenario_with_quality(45, Some(QualityCheckpoint::CrossShop));
+}
+
 fn run_wip_scenario_with_quality(version: u64, quality_recovery: Option<QualityCheckpoint>) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
@@ -4935,113 +4940,153 @@ async fn move_and_consume_wip(
         "WIP_NOT_AT_OPERATION"
     );
     assert_eq!(cursor().await, before);
-    let split_ids =
-        if version == 44 {
-            let mut request = json!({"work_order":order,"source_wip_ids":[first_id,second_id],
+    let split_ids = if matches!(version, 44 | 45) {
+        let mut request = json!({"work_order":order,"source_wip_ids":[first_id,second_id],
             "reason":"stage machining outputs together"});
-            request["expected_cursor"] = cursor().await;
-            request["idempotency_key"] = json!("consolidate");
-            let combined = invoke("consolidate_wip", request.clone()).await;
-            assert_eq!(combined["ok"], true, "{combined}");
-            assert_eq!(combined["serial_numbers"].as_array().unwrap().len(), 10);
-            assert_eq!(invoke("consolidate_wip", request.clone()).await, combined);
+        request["expected_cursor"] = cursor().await;
+        request["idempotency_key"] = json!("consolidate");
+        let combined = invoke("consolidate_wip", request.clone()).await;
+        assert_eq!(combined["ok"], true, "{combined}");
+        assert_eq!(combined["serial_numbers"].as_array().unwrap().len(), 10);
+        assert_eq!(invoke("consolidate_wip", request.clone()).await, combined);
+        let before = cursor().await;
+        assert_eq!(
+            write("consolidate_wip", "reuse-source", request).await["code"],
+            "WIP_NOT_AVAILABLE"
+        );
+        assert_eq!(cursor().await, before);
+        let read = async |id: &Value| {
+            invoke("get_wip", json!({"work_order":order,"wip_id":id})).await["lots"][0].clone()
+        };
+        assert_eq!(
+            read(first_id).await["consolidated_into"],
+            combined["wip_id"]
+        );
+        assert_eq!(read(second_id).await["status"], "consolidated");
+        if version == 45 {
             let before = cursor().await;
+            let id = &combined["wip_id"];
+            let split = json!({"work_order":order,"wip_id":id,
+                    "selected_serial_numbers":first["report"]["serial_numbers"],"reason":"stage by origin"});
             assert_eq!(
-                write("consolidate_wip", "reuse-source", request).await["code"],
-                "WIP_NOT_AVAILABLE"
+                write("split_wip", "uncoated-split", split).await["code"],
+                "COATING_REQUIRED"
+            );
+            let move_args = json!({"work_order":order,"wip_id":id,
+                    "destination_operation":"assembly","reason":"handoff"});
+            assert_eq!(
+                write("move_wip", "uncoated-move", move_args).await["code"],
+                "COATING_REQUIRED"
+            );
+            let mut coat = json!({"work_order":order,"wip_id":id,"work_center":"ASM-01","process_record":"COAT-1"});
+            assert_eq!(
+                write("complete_coating", "wrong-shop", coat.clone()).await["code"],
+                "COATING_ROUTE_MISMATCH"
             );
             assert_eq!(cursor().await, before);
-            let read = async |id: &Value| {
-                invoke("get_wip", json!({"work_order":order,"wip_id":id})).await["lots"][0].clone()
-            };
-            assert_eq!(
-                read(first_id).await["consolidated_into"],
-                combined["wip_id"]
-            );
-            assert_eq!(read(second_id).await["status"], "consolidated");
-            let split = apply(
-                "split_wip",
-                "separate-input-lots",
-                json!({"work_order":order,
+            coat["work_center"] = json!("COAT-01");
+            coat["expected_cursor"] = before;
+            coat["idempotency_key"] = json!("coat");
+            let recorded = invoke("complete_coating", coat.clone()).await;
+            assert_eq!(recorded["ok"], true, "{recorded}");
+            assert_eq!(invoke("complete_coating", coat).await, recorded);
+            assert_eq!(read(id).await["coating"], recorded["coating"]);
+        }
+        let split = apply(
+            "split_wip",
+            "separate-input-lots",
+            json!({"work_order":order,
             "wip_id":combined["wip_id"],"selected_serial_numbers":first["report"]["serial_numbers"],
             "reason":"stage by origin"}),
-            )
-            .await;
-            let selected = &split["partition"]["children"][0];
-            let remaining = &split["partition"]["children"][1];
+        )
+        .await;
+        let selected = &split["partition"]["children"][0];
+        let remaining = &split["partition"]["children"][1];
+        assert_eq!(
+            selected["serial_numbers"],
+            first["report"]["serial_numbers"]
+        );
+        assert_eq!(
+            remaining["serial_numbers"],
+            second["report"]["serial_numbers"]
+        );
+        let selected_id = &selected["id"];
+        let remaining_id = &remaining["id"];
+        if version == 45 {
             assert_eq!(
-                selected["serial_numbers"],
-                first["report"]["serial_numbers"]
+                read(selected_id).await["coating"]["process_record"],
+                "COAT-1"
             );
             assert_eq!(
-                remaining["serial_numbers"],
-                second["report"]["serial_numbers"]
+                read(remaining_id).await["coating"],
+                read(selected_id).await["coating"]
             );
-            let selected_id = &selected["id"];
-            let remaining_id = &remaining["id"];
-            assert_eq!(read(selected_id).await["source_wip_ids"], json!([first_id]));
-            assert_eq!(
-                read(remaining_id).await["source_wip_ids"],
-                json!([second_id])
-            );
-            let _ = apply(
-                "hold_stock_lot",
-                "hold-source",
-                json!({"hold_id":"HQ-1","lot_id":"LOT-1","reason":"supplier review"}),
-            )
-            .await;
-            assert_eq!(read(selected_id).await["blocking"], "MATERIAL_HELD");
-            assert_eq!(read(remaining_id).await["status"], "available");
-            let before = cursor().await;
-            assert_eq!(
-                write(
-                    "move_wip",
-                    "blocked-subset",
-                    json!({"work_order":order,"wip_id":selected_id,
+        }
+        assert_eq!(read(selected_id).await["source_wip_ids"], json!([first_id]));
+        assert_eq!(
+            read(remaining_id).await["source_wip_ids"],
+            json!([second_id])
+        );
+        let _ = apply(
+            "hold_stock_lot",
+            "hold-source",
+            json!({"hold_id":"HQ-1","lot_id":"LOT-1","reason":"supplier review"}),
+        )
+        .await;
+        assert_eq!(read(selected_id).await["blocking"], "MATERIAL_HELD");
+        assert_eq!(read(remaining_id).await["status"], "available");
+        let before = cursor().await;
+        assert_eq!(
+            write(
+                "move_wip",
+                "blocked-subset",
+                json!({"work_order":order,"wip_id":selected_id,
             "destination_operation":"assembly","reason":"handoff"})
-                )
-                .await["code"],
-                "MATERIAL_HELD"
-            );
-            assert_eq!(cursor().await, before);
-            let _ = apply(
-                "release_stock_lot_hold",
-                "release-source",
-                json!({"hold_id":"HQ-1","reason":"review cleared"}),
             )
-            .await;
-            let forward = invoke("trace_lot_forward", json!({"lot_id":"LOT-1","limit":100})).await;
-            let edges = forward["edges"].as_array().unwrap();
-            assert!(
-                edges.iter().any(|edge| edge["kind"] == "wip_merge"
+            .await["code"],
+            "MATERIAL_HELD"
+        );
+        assert_eq!(cursor().await, before);
+        let _ = apply(
+            "release_stock_lot_hold",
+            "release-source",
+            json!({"hold_id":"HQ-1","reason":"review cleared"}),
+        )
+        .await;
+        let forward = invoke("trace_lot_forward", json!({"lot_id":"LOT-1","limit":100})).await;
+        let edges = forward["edges"].as_array().unwrap();
+        assert!(
+            edges
+                .iter()
+                .any(|edge| edge["kind"] == "wip_merge"
                     && edge["target"]["id"] == combined["wip_id"])
-            );
-            assert!(
+        );
+        assert!(
             edges
                 .iter()
                 .any(|edge| edge["kind"] == "wip_split" && edge["target"]["id"] == *selected_id)
         );
-            assert!(
-                !edges
-                    .iter()
-                    .any(|edge| edge["target"]["id"] == *remaining_id)
-            );
-            let backward = invoke(
-                "trace_serial_backward",
-                json!({"serial_number":remaining["serial_numbers"][0],"limit":100}),
-            )
-            .await;
-            let edges = backward["edges"].as_array().unwrap();
-            assert!(
+        assert!(
+            !edges
+                .iter()
+                .any(|edge| edge["target"]["id"] == *remaining_id)
+        );
+        let backward = invoke(
+            "trace_serial_backward",
+            json!({"serial_number":remaining["serial_numbers"][0],"limit":100}),
+        )
+        .await;
+        let edges = backward["edges"].as_array().unwrap();
+        assert!(
             edges
                 .iter()
                 .any(|edge| edge["kind"] == "material_input" && edge["source"]["id"] == "LOT-2")
         );
-            assert!(!edges.iter().any(|edge| edge["source"]["id"] == "LOT-1"));
-            Some((selected_id.clone(), remaining_id.clone()))
-        } else {
-            None
-        };
+        assert!(!edges.iter().any(|edge| edge["source"]["id"] == "LOT-1"));
+        Some((selected_id.clone(), remaining_id.clone()))
+    } else {
+        None
+    };
     let (first_id, second_id) = split_ids
         .as_ref()
         .map_or((first_id, second_id), |(first, second)| (first, second));
@@ -5464,7 +5509,7 @@ async fn move_and_consume_wip(
         )
         .await["balance"]["on_hand"],
         match version {
-            42..=44 => "1.5",
+            42..=45 => "1.5",
             40 => "0.75",
             _ => "0.5",
         }
@@ -5543,7 +5588,12 @@ async fn recover_quality(
     assert_eq!(account["settlement"]["output_receipts"], json!([]));
     if checkpoint == QualityCheckpoint::CrossShop {
         let result = invoke("get_wip", json!({"work_order":order})).await;
-        let lots = result["lots"].as_array().unwrap();
+        let lots: Vec<_> = result["lots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|lot| lot["status"] == "held")
+            .collect();
         assert_eq!(lots.len(), 2);
         assert!(
             lots.iter()
@@ -5584,6 +5634,15 @@ async fn recover_quality(
         )
         .await;
         assert_eq!(released["ok"], true, "{released}");
+        if staged["coating"].is_object() {
+            let dispatched = write(
+                "dispatch_operation",
+                "unaffected-dispatch",
+                json!({"work_order":"WO-2","operation":"machining","work_center":"MACH-01"}),
+            )
+            .await;
+            assert_eq!(dispatched["ok"], true, "{dispatched}");
+        }
     }
 
     assert_eq!(
@@ -6076,8 +6135,12 @@ async fn operation_issue_scenarios_with_quality(
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=44) {
+            if matches!(version,36..=45) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
+            }
+            if version == 45 {
+                route["coating"]=json!({"work_center":"COAT-01","predecessors":["machining"]});
+                route["assembly"]["predecessors"]=json!(["coating"]);
             }
             if version >= 41 {
                 route["inspection"]=json!({"work_center":"QA-01","predecessors":["assembly"]});
@@ -6307,14 +6370,14 @@ async fn operation_issue_scenarios_with_quality(
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if matches!(version,36..=44) {
+            if matches!(version,36..=45) {
                 Box::pin(move_and_consume_wip(&client,run,order,operation,version==37,version==38,version,quality_recovery)).await;
                 let (peer,_child)=connect_mode(&db,"0",true).await;
                 let lots=business(&peer,run,"get_wip",json!({"work_order":order})).await;
                 let lots=lots["lots"].as_array().unwrap();
                 assert_eq!(lots.iter().filter(|lot|lot["status"]=="consumed").count(),2);
                 assert_eq!(lots.iter().filter(|lot|lot["status"]=="merged").count(),if matches!(version,39 | 40) {2} else {0});
-                assert_eq!(lots.len(),match version { 44 => 5, 39 | 40 => 4, _ => 2 });
+                assert_eq!(lots.len(),match version { 44 | 45 => 5, 39 | 40 => 4, _ => 2 });
                 continue;
             }
             if version == 35 {
