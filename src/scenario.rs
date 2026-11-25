@@ -450,6 +450,29 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
         "machining inspections require tool setups, versioned inspections and controlled reporting"
     );
     anyhow::ensure!(
+        definition.manufacturing.as_ref().is_none_or(|setup| {
+            setup.equipment_center.as_ref().is_none_or(|center| {
+                setup.equipment_events
+                    && setup.machining_inspections
+                    && setup.strict_dispatch
+                    && setup.qualified_tools.contains_key(center)
+                    && setup
+                        .alternate_centers
+                        .get(center)
+                        .is_some_and(|alternates| {
+                            alternates
+                                .iter()
+                                .any(|alternate| setup.qualified_tools.contains_key(alternate))
+                        })
+                    && setup
+                        .work_centers
+                        .as_ref()
+                        .is_some_and(|centers| &centers[0] == center)
+            })
+        }),
+        "equipment recovery requires a primary machining center and a qualified alternate"
+    );
+    anyhow::ensure!(
         !definition.capabilities.contains(&Action::CompleteCoating)
             || definition.capabilities.contains(&Action::ConsolidateWip),
         "coating handoff requires work in process consolidation"
@@ -844,6 +867,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-coating-handoff.json"),
             include_str!("../fixtures/cnc-tool-setup.json"),
             include_str!("../fixtures/cnc-machining-inspections.json"),
+            include_str!("../fixtures/cnc-device-recovery.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-closed-loop.json"),

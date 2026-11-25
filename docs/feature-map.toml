@@ -1113,3 +1113,19 @@ spec = "acceptance/P10.md"
 features = ["F08", "F09", "F10", "F11"]
 layers = ["playwright"]
 tests = { playwright = "P10-03 Release CNC first article and process inspection" }
+
+[[case]]
+id = "P10-04"
+phase = "P10"
+spec = "acceptance/P10.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p10_04_cnc_recover_on_alternate_center" }
+
+[[case]]
+id = "P10-05"
+phase = "P10"
+spec = "acceptance/P10.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P10-05 Recover stopped machining on another center" }

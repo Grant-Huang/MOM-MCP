@@ -5042,6 +5042,11 @@ fn p10_02_cnc_first_article_and_process_inspections() {
     run_wip_scenario(47);
 }
 
+#[test]
+fn p10_04_cnc_recover_on_alternate_center() {
+    run_wip_scenario(48);
+}
+
 fn run_wip_scenario_with_quality(version: u64, quality_recovery: Option<QualityCheckpoint>) {
     // The full inventory, WIP and genealogy flow composes large debug-mode futures.
     std::thread::Builder::new()
@@ -6299,6 +6304,7 @@ async fn cnc_machining_inspections(
     client: &RunningService<RoleClient, ()>,
     run: &Value,
     order: &str,
+    recovery: bool,
 ) {
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
@@ -6358,7 +6364,86 @@ async fn cnc_machining_inspections(
     let (created, result) = inspect("FIRST", first_id, 1.5, None).await;
     assert_eq!(created["machining_inspection"]["kind"], "first_article");
     assert_eq!(result["inspection"]["status"], "passed");
-    let other = apply("post_operation_report", "rest", report(9, "1")).await;
+    if recovery {
+        assert_eq!(first["report"]["tool_setup"]["work_center"], "MACH-01");
+        let stopped = advance(client, run, 3).await;
+        assert_eq!(stopped["ok"], true, "{stopped}");
+        let status = invoke("mes_status", json!({"work_order":order})).await;
+        assert_eq!(status["equipment_down"], true);
+        let before = cursor().await;
+        let target = json!({"work_order":order,"operation":"machining","work_center":"MACH-02"});
+        assert_eq!(
+            write("reassign_operation", "running-transfer", target.clone()).await["code"],
+            "INVALID_STATE"
+        );
+        assert_eq!(
+            write("post_operation_report", "stopped-report", report(1, "0.25")).await["code"],
+            "EQUIPMENT_UNAVAILABLE"
+        );
+        assert_eq!(cursor().await, before);
+        let mut pause = op.clone();
+        pause["reason"] = json!("equipment stopped");
+        apply("pause_operation", "pause-fault", pause).await;
+        assert_eq!(
+            write("resume_operation", "resume-fault", op.clone()).await["code"],
+            "EQUIPMENT_UNAVAILABLE"
+        );
+        let mut reassignment = target;
+        reassignment["expected_cursor"] = cursor().await;
+        reassignment["idempotency_key"] = json!("move-to-backup");
+        let moved = invoke("reassign_operation", reassignment.clone()).await;
+        assert_eq!(moved["ok"], true, "{moved}");
+        assert_eq!(invoke("reassign_operation", reassignment).await, moved);
+        assert_eq!(moved["state"]["phase"], "paused");
+        assert_eq!(
+            write("resume_operation", "resume-unconfigured", op.clone()).await["code"],
+            "TOOL_SETUP_REQUIRED"
+        );
+        assert_eq!(
+            invoke("get_resource_capability", json!({"work_center":"MACH-01"})).await["resource"]["available"],
+            false
+        );
+        let setup = json!({"work_order":order,"operation":"machining","tool_id":"CUT-B","reason":"alternate equipment"});
+        apply("set_operation_tool", "mount-backup", setup).await;
+        apply("resume_operation", "resume-backup", op.clone()).await;
+        assert_eq!(
+            write("post_operation_report", "skip-backup-first", report(9, "1")).await["code"],
+            "FIRST_ARTICLE_QUANTITY_REQUIRED"
+        );
+        let backup = apply("post_operation_report", "backup-first", report(1, "0.25")).await;
+        assert_eq!(backup["report"]["tool_setup"]["work_center"], "MACH-02");
+        assert_ne!(
+            backup["report"]["serial_numbers"],
+            first["report"]["serial_numbers"]
+        );
+        assert_eq!(
+            write(
+                "post_operation_report",
+                "blocked-backup-lot",
+                report(8, "0.75")
+            )
+            .await["code"],
+            "MACHINING_INSPECTION_REQUIRED"
+        );
+        let (created, passed) = inspect("BACKUP-FIRST", &backup["report"]["id"], 1.5, None).await;
+        assert_eq!(created["machining_inspection"]["kind"], "first_article");
+        assert_eq!(passed["inspection"]["status"], "passed");
+        let reports = invoke("list_operation_reports", op.clone()).await;
+        assert_eq!(reports["reports"][0], first["report"]);
+        let movements = invoke("list_inventory_movements", json!({"movement_type":"issue"})).await;
+        assert_eq!(movements["movements"].as_array().unwrap().len(), 1);
+        assert_eq!(movements["movements"][0]["work_center"], "MACH-01");
+    }
+    let other = apply(
+        "post_operation_report",
+        "rest",
+        if recovery {
+            report(8, "0.75")
+        } else {
+            report(9, "1")
+        },
+    )
+    .await;
     let other_id = &other["report"]["id"];
     assert_eq!(
         write("complete_operation", "early-complete", op.clone()).await["code"],
@@ -6506,9 +6591,9 @@ async fn operation_issue_scenarios_with_quality(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("inventory.sqlite3");
-    let needs_clock_control = scenarios
-        .iter()
-        .any(|(scenario, version, ..)| *scenario == "assembly" && *version == 29);
+    let needs_clock_control = scenarios.iter().any(|(scenario, version, ..)| {
+        (*scenario == "assembly" && *version == 29) || (*scenario == "cnc" && *version == 48)
+    });
     let (client, _child) = connect_options(&db, "0", true, needs_clock_control).await;
     timeout(Duration::from_secs(30), Box::pin(async {
         for &(scenario,version,order,operation,center) in scenarios {
@@ -6528,10 +6613,10 @@ async fn operation_issue_scenarios_with_quality(
                 result
             };
             let mut route = json!({(operation):{"work_center":center,"predecessors":[]}});
-            if matches!(version,36..=47) {
+            if matches!(version,36..=48) {
                 route["assembly"]=json!({"work_center":"ASM-01","predecessors":["machining"]});
             }
-            if matches!(version,45..=47) {
+            if matches!(version,45..=48) {
                 route["coating"]=json!({"work_center":"COAT-01","predecessors":["machining"]});
                 route["assembly"]["predecessors"]=json!(["coating"]);
             }
@@ -6748,6 +6833,9 @@ async fn operation_issue_scenarios_with_quality(
             apply("pick_material","pick",json!({"reservation_id":"RS-1"})).await;
             assert_eq!(write("issue_material_to_operation","issue",issue.clone()).await["code"],"ISSUE_OPERATION_NOT_ELIGIBLE");
             apply("dispatch_operation","dispatch",json!({"work_order":order,"operation":operation,"work_center":center})).await;
+            if version == 48 {
+                apply("set_operation_tool","mount-primary",json!({"work_order":order,"operation":operation,"tool_id":"CUT-A","reason":"initial setup"})).await;
+            }
             if matches!(version,46 | 47) {
                 let prep=json!({"work_order":order,"operation":operation});
                 let mut setup=json!({"work_order":order,"operation":operation,"tool_id":"CUT-A","reason":"initial setup"});
@@ -6779,8 +6867,8 @@ async fn operation_issue_scenarios_with_quality(
             assert_eq!(balance().await["balance"]["reserved"],"0");
             assert_eq!(invoke("issue_material_to_operation",submitted).await,first);
             assert_eq!(write("issue_material_to_operation","duplicate",issue).await["code"],"RESERVATION_STATE_INVALID");
-            if version == 47 {
-                Box::pin(cnc_machining_inspections(&client, run, order)).await;
+            if matches!(version,47 | 48) {
+                Box::pin(cnc_machining_inspections(&client, run, order, version == 48)).await;
                 continue;
             }
             if matches!(version,36..=46) {

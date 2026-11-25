@@ -93,7 +93,7 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
     (
         Action::ReassignOperation,
         "reassign_operation",
-        "将尚未开工的工序改派到可用工作中心",
+        "将符合改派条件的工序转到可用工作中心",
         "production",
     ),
     (
@@ -639,6 +639,8 @@ pub struct Setup {
     pub initial_stock: usize,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub equipment_events: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equipment_center: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub strict_dispatch: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -941,6 +943,21 @@ pub fn order_status(
     }))
 }
 
+fn operation_center(order: &Order, step: usize) -> Option<&str> {
+    order
+        .assigned_centers
+        .get(&step)
+        .or_else(|| order.work_centers.as_ref()?.get(step))
+        .map(String::as_str)
+}
+
+fn center_down(setup: &Setup, down: bool, center: Option<&str>) -> bool {
+    down && setup
+        .equipment_center
+        .as_deref()
+        .is_none_or(|affected| center == Some(affected))
+}
+
 fn occupant<'a>(state: &'a State, center: &str, except: &str) -> Option<&'a str> {
     state
         .orders
@@ -986,43 +1003,46 @@ pub fn operations(
             continue;
         }
         for (index, operation) in ROUTE.iter().enumerate() {
-            let (status, blocking) =
-                if index < order.step || matches!(order.phase, Phase::Complete | Phase::Closed) {
-                    if index == 2 && order.inspection.as_deref() == Some("fail") {
-                        ("blocked", Some("QUALITY_HOLD"))
-                    } else {
-                        ("completed", None)
-                    }
-                } else if order.phase == Phase::Cancelled {
-                    ("cancelled", None)
-                } else if index > order.step {
-                    ("pending", Some("PREDECESSOR_INCOMPLETE"))
-                } else if order.hold_reason.is_some() {
-                    ("held", Some("WORK_ORDER_HELD"))
-                } else if order.phase == Phase::Planned {
-                    ("pending", Some("ORDER_NOT_RELEASED"))
+            let (status, blocking) = if index < order.step
+                || matches!(order.phase, Phase::Complete | Phase::Closed)
+            {
+                if index == 2 && order.inspection.as_deref() == Some("fail") {
+                    ("blocked", Some("QUALITY_HOLD"))
                 } else {
-                    let phase = match order.phase {
-                        Phase::Ready => "ready",
-                        Phase::Dispatched => "dispatched",
-                        Phase::Running => "running",
-                        Phase::Paused => "paused",
-                        _ => unreachable!("operation phase handled above"),
-                    };
-                    let blocking = if quality_hold {
-                        Some("QUALITY_HOLD")
-                    } else if state.equipment_down && index < 2 {
-                        Some("EQUIPMENT_UNAVAILABLE")
-                    } else if !setup.issued_report_inputs
-                        && index == 0
-                        && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
-                    {
-                        Some("MATERIAL_SHORTAGE")
-                    } else {
-                        None
-                    };
-                    (phase, blocking)
+                    ("completed", None)
+                }
+            } else if order.phase == Phase::Cancelled {
+                ("cancelled", None)
+            } else if index > order.step {
+                ("pending", Some("PREDECESSOR_INCOMPLETE"))
+            } else if order.hold_reason.is_some() {
+                ("held", Some("WORK_ORDER_HELD"))
+            } else if order.phase == Phase::Planned {
+                ("pending", Some("ORDER_NOT_RELEASED"))
+            } else {
+                let phase = match order.phase {
+                    Phase::Ready => "ready",
+                    Phase::Dispatched => "dispatched",
+                    Phase::Running => "running",
+                    Phase::Paused => "paused",
+                    _ => unreachable!("operation phase handled above"),
                 };
+                let blocking = if quality_hold {
+                    Some("QUALITY_HOLD")
+                } else if center_down(setup, state.equipment_down, operation_center(order, index))
+                    && index < 2
+                {
+                    Some("EQUIPMENT_UNAVAILABLE")
+                } else if !setup.issued_report_inputs
+                    && index == 0
+                    && state.stock < QUANTITY - reported_quantity(&state.reports, id, 0)
+                {
+                    Some("MATERIAL_SHORTAGE")
+                } else {
+                    None
+                };
+                (phase, blocking)
+            };
             let center = order.assigned_centers.get(&index).cloned().or_else(|| {
                 order
                     .work_centers
@@ -1079,7 +1099,7 @@ pub fn resource_capability(
         return Ok(None);
     }
     let occupied_by = occupant(&state, center, "");
-    let available = !state.equipment_down
+    let available = !center_down(setup, state.equipment_down, Some(center))
         || operations
             .iter()
             .all(|operation| *operation == "inspection");
@@ -1350,13 +1370,18 @@ pub fn invoke(
         let Some(order) = state.orders.get(id) else {
             return Ok((error("WORK_ORDER_NOT_FOUND"), false));
         };
+        let equipment_down = center_down(
+            setup,
+            state.equipment_down,
+            operation_center(order, order.step),
+        );
         let blocking = if order.hold_reason.is_some() {
             Some("WORK_ORDER_HELD")
         } else if held || order.inspection.as_deref() == Some("fail") {
             Some("QUALITY_HOLD")
         } else if order.phase == Phase::Planned && state.stock < QUANTITY {
             Some("MATERIAL_SHORTAGE")
-        } else if state.equipment_down
+        } else if equipment_down
             && (order.phase == Phase::Dispatched
                 || (setup.equipment_events
                     && matches!(order.phase, Phase::Running | Phase::Paused)))
@@ -1395,7 +1420,7 @@ pub fn invoke(
                     } else {
                         order.batch.is_some()
                     };
-                    if !state.equipment_down {
+                    if !equipment_down {
                         if tool_required {
                             actions.push("set_operation_tool");
                         }
@@ -1405,10 +1430,15 @@ pub fn invoke(
                     }
                     actions
                 }
-                Phase::Running if setup.equipment_events && state.equipment_down => {
+                Phase::Running if setup.equipment_events && equipment_down => {
                     vec!["pause_operation"]
                 }
-                Phase::Paused if setup.equipment_events && state.equipment_down => vec![],
+                Phase::Paused
+                    if setup.equipment_center.is_some() && equipment_down && order.step == 0 =>
+                {
+                    vec!["reassign_operation"]
+                }
+                Phase::Paused if setup.equipment_events && equipment_down => vec![],
                 Phase::Paused if tool_required => {
                     let mut actions = vec!["set_operation_tool"];
                     if order.tool_setup.is_some() {
@@ -1455,7 +1485,7 @@ pub fn invoke(
             .collect();
         return Ok((
             json!({"ok":true,"work_order":id,"state":order,"on_hand":state.stock,"location":"RAW-01",
-            "blocking":blocking,"available_actions":available,"equipment_down":state.equipment_down,"route_master":state.route_version,"ledger":state.ledger,"reports":reports,"cursor":cursor}),
+            "blocking":blocking,"available_actions":available,"equipment_down":equipment_down,"route_master":state.route_version,"ledger":state.ledger,"reports":reports,"cursor":cursor}),
             false,
         ));
     }
@@ -1493,6 +1523,12 @@ pub fn invoke(
         && matches!(action, Action::SetOperationTool | Action::ResumeOperation)
         && let Some(order) = args["work_order"].as_str()
         && let Some(code) = crate::quality::blocking(tx, run, order)?
+    {
+        return Ok((error(&code), false));
+    }
+    if setup.equipment_center.is_some()
+        && action == Action::ReassignOperation
+        && let Some(code) = crate::quality::blocking(tx, run, args["work_order"].as_str().unwrap())?
     {
         return Ok((error(&code), false));
     }
@@ -1860,6 +1896,15 @@ fn apply(
     {
         return error("OPERATION_OUT_OF_SEQUENCE");
     }
+    let equipment_down = center_down(
+        setup,
+        state.equipment_down,
+        operation_center(order, order.step),
+    );
+    let recovering = setup.equipment_center.is_some()
+        && order.step == 0
+        && order.phase == Phase::Paused
+        && equipment_down;
     match action {
         Action::HoldWorkOrder
             if matches!(
@@ -1875,7 +1920,7 @@ fn apply(
             if held {
                 return error("QUALITY_HOLD");
             }
-            if state.equipment_down
+            if equipment_down
                 && matches!(
                     order.phase,
                     Phase::Dispatched | Phase::Running | Phase::Paused
@@ -1959,7 +2004,7 @@ fn apply(
         Action::DispatchOperation | Action::ReassignOperation
             if (action == Action::DispatchOperation && order.phase == Phase::Ready)
                 || (action == Action::ReassignOperation
-                    && order.phase == Phase::Dispatched
+                    && (order.phase == Phase::Dispatched || recovering)
                     && !setup.alternate_centers.is_empty()) =>
         {
             if let Some(centers) = &order.work_centers {
@@ -1975,7 +2020,7 @@ fn apply(
                     if held {
                         return error("QUALITY_HOLD");
                     }
-                    if state.equipment_down && order.step < 2 {
+                    if center_down(setup, state.equipment_down, Some(center)) && order.step < 2 {
                         return error("EQUIPMENT_UNAVAILABLE");
                     }
                     if !setup.issued_report_inputs
@@ -1985,6 +2030,7 @@ fn apply(
                         return error("MATERIAL_SHORTAGE");
                     }
                 }
+                let previous_center = operation_center(order, order.step).map(str::to_owned);
                 if !setup.alternate_centers.is_empty() {
                     if let Some(owner) = busy {
                         return json!({"ok":false,"code":"RESOURCE_BUSY","occupied_by":owner});
@@ -2002,17 +2048,25 @@ fn apply(
                         order.tool_setup = None;
                     }
                 }
-                let kind = if action == Action::ReassignOperation {
+                let kind = if recovering {
+                    "operation_recovery_reassign"
+                } else if action == Action::ReassignOperation {
                     "operation_reassign"
                 } else {
                     "operation_dispatch"
                 };
-                state.ledger.push(json!({"kind":kind,"work_order":id,
-                    "operation":ROUTE[order.step],"work_center":center,"route_version":order.route_version,"cursor":revision}));
+                let mut entry = json!({"kind":kind,"work_order":id,
+                    "operation":ROUTE[order.step],"work_center":center,"route_version":order.route_version,"cursor":revision});
+                if recovering {
+                    entry["previous_work_center"] = json!(previous_center);
+                }
+                state.ledger.push(entry);
             } else if args.contains_key("work_center") {
                 return error("INVALID_ARGUMENT");
             }
-            order.phase = Phase::Dispatched;
+            if !recovering {
+                order.phase = Phase::Dispatched;
+            }
         }
         Action::IssueMaterial if order.phase == Phase::Dispatched && order.step == 0 => {
             if args["batch"] != LOT {
@@ -2032,7 +2086,7 @@ fn apply(
             if !crate::scenario::identifier(tool) || reason.trim().is_empty() {
                 return error("INVALID_ARGUMENT");
             }
-            if state.equipment_down {
+            if equipment_down {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
             let Some(center) = order.assigned_centers.get(&order.step) else {
@@ -2071,7 +2125,7 @@ fn apply(
             if held {
                 return error("QUALITY_HOLD");
             }
-            if state.equipment_down {
+            if equipment_down {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
             if !setup.issued_report_inputs
@@ -2087,7 +2141,7 @@ fn apply(
             if order.step == 0 && !setup.qualified_tools.is_empty() && order.tool_setup.is_none() {
                 return error("TOOL_SETUP_REQUIRED");
             }
-            if state.equipment_down {
+            if equipment_down {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
             if !setup.issued_report_inputs && order.batch.is_none() {
@@ -2105,7 +2159,7 @@ fn apply(
             if order.step == 0 && !setup.qualified_tools.is_empty() && order.tool_setup.is_none() {
                 return error("TOOL_SETUP_REQUIRED");
             }
-            if setup.equipment_events && state.equipment_down {
+            if setup.equipment_events && equipment_down {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
             if held {
@@ -2177,7 +2231,7 @@ fn apply(
             return response;
         }
         Action::CompleteOperation if order.phase == Phase::Running => {
-            if setup.equipment_events && state.equipment_down {
+            if setup.equipment_events && equipment_down {
                 return error("EQUIPMENT_UNAVAILABLE");
             }
             if held {
