@@ -44,6 +44,7 @@ def record(company):
     product = scoped['product.product'].create({'name': 'M3 sample', 'is_storable': True, 'company_id': company.id})
     return scoped['mrp.production'].create({'product_id': product.id, 'product_qty': 1, 'company_id': company.id})
 visible, hidden = record(a), record(b)
+expected_utc = '2026-11-01 08:30:00'
 def token(company, login):
     actor = env['res.users'].with_context(no_reset_password=True).create({
         'name': login, 'login': login, 'company_id': company.id,
@@ -54,12 +55,15 @@ def token(company, login):
         'rpc', 'M3 acceptance', datetime.now() + timedelta(hours=1))
 key = token(a, 'm3-primary')
 witness = token(b, 'm3-witness')
+env.flush_all()
+env.cr.execute('UPDATE mrp_production SET write_date = %s WHERE id = %s', (expected_utc, visible.id))
 env.cr.commit()
-print('M3_SAMPLE=' + json.dumps({'database':'m3_sample','token':key,'witness':witness,'visible':visible.id,'hidden':hidden.id}))
+print('M3_SAMPLE=' + json.dumps({'database':'m3_sample','token':key,'witness':witness,'visible':visible.id,'hidden':hidden.id,'expected_utc':expected_utc}))
 PY
 
 python3 - "$sample" "$address" "$name" "$db" <<'PY'
 import json, os, subprocess, sys
+from urllib.request import Request, urlopen
 with open(sys.argv[1]) as f:
     sample = json.load(f)
 cmd = [os.environ['MOM_ODOO_ADAPTER_SMOKE'], 'odoo', 'http://' + sys.argv[2],
@@ -67,6 +71,24 @@ cmd = [os.environ['MOM_ODOO_ADAPTER_SMOKE'], 'odoo', 'http://' + sys.argv[2],
 env = dict(os.environ, MOM_ODOO_DATABASE=sample['database'], MOM_SAMPLE_TOKEN=sample['token'],
            MOM_ODOO_WITNESS_TOKEN=sample['witness'])
 subprocess.run(cmd, env=env, check=True)
+endpoint = 'http://' + sys.argv[2] + '/json/2/mrp.production/search_read'
+for context in ({}, {'tz': 'America/Vancouver'}, {'tz': 'Asia/Tokyo'}):
+    body = json.dumps({
+        'domain': [['id', '=', sample['visible']]],
+        'fields': ['id', 'write_date'],
+        'limit': 2,
+        'context': context,
+    }).encode()
+    request = Request(endpoint, data=body, headers={
+        'Authorization': 'Bearer ' + sample['token'],
+        'X-Odoo-Database': sample['database'],
+        'Content-Type': 'application/json',
+    })
+    with urlopen(request, timeout=8) as response:
+        row, = json.load(response)
+    assert row['id'] == sample['visible']
+    assert row['write_date'] == sample['expected_utc'], (context, row['write_date'])
+print("Odoo write_date: UTC storage matches all three JSON-2 timezone contexts")
 confirm = f"""
 order = env['mrp.production'].browse({int(sample['visible'])})
 assert order.state == 'draft'
