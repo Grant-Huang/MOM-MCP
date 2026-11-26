@@ -7195,6 +7195,11 @@ async fn p11_02_smt_splice_allocates_by_serial() {
     smt_shared_material(6).await;
 }
 
+#[tokio::test]
+async fn p11_04_smt_aoi_review_by_board() {
+    smt_shared_material(7).await;
+}
+
 async fn smt_shared_material(version: u64) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("smt-ledger.sqlite3");
@@ -7245,8 +7250,8 @@ async fn smt_shared_material(version: u64) {
         apply("create_receipt","reel-receipt",json!({"receipt_id":"RC-1","item_id":"COMPONENT","revision":1,"quantity":"3","requires_inspection":false})).await;
         apply("assign_receipt_tracking","reel-tracking",json!({"receipt_id":"RC-1","lot_id":"REEL-C","supplier_lot":"SUP-C","location":"RAW-01"})).await;
         apply("post_receipt","reel-post",json!({"receipt_id":"RC-1"})).await;
-        if version == 6 {
-            Box::pin(smt_spliced_panel(&client,run)).await;
+        if matches!(version,6 | 7) {
+            Box::pin(smt_spliced_panel(&client,run,version == 7)).await;
             return;
         }
         let reel = if version == 5 {
@@ -7356,7 +7361,7 @@ async fn smt_shared_material(version: u64) {
     }).await.unwrap();
 }
 
-async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value) {
+async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value, review_aoi: bool) {
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
     let write = async |name: &str, key: &str, mut args: Value| {
@@ -7438,13 +7443,45 @@ async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value)
     let placed = invoke("smt_place", request.clone()).await;
     assert_eq!(placed["ok"], true, "{placed}");
     assert_eq!(invoke("smt_place", request).await, placed);
+    let split = json!({"panel":"P-A"});
+    let mut review = json!({"panel":"P-A","decisions":{"A-01":"hold","A-02":"pass"},
+        "responsible":"QA-01","reason":"manual board review","evidence":"AOI-IMAGE-1"});
+    if review_aoi {
+        assert_eq!(
+            write("smt_review_aoi", "premature-review", review.clone()).await["code"],
+            "AOI_REVIEW_NOT_ELIGIBLE"
+        );
+    }
     apply(
         "smt_aoi",
         "aoi-splice",
-        json!({"panel":"P-A","result":"pass"}),
+        json!({"panel":"P-A","result":if review_aoi {"fail"} else {"pass"}}),
     )
     .await;
-    apply("smt_split", "split-splice", json!({"panel":"P-A"})).await;
+    if review_aoi {
+        let before = cursor().await;
+        assert_eq!(
+            write("smt_split", "no-review", split.clone()).await["code"],
+            "AOI_REVIEW_REQUIRED"
+        );
+        let mut incomplete = review.clone();
+        incomplete["decisions"] = json!({"A-01":"pass"});
+        assert_eq!(
+            write("smt_review_aoi", "incomplete-review", incomplete).await["code"],
+            "INVALID_ARGUMENT"
+        );
+        assert_eq!(cursor().await, before);
+        review["expected_cursor"] = before;
+        review["idempotency_key"] = json!("board-review");
+        let result = invoke("smt_review_aoi", review.clone()).await;
+        assert_eq!(result["ok"], true, "{result}");
+        assert_eq!(invoke("smt_review_aoi", review.clone()).await, result);
+        assert_eq!(
+            write("smt_review_aoi", "second-review", review).await["code"],
+            "AOI_REVIEW_NOT_ELIGIBLE"
+        );
+    }
+    apply("smt_split", "split-splice", split).await;
     for (serial, other, lot, load) in [
         ("A-01", "A-02", "REEL-C", &old),
         ("A-02", "A-01", "REEL-N", &splice),
@@ -7470,6 +7507,14 @@ async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value)
         let direct = invoke("smt_trace", json!({"subject":serial})).await;
         assert_eq!(direct["links"][0]["load_id"], load["load_id"]);
         assert_eq!(direct["links"][0]["reel"], lot);
+        if review_aoi {
+            assert_eq!(direct["links"][0]["aoi"], "fail");
+            assert_eq!(
+                direct["links"][0]["history"][1]["decision"],
+                if serial == "A-01" { "hold" } else { "pass" }
+            );
+            assert_eq!(direct["links"][0]["history"][1]["evidence"], "AOI-IMAGE-1");
+        }
     }
     apply(
         "hold_stock_lot",
@@ -7491,10 +7536,17 @@ async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value)
         json!({"hold_id":"H-POST","reason":"review cleared"}),
     )
     .await;
-    assert_eq!(
-        apply("smt_finish", "resume-A", json!({"serial":"A-01"})).await["finished"],
-        true
-    );
+    if review_aoi {
+        assert_eq!(
+            write("smt_finish", "resume-A", json!({"serial":"A-01"})).await["code"],
+            "QUALITY_HOLD"
+        );
+    } else {
+        assert_eq!(
+            apply("smt_finish", "resume-A", json!({"serial":"A-01"})).await["finished"],
+            true
+        );
+    }
     assert_eq!(
         invoke(
             "get_stock_balance",
