@@ -446,6 +446,56 @@ async fn one_observe_entry_preserves_source_time_across_authorized_worlds() {
 }
 
 #[tokio::test]
+async fn rereads_snapshots_when_source_time_is_equal_or_older() {
+    async fn order(State(calls): State<Arc<AtomicUsize>>) -> Json<serde_json::Value> {
+        let (status, updated_at) = match calls.fetch_add(1, Ordering::Relaxed) {
+            0 => ("PENDING", "2026-11-01T08:30:00Z"),
+            1 => ("ACCEPTED", "2026-11-01T08:30:00Z"),
+            2 => ("IN_PROGRESS", "2026-11-01T08:29:59Z"),
+            _ => panic!("unexpected additional read"),
+        };
+        Json(json!({"data":{
+            "id":4242,"order_no":"WO-42","status":status,"updated_at":updated_at
+        }}))
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new()
+        .route("/api/v1/work-orders/4242", get(order))
+        .with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let service = ExternalObserve::new([source(&origin, "site-a", "local-fixture")]).unwrap();
+    let selection = WorkOrderSelection {
+        world_id: "world-a",
+        object_ref: "opaque-42",
+    };
+
+    for (index, (status, updated_at)) in [
+        ("PENDING", "2026-11-01T08:30:00Z"),
+        ("ACCEPTED", "2026-11-01T08:30:00Z"),
+        ("IN_PROGRESS", "2026-11-01T08:29:59Z"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let observation = service
+            .observe(selection, |_| async { Some(granted("site-a", "4242")) })
+            .await
+            .unwrap();
+        assert_eq!(observation.object_ref, selection.object_ref);
+        assert_eq!(observation.source_status.as_deref(), Some(status));
+        assert_eq!(observation.source_updated_at.as_deref(), Some(updated_at));
+        let payload = serde_json::to_value(observation).unwrap();
+        assert!(payload.get("cursor").is_none());
+        assert!(payload.get("watermark").is_none());
+        assert_eq!(calls.load(Ordering::Relaxed), index + 1);
+    }
+    task.abort();
+}
+
+#[tokio::test]
 async fn publishes_only_host_authorized_odoo_relation_references() {
     use axum::routing::post;
     use mom_mcp::external_observe::AuthorizedOdooRelation;
