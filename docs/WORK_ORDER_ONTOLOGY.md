@@ -21,7 +21,7 @@ v0.1 是首期工单观测切片。中期按来源证据增补对象、关系、
 | 显示号 | `name` | `data.order_no` | `jobId` |
 | 源作用域 | 数据库与公司绑定 | 站点与产线绑定 | 来源实例与公司绑定 |
 | 源状态 | `state` | `data.status` | `status` |
-| 更新时间候选 | `write_date`，时区待核实 | `data.updated_at` | `updatedAt`，实际 MCP 载荷和可空性待实测 |
+| 更新时间候选 | `write_date`，JSON-2 实测为不带偏移的 UTC | `data.updated_at` | `updatedAt`，实际 MCP 载荷和可空性待实测 |
 
 - 每个观测携带来源引用、观测时点、源状态及映射版本。仅在来源提供可验证版本时返回对象版本。时间统一用 RFC 3339 UTC，来源时间不明确时省略该字段。
 - 首轮 `draft`／`confirmed`、`PENDING`／`ACCEPTED`、`Draft`／`Ready` 保留各自源值。确认、接受、就绪对应的条件及副作用需要各自证据，当前 `normalized_status` 为空并给出 `unmapped`。Carbon 的状态样例来自迁移与夹具，待获授权实例读回。
@@ -32,8 +32,12 @@ v0.1 是首期工单观测切片。中期按来源证据增补对象、关系、
 
 同一个生产 Observe 工单意图须在 Odoo JSON-2、OpenMES HTTP 和 Carbon 社区版 REST 上各执行一次成功读取，并验证来源追溯和源状态、来源内不可见、绑定或凭据失败，以及明确配置来源失败时零模拟调用。保留各来源版本、授权身份的范围和脱敏结果。接口夹具用于离线回归，运行时签收要求各自的实际接口和一次 AgentNexus 串联调用。Carbon 原生 MCP 的授权实例兼容性单独登记。[短期验收台账](acceptance/ADAPTER_READ.md)
 
+### Odoo 源更新时间
+
+固定 Odoo Community 19 与 PostgreSQL 16 的隔离复验将同一合成制造单的 `write_date` 设为已知 UTC 值。在默认上下文、`America/Vancouver` 和 `Asia/Tokyo` 下，用同一身份按同一 ID 查询 JSON-2 `search_read`，三次均返回相同的无偏移时间字符串，并与数据库基准吻合。可用 [Odoo 生命周期脚本](references/mcp/odoo-adapter-lifecycle-smoke.sh) 复跑。Odoo 映射 v0.2 将固定格式 `YYYY-MM-DD HH:MM:SS` 转成 RFC 3339 UTC 并输出为 `source_updated_at`。缺失或不符合格式时省略该字段，仍使用 v0.2。Observe 的 `observed_at` 记录 Adapter 读取时刻。 [Odoo ORM 时间存储约定](https://www.odoo.com/documentation/19.0/developer/reference/backend/orm.html#date-time-fields)
+
 ### 离线契约回归
 
-运行 `cargo test --locked --test external_order`。用例调用实际 Adapter 的投影器，覆盖三源字段、映射版本、同号及跨作用域身份、记录 ID 精确匹配、缺失或畸形状态及单对象响应形状。数值 ID 在 Rust 中按整数保存并与绑定中的字符串精确匹配。OpenMES 带偏移量的源时间统一为 UTC，Odoo 与 Carbon 的候选源时间字段暂省略。
+运行 `cargo test --locked --test external_order`。用例调用实际 Adapter 的投影器，覆盖三源字段、映射版本、同号及跨作用域身份、记录 ID 精确匹配、缺失或畸形状态及单对象响应形状。数值 ID 在 Rust 中按整数保存并与绑定中的字符串精确匹配。OpenMES 带偏移量的源时间统一为 UTC，Odoo 使用已验证的 UTC 规则，Carbon 的候选源时间字段暂省略。
 
 输入从宿主已解析的绑定及传输层已分类的响应开始。身份元组用于内部断言，产品 Observe 对外使用不透明引用。Carbon 投影用合成记录验证。来源权限、传输包络、故障隔离和宿主接线按[短期验收台账](acceptance/ADAPTER_READ.md)复跑。

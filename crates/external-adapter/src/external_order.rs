@@ -1,6 +1,6 @@
 //! Read-only domain projection after transport and authorization have succeeded.
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -107,23 +107,37 @@ pub fn project_order<'a>(
         _ => return Err(InvalidResponse),
     };
     let fields = record.as_object_mut().ok_or(InvalidResponse)?;
-    let (number_key, status_key, time_key) = match binding.source {
-        Source::Odoo => ("name", "state", None),
-        Source::OpenMes => ("order_no", "status", Some("updated_at")),
-        Source::Carbon => ("jobId", "status", None),
+    let (number_key, status_key, mapping_version, source_updated_at) = match binding.source {
+        Source::Odoo => {
+            let timestamp = fields
+                .get("write_date")
+                .and_then(Value::as_str)
+                .and_then(|value| {
+                    let format = "%Y-%m-%d %H:%M:%S";
+                    let parsed = NaiveDateTime::parse_from_str(value, format).ok()?;
+                    (value.len() == 19 && parsed.format(format).to_string() == value)
+                        .then(|| parsed.and_utc().to_rfc3339_opts(SecondsFormat::Secs, true))
+                });
+            ("name", "state", "0.2", timestamp)
+        }
+        Source::OpenMes => {
+            let timestamp = fields
+                .get("updated_at")
+                .and_then(Value::as_str)
+                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                .map(|value| {
+                    value
+                        .with_timezone(&Utc)
+                        .to_rfc3339_opts(SecondsFormat::AutoSi, true)
+                });
+            ("order_no", "status", "0.1", timestamp)
+        }
+        Source::Carbon => ("jobId", "status", "0.1", None),
     };
     // Select only the documented fields. Unknown upstream data stays outside the projection.
     let id = fields.remove("id").ok_or(InvalidResponse)?;
     let number = fields.remove(number_key).ok_or(InvalidResponse)?;
     let status = fields.remove(status_key);
-    let source_updated_at = time_key
-        .and_then(|key| fields.get(key))
-        .and_then(Value::as_str)
-        .and_then(|time| DateTime::parse_from_rfc3339(time).ok())
-        .map(|time| {
-            time.with_timezone(&Utc)
-                .to_rfc3339_opts(SecondsFormat::AutoSi, true)
-        });
     let id: RecordId = serde_json::from_value(id).map_err(|_| InvalidResponse)?;
     let display_number: String = serde_json::from_value(number).map_err(|_| InvalidResponse)?;
     let source_status: Option<String> = status
@@ -154,7 +168,7 @@ pub fn project_order<'a>(
         source_status,
         normalized_status: None,
         mapping_issue,
-        mapping_version: "0.1",
+        mapping_version,
         source_updated_at,
     })
 }

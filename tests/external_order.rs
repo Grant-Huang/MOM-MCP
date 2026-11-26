@@ -19,7 +19,7 @@ fn projects_three_sources_and_retains_distinct_identities() {
             "odoo",
             json!([{"id":42,"name":"WO-42","state":"confirmed","write_date":"2026-11-22 16:21:58"}]),
             "confirmed",
-            None,
+            Some("2026-11-22T16:21:58Z"),
         ),
         (
             Source::OpenMes,
@@ -43,7 +43,10 @@ fn projects_three_sources_and_retains_distinct_identities() {
         assert_eq!(row.source_status.as_deref(), Some(state));
         assert_eq!(row.normalized_status, None);
         assert_eq!(row.mapping_issue, MappingIssue::Unmapped);
-        assert_eq!(row.mapping_version, "0.1");
+        assert_eq!(
+            row.mapping_version,
+            if source == Source::Odoo { "0.2" } else { "0.1" }
+        );
         assert_eq!(row.source_updated_at.as_deref(), timestamp);
         assert_eq!(row.identity.source_id, "42");
         identities.push(row.identity);
@@ -156,7 +159,27 @@ fn preserves_source_specific_release_states() {
             assert_eq!(observation.source_status.as_deref(), Some(expected));
             assert_eq!(observation.normalized_status, None);
             assert_eq!(observation.mapping_issue, MappingIssue::Unmapped);
-            assert_eq!(observation.mapping_version, "0.1");
+            assert_eq!(
+                observation.mapping_version,
+                if source == Source::Odoo { "0.2" } else { "0.1" }
+            );
         }
+    }
+}
+
+#[test]
+fn omits_unverified_odoo_timestamps_without_changing_projection_version() {
+    let scope = bind(Source::Odoo, "odoo");
+    for value in [
+        json!(null),
+        json!(false),
+        json!("2026-02-30 08:30:00"),
+        json!("2026-11-01T08:30:00-08:00"),
+        json!("2026-1-01 08:30:00"),
+    ] {
+        let result =
+            project_order(&scope, json!([{"id":42,"name":"WO-42","write_date":value}])).unwrap();
+        assert_eq!(result.source_updated_at, None);
+        assert_eq!(result.mapping_version, "0.2");
     }
 }
