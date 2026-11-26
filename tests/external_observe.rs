@@ -200,6 +200,7 @@ async fn source_failures_keep_their_classification_without_fallback() {
                 r#"{"data":{"id":4244,"order_no":"OTHER-WO","status":"PENDING"}}"#,
             ),
             4244 => (StatusCode::FORBIDDEN, "upstream-private-detail"),
+            4245 => (StatusCode::UNAUTHORIZED, "upstream-private-detail"),
             _ => panic!("unexpected OpenMES fixture request"),
         }
     }
@@ -230,6 +231,9 @@ async fn source_failures_keep_their_classification_without_fallback() {
                 "id":"job-mismatch","companyId":"company-b","jobId":"OTHER-WO","status":"Ready"
             }]))
             .into_response(),
+            "eq.job-unauthorized" => {
+                (StatusCode::UNAUTHORIZED, "upstream-private-detail").into_response()
+            }
             "eq.job-unavailable" => {
                 (StatusCode::SERVICE_UNAVAILABLE, "upstream-private-detail").into_response()
             }
@@ -273,11 +277,13 @@ async fn source_failures_keep_their_classification_without_fallback() {
         ("openmes", "4242", InvalidSourceResponse),
         ("openmes", "4243", InvalidSourceResponse),
         ("openmes", "4244", NotVisible),
+        ("openmes", "4245", SourceUnavailable),
         ("odoo", "4242", NotVisible),
         ("odoo", "4243", SourceUnavailable),
         ("carbon-rest", "job-hidden", NotVisible),
         ("carbon-rest", "job-mismatch", InvalidSourceResponse),
         ("carbon-rest", "job-unavailable", SourceUnavailable),
+        ("carbon-rest", "job-unauthorized", SourceUnavailable),
     ]
     .into_iter()
     .enumerate()
