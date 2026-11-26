@@ -41,6 +41,24 @@ pub(super) const TOOLS: &[(Action, &str, &str, &str)] = &[
         "按抽检结果隔离端子批次及实际受影响端点",
         "quality",
     ),
+    (
+        Action::ReworkHarnessEndpoint,
+        "rework_harness_endpoint",
+        "更换已隔离端点的端子并登记返工版本",
+        "quality",
+    ),
+    (
+        Action::RecordHarnessContinuityTest,
+        "record_harness_continuity_test",
+        "登记当前线束版本的导通测试结果",
+        "quality",
+    ),
+    (
+        Action::ReleaseHarnessSerial,
+        "release_harness_serial",
+        "放行当前版本导通测试合格的线束",
+        "quality",
+    ),
 ];
 
 const SEGMENTS: [(&str, u64); 2] = [("POWER", 400), ("SIGNAL", 250)];
@@ -49,6 +67,14 @@ const SERIALS: [&str; 3] = ["WIRE-01", "WIRE-02", "WIRE-03"];
 
 pub(super) fn spec(action: Action) -> Spec {
     let &(_, name, description, domain) = TOOLS.iter().find(|tool| tool.0 == action).unwrap();
+    if matches!(
+        action,
+        Action::ReworkHarnessEndpoint
+            | Action::RecordHarnessContinuityTest
+            | Action::ReleaseHarnessSerial
+    ) {
+        return disposition_spec(action, name, description, domain);
+    }
     if action == Action::ApplyHarnessSampleHold {
         let cursor = json!({"type":"integer","minimum":1});
         return Spec {
@@ -158,6 +184,60 @@ pub(super) fn spec(action: Action) -> Spec {
     }
 }
 
+fn disposition_spec(
+    action: Action,
+    name: &'static str,
+    description: &'static str,
+    domain: &'static str,
+) -> Spec {
+    let mut fields = json!({"serial_number":text(),"idempotency_key":text()});
+    let mut required = vec!["serial_number", "idempotency_key"];
+    if action == Action::ReworkHarnessEndpoint {
+        required.extend(["segment_id", "end", "terminal_lot", "tooling_id", "reason"]);
+        fields["segment_id"] = text();
+        fields["end"] = json!({"type":"string","enum":["A","B"]});
+        fields["terminal_lot"] = text();
+        fields["tooling_id"] = text();
+        fields["reason"] = text();
+    }
+    if action == Action::RecordHarnessContinuityTest {
+        required.extend(["result", "evidence", "revision"]);
+        fields["revision"] = json!({"type":"integer","minimum":1});
+        fields["result"] = json!({"type":"string","enum":["pass","fail"]});
+        fields["evidence"] = text();
+    }
+    Spec {
+        name,
+        description,
+        domain,
+        effect: "write",
+        input: object(&required, fields),
+        output: json!({"type":"object","required":["ok","serial_number","revision","cursor"],"properties":{
+            "ok":{"const":true},"serial_number":text(),"revision":{"type":"integer","minimum":1},
+            "cursor":{"type":"integer","minimum":1},"rework":{"type":"object"},"test":{"type":"object"},"released":{"type":"boolean"}
+        }}),
+        preconditions: &["run_open", "tool_enabled_in_scenario"],
+        side_effect: "update_harness_disposition",
+        errors: &[
+            "SERIAL_NOT_FOUND",
+            "SERIAL_NOT_CUT",
+            "ENDPOINT_NOT_FOUND",
+            "ENDPOINT_NOT_HELD",
+            "ENDPOINTS_INCOMPLETE",
+            "TERMINAL_QUALITY_HOLD",
+            "TERMINAL_LOT_NOT_QUALIFIED",
+            "TERMINAL_STOCK_EXHAUSTED",
+            "TOOLING_NOT_QUALIFIED",
+            "TOOLING_CALIBRATION_EXPIRED",
+            "TEST_PASS_REQUIRED",
+            "TEST_REVISION_MISMATCH",
+            "SERIAL_ALREADY_RELEASED",
+            "IDEMPOTENCY_CONFLICT",
+        ],
+        visibility: "run",
+    }
+}
+
 fn endpoint_schema() -> Value {
     object(
         &["serial_number", "segment_id", "end", "terminal_lot"],
@@ -216,7 +296,8 @@ fn crimp_spec(
                     json!({
                         "ok":{"const":true},"serial_number":text(),"complete":{"type":"boolean"},
                         "required_endpoints":count,"crimps":{"type":"array","items":qualification},
-                        "held_endpoints":{"type":"array","items":endpoint_schema()}
+                        "held_endpoints":{"type":"array","items":endpoint_schema()},
+                        "disposition":{"type":"object"}
                     }),
                 ),
                 &["SERIAL_NOT_FOUND", "SERIAL_NOT_CUT"],
@@ -308,6 +389,25 @@ struct WireLot {
 }
 
 #[derive(Serialize, Deserialize)]
+struct Disposition {
+    revision: u64,
+    reworks: Vec<Value>,
+    tests: Vec<Value>,
+    released: bool,
+}
+
+impl Default for Disposition {
+    fn default() -> Self {
+        Self {
+            revision: 1,
+            reworks: Vec::new(),
+            tests: Vec::new(),
+            released: false,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub(super) struct HarnessBatches {
     lots: BTreeMap<String, WireLot>,
     batches: BTreeMap<String, CutBatch>,
@@ -317,13 +417,20 @@ pub(super) struct HarnessBatches {
     terminals: BTreeMap<String, u64>,
     #[serde(default)]
     sample_holds: BTreeMap<String, usize>,
+    #[serde(default)]
+    dispositions: BTreeMap<String, Disposition>,
 }
 
 fn terminal_stock() -> BTreeMap<String, u64> {
-    [("TERM-PWR-1", 6), ("TERM-PWR-ALT", 1), ("TERM-SIG-1", 6)]
-        .into_iter()
-        .map(|(id, quantity)| (id.into(), quantity))
-        .collect()
+    [
+        ("TERM-PWR-1", 6),
+        ("TERM-PWR-ALT", 1),
+        ("TERM-PWR-2", 3),
+        ("TERM-SIG-1", 6),
+    ]
+    .into_iter()
+    .map(|(id, quantity)| (id.into(), quantity))
+    .collect()
 }
 
 impl Default for HarnessBatches {
@@ -350,6 +457,7 @@ impl Default for HarnessBatches {
             crimps: BTreeMap::new(),
             terminals: terminal_stock(),
             sample_holds: BTreeMap::new(),
+            dispositions: BTreeMap::new(),
         }
     }
 }
@@ -362,11 +470,19 @@ impl HarnessBatches {
         work_order: &str,
         events: &[Event],
     ) -> Value {
+        if matches!(
+            action,
+            Action::ReworkHarnessEndpoint
+                | Action::RecordHarnessContinuityTest
+                | Action::ReleaseHarnessSerial
+        ) {
+            return self.disposition(action, args);
+        }
         if action == Action::ApplyHarnessSampleHold {
             return self.apply_sample_hold(args["event_cursor"].as_u64().unwrap(), events);
         }
         if action == Action::CheckHarnessCrimpQualification {
-            return match self.crimp_qualification(args) {
+            return match self.crimp_qualification(args, false) {
                 Ok(qualification) => {
                     json!({"ok":true,"qualified":true,"qualification":qualification})
                 }
@@ -479,6 +595,85 @@ impl HarnessBatches {
             "end":crimp["end"],"terminal_lot":crimp["terminal_lot"]})
     }
 
+    fn disposition(&mut self, action: Action, args: &Map<String, Value>) -> Value {
+        let serial = args["serial_number"].as_str().unwrap();
+        if self
+            .dispositions
+            .get(serial)
+            .is_some_and(|entry| entry.released)
+        {
+            return error("SERIAL_ALREADY_RELEASED");
+        }
+        let status = self.crimp_status(serial);
+        if status["ok"] != true {
+            return status;
+        }
+        if action == Action::ReworkHarnessEndpoint {
+            let Some(index) = self.crimps.get(serial).and_then(|records| {
+                records.iter().position(|crimp| {
+                    crimp["segment_id"] == args["segment_id"]
+                        && crimp["end"] == args["end"]
+                        && crimp["terminal_lot"]
+                            .as_str()
+                            .is_some_and(|lot| self.sample_holds.contains_key(lot))
+                })
+            }) else {
+                return error("ENDPOINT_NOT_HELD");
+            };
+            let mut replacement = match self.crimp_qualification(args, true) {
+                Ok(crimp) => crimp,
+                Err(code) => return error(code),
+            };
+            let terminal = replacement["terminal_lot"].as_str().unwrap();
+            let Some(remaining) = self
+                .terminals
+                .get_mut(terminal)
+                .filter(|quantity| **quantity > 0)
+            else {
+                return error("TERMINAL_STOCK_EXHAUSTED");
+            };
+            *remaining -= 1;
+            replacement["process_revision"] = json!("HARNESS-REWORK-1");
+            let previous = std::mem::replace(
+                &mut self.crimps.get_mut(serial).unwrap()[index],
+                replacement.clone(),
+            );
+            let entry = self.dispositions.entry(serial.into()).or_default();
+            entry.revision += 1;
+            let rework = json!({"revision":entry.revision,"previous":previous,"replacement":replacement,"reason":args["reason"]});
+            entry.reworks.push(rework.clone());
+            return json!({"ok":true,"serial_number":serial,"revision":entry.revision,"rework":rework});
+        }
+        if status["complete"] != true {
+            return error("ENDPOINTS_INCOMPLETE");
+        }
+        if status["held_endpoints"]
+            .as_array()
+            .is_some_and(|endpoints| !endpoints.is_empty())
+        {
+            return error("TERMINAL_QUALITY_HOLD");
+        }
+        if action == Action::ReleaseHarnessSerial {
+            let Some(entry) = self.dispositions.get_mut(serial).filter(|entry| {
+                entry.tests.last().is_some_and(|test| {
+                    test["revision"] == entry.revision && test["result"] == "pass"
+                })
+            }) else {
+                return error("TEST_PASS_REQUIRED");
+            };
+            entry.released = true;
+            return json!({"ok":true,"serial_number":serial,"revision":entry.revision,"released":true});
+        }
+        let entry = self.dispositions.entry(serial.into()).or_default();
+        if args["revision"].as_u64() != Some(entry.revision) {
+            return error("TEST_REVISION_MISMATCH");
+        }
+        let test =
+            json!({"revision":entry.revision,"result":args["result"],"evidence":args["evidence"]});
+        entry.tests.push(test.clone());
+        json!({"ok":true,"serial_number":serial,"revision":entry.revision,"test":test})
+    }
+
     fn crimp_status(&self, serial: &str) -> Value {
         if !SERIALS.contains(&serial) {
             return error("SERIAL_NOT_FOUND");
@@ -505,11 +700,14 @@ impl HarnessBatches {
                     .collect::<Vec<_>>()
             );
         }
+        if let Some(disposition) = self.dispositions.get(serial) {
+            result["disposition"] = json!(disposition);
+        }
         result
     }
 
     fn crimp_endpoint(&mut self, args: &Map<String, Value>) -> Value {
-        let crimp = match self.crimp_qualification(args) {
+        let crimp = match self.crimp_qualification(args, false) {
             Ok(crimp) => crimp,
             Err(code) => return error(code),
         };
@@ -535,7 +733,11 @@ impl HarnessBatches {
         result
     }
 
-    fn crimp_qualification(&self, args: &Map<String, Value>) -> Result<Value, &'static str> {
+    fn crimp_qualification(
+        &self,
+        args: &Map<String, Value>,
+        rework: bool,
+    ) -> Result<Value, &'static str> {
         let serial = args["serial_number"].as_str().unwrap();
         let segment = args["segment_id"].as_str().unwrap();
         let end = args["end"].as_str().unwrap();
@@ -553,6 +755,7 @@ impl HarnessBatches {
             .find(|batch| batch.segments.contains_key(serial))
             .ok_or("SERIAL_NOT_CUT")?;
         let terminal_qualification = match (segment, end, terminal) {
+            ("POWER", _, "TERM-PWR-2") if rework => "TERM-PWR-REWORK@1",
             ("POWER", _, "TERM-PWR-1") => "TERM-PWR@1",
             ("POWER", "B", "TERM-PWR-ALT") => "TERM-PWR-B-ALT@1",
             ("SIGNAL", _, "TERM-SIG-1") => "TERM-SIG@1",

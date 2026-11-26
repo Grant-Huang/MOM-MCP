@@ -977,6 +977,7 @@ impl Scenarios {
             include_str!("../fixtures/wire-harness-crimp-qualification.json"),
             include_str!("../fixtures/wire-harness-segment-crimp.json"),
             include_str!("../fixtures/wire-harness-sample-isolation.json"),
+            include_str!("../fixtures/wire-harness-rework-release.json"),
         ] {
             let definition = parse_definition(source)?;
             tx.execute(

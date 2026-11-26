@@ -9192,3 +9192,110 @@ async fn p14_07_harness_sample_endpoint_scope() {
     assert_eq!(status["held_endpoints"], json!([expected[0]]));
     assert_eq!(status["crimps"].as_array().unwrap().len(), 4);
 }
+
+#[tokio::test]
+async fn p14_09_harness_rework_test_release() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) =
+        connect_options(&dir.path().join("rework.sqlite3"), "0", true, true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"wire-harness","version":6}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let write =
+        async |name: &str, key: &str, args| shop_action(&client, run, name, key, args).await;
+    let serial = json!({"serial_number":"WIRE-01"});
+    assert_eq!(
+        write(
+            "cut_harness_batch",
+            "cut",
+            json!({"batch_id":"CUT-R","wire_lot":"WIRE-CU-1","serial_numbers":["WIRE-01"]})
+        )
+        .await["ok"],
+        true
+    );
+    assert_eq!(
+        write(
+            "record_harness_continuity_test",
+            "initial",
+            json!({"serial_number":"WIRE-01","result":"pass","evidence":"E1","revision":1})
+        )
+        .await["code"],
+        "ENDPOINTS_INCOMPLETE"
+    );
+    for (segment, end, lot, tool) in [
+        ("POWER", "A", "TERM-PWR-1", "TOOL-PWR-1"),
+        ("POWER", "B", "TERM-PWR-ALT", "TOOL-PWR-1"),
+        ("SIGNAL", "A", "TERM-SIG-1", "TOOL-SIG-1"),
+        ("SIGNAL", "B", "TERM-SIG-1", "TOOL-SIG-1"),
+    ] {
+        let result = write("crimp_harness_endpoint",&format!("{segment}-{end}"),json!({"serial_number":"WIRE-01","segment_id":segment,"end":end,"terminal_lot":lot,"tooling_id":tool})).await;
+        assert_eq!(result["ok"], true, "{result}");
+    }
+    let test = async |key: &str, result, evidence, revision| {
+        write(
+            "record_harness_continuity_test",
+            key,
+            json!({"serial_number":"WIRE-01","result":result,"evidence":evidence,"revision":revision}),
+        )
+        .await
+    };
+    assert_eq!(test("initial", "pass", "E1", 1).await["revision"], 1);
+    assert_eq!(advance(&client, run, 1).await["ok"], true);
+    assert_eq!(
+        write(
+            "apply_harness_sample_hold",
+            "hold",
+            json!({"event_cursor":1})
+        )
+        .await["ok"],
+        true
+    );
+    let release = "release_harness_serial";
+    assert_eq!(
+        write(release, "release", serial.clone()).await["code"],
+        "TERMINAL_QUALITY_HOLD"
+    );
+    let request = json!({"serial_number":"WIRE-01","segment_id":"POWER","end":"A","terminal_lot":"TERM-PWR-2","tooling_id":"TOOL-PWR-1","reason":"replace held terminal"});
+    let repaired = write("rework_harness_endpoint", "rework", request.clone()).await;
+    assert_eq!(repaired["revision"], 2, "{repaired}");
+    assert_eq!(repaired["rework"]["previous"]["terminal_lot"], "TERM-PWR-1");
+    assert_eq!(
+        repaired["rework"]["replacement"]["process_revision"],
+        "HARNESS-REWORK-1"
+    );
+    assert_eq!(
+        write("rework_harness_endpoint", "rework", request).await,
+        repaired
+    );
+    assert_eq!(
+        write(release, "release", serial.clone()).await["code"],
+        "TEST_PASS_REQUIRED"
+    );
+    assert_eq!(
+        test("stale", "pass", "E1", 1).await["code"],
+        "TEST_REVISION_MISMATCH"
+    );
+    assert_eq!(test("fail", "fail", "E2", 2).await["revision"], 2);
+    assert_eq!(
+        write(release, "release", serial.clone()).await["code"],
+        "TEST_PASS_REQUIRED"
+    );
+    assert_eq!(test("pass", "pass", "E3", 2).await["revision"], 2);
+    assert_eq!(
+        write(release, "release", serial.clone()).await["released"],
+        true
+    );
+    let status = business(&client, run, "get_harness_crimp_status", serial).await;
+    assert_eq!(status["held_endpoints"], json!([]));
+    assert_eq!(status["disposition"]["tests"].as_array().unwrap().len(), 3);
+    assert_eq!(status["disposition"]["released"], true);
+    assert_eq!(
+        status["disposition"]["reworks"],
+        json!([repaired["rework"]])
+    );
+}
