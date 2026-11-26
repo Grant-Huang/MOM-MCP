@@ -70,24 +70,33 @@ cmd = [os.environ['MOM_ODOO_ADAPTER_SMOKE'], 'odoo', 'http://' + sys.argv[2],
        str(sample['visible']), str(sample['hidden']), 'draft']
 env = dict(os.environ, MOM_ODOO_DATABASE=sample['database'], MOM_SAMPLE_TOKEN=sample['token'],
            MOM_ODOO_WITNESS_TOKEN=sample['witness'])
-subprocess.run(cmd, env=env, check=True)
 endpoint = 'http://' + sys.argv[2] + '/json/2/mrp.production/search_read'
-for context in ({}, {'tz': 'America/Vancouver'}, {'tz': 'Asia/Tokyo'}):
+
+def read_source_time(record_id, token, context):
     body = json.dumps({
-        'domain': [['id', '=', sample['visible']]],
+        'domain': [['id', '=', record_id]],
         'fields': ['id', 'write_date'],
         'limit': 2,
         'context': context,
     }).encode()
     request = Request(endpoint, data=body, headers={
-        'Authorization': 'Bearer ' + sample['token'],
+        'Authorization': 'Bearer ' + token,
         'X-Odoo-Database': sample['database'],
         'Content-Type': 'application/json',
     })
     with urlopen(request, timeout=8) as response:
         row, = json.load(response)
-    assert row['id'] == sample['visible']
-    assert row['write_date'] == sample['expected_utc'], (context, row['write_date'])
+    assert row['id'] == record_id
+    return row['write_date']
+
+def check_adapter(command, credentials, source_time):
+    utc = source_time.replace(' ', 'T') + 'Z'
+    subprocess.run(command, env=dict(credentials, MOM_SAMPLE_SOURCE_UPDATED_AT=utc), check=True)
+
+before = sample['expected_utc']
+for context in ({}, {'tz': 'America/Vancouver'}, {'tz': 'Asia/Tokyo'}):
+    assert read_source_time(sample['visible'], sample['token'], context) == before, context
+check_adapter(cmd, env, before)
 print("Odoo write_date: UTC storage matches all three JSON-2 timezone contexts")
 confirm = f"""
 order = env['mrp.production'].browse({int(sample['visible'])})
@@ -102,10 +111,14 @@ subprocess.run(
     input=confirm, text=True, check=True, stdout=subprocess.DEVNULL,
 )
 cmd[-1] = 'confirmed'
-subprocess.run(cmd, env=env, check=True)
+after = read_source_time(sample['visible'], sample['token'], {})
+assert after > before, 'Odoo source update time did not advance after confirmation'
+check_adapter(cmd, env, after)
 cmd[-1] = 'draft'
 cmd[3:5] = reversed(cmd[3:5])
 env['MOM_SAMPLE_TOKEN'], env['MOM_ODOO_WITNESS_TOKEN'] = env['MOM_ODOO_WITNESS_TOKEN'], env['MOM_SAMPLE_TOKEN']
-subprocess.run(cmd, env=env, check=True)
+witness_time = read_source_time(sample['hidden'], sample['witness'], {})
+check_adapter(cmd, env, witness_time)
+print("Odoo source time: Adapter matched all three JSON-2 source observations")
 print("Odoo lifecycle: draft -> confirmed verified through the read-only adapter")
 PY
