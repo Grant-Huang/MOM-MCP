@@ -379,6 +379,19 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     anyhow::ensure!(
         !definition
             .capabilities
+            .contains(&Action::GetAssemblyAsBuilt)
+            || (definition
+                .assembly
+                .as_ref()
+                .is_some_and(|setup| setup.configuration_bom && setup.issued_report_inputs)
+                && definition
+                    .capabilities
+                    .contains(&Action::PostOperationReport)),
+        "assembly as-built history requires frozen definitions and recorded material inputs"
+    );
+    anyhow::ensure!(
+        !definition
+            .capabilities
             .contains(&Action::ReturnUnusedMaterial)
             || (definition.issued_report_inputs()
                 && definition
@@ -914,6 +927,10 @@ impl Scenarios {
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-closed-loop.json"),
+            include_str!("../fixtures/assembly-configuration-bom.json"),
+            include_str!("../fixtures/assembly-qualified-substitute.json"),
+            include_str!("../fixtures/assembly-as-built.json"),
+            include_str!("../fixtures/assembly-versioned-test.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
@@ -945,6 +962,10 @@ impl Scenarios {
             include_str!("../fixtures/assembly-release-readiness.json"),
             include_str!("../fixtures/assembly-shortage-readiness.json"),
             include_str!("../fixtures/sheet-metal.json"),
+            include_str!("../fixtures/sheet-metal-nesting.json"),
+            include_str!("../fixtures/sheet-metal-dimensional.json"),
+            include_str!("../fixtures/sheet-metal-remnant.json"),
+            include_str!("../fixtures/sheet-metal-trace.json"),
             include_str!("../fixtures/wire-harness.json"),
         ] {
             let definition = parse_definition(source)?;
@@ -1351,10 +1372,21 @@ impl Scenarios {
                     });
                 }
             }
-            let selection = match crate::snapshots::selection(&parameters["definition_selection"]) {
-                Ok(selection) => selection,
-                Err(error) => return Ok(Err(error)),
-            };
+            let mut selection =
+                match crate::snapshots::selection(&parameters["definition_selection"]) {
+                    Ok(selection) => selection,
+                    Err(error) => return Ok(Err(error)),
+                };
+            if let Some(setup) = definition
+                .assembly
+                .as_ref()
+                .filter(|setup| setup.configuration_bom)
+            {
+                let Some(configuration) = setup.configuration(order) else {
+                    return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
+                };
+                selection.configuration = Some(configuration.to_owned());
+            }
             let resolved = crate::snapshots::resolve(&tx, run, order, &selection)?;
             match (action, resolved) {
                 (Action::ReleaseWorkOrder, Ok(snapshot))
@@ -1905,12 +1937,31 @@ impl Scenarios {
             let events = stored
                 .as_ref()
                 .map_or(&[][..], |state| state.timeline.events.as_slice());
-            let (response, changed) =
-                crate::fabrication::invoke(&tx, run, setup, action, parameters, cursor, events)?;
+            let (response, changed) = crate::fabrication::invoke(
+                &tx,
+                run,
+                setup,
+                &definition.work_orders,
+                action,
+                parameters,
+                cursor,
+                events,
+            )?;
             if changed {
                 tx.commit()?;
             }
             return Ok(Ok(response));
+        }
+        if action == Action::GetAssemblyAsBuilt {
+            let Some(setup) = &definition.assembly else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            return crate::assembly::as_built(
+                &tx,
+                run,
+                setup,
+                parameters["serial_number"].as_str().unwrap(),
+            );
         }
         if crate::assembly::TOOLS.iter().any(|tool| tool.0 == action)
             || (matches!(
@@ -2131,6 +2182,9 @@ impl Scenarios {
             }
             if action == Action::ListDispatchQueue {
                 let center = parameters.get("work_center").and_then(Value::as_str);
+                if let (Some(setup), Some(center)) = (&definition.assembly, center) {
+                    crate::assembly::dispatch_candidates(&tx, run, setup, center, &mut rows)?;
+                }
                 rows.retain(|row| {
                     row.status == "ready"
                         && center.is_none_or(|center| row.work_center.as_deref() == Some(center))

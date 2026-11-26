@@ -31,6 +31,8 @@
 
 运行 `cargo test --locked --test external_http reads_and_classifies_odoo_and_openmes_http_responses -- --exact` 复跑数值工单 ID 边界。OpenMES 回环接口往返验证 `18446744073709551615`（`u64::MAX`）的完整路径和响应身份，Odoo 拒绝同一超出有符号范围的绑定。OpenMES 拒绝溢出、零、显式加号和前导零。此证据验证 Adapter 传输，现场数据库可分配的 ID 范围由来源决定。
 
+运行 `cargo test --locked --test external_observe carbon_native_rejections_do_not_read_community_rest -- --exact` 复跑 Carbon 原生 MCP 失败隔离。初始化返回 402 时只调用一次初始化。工具返回 `isError: true` 时完成初始化并调用一次固定读取工具。两条路径在候选 Observe 均返回来源不可用，已配置的 Carbon 社区 REST 零调用。上游错误正文不进入 Observe 结果。回环覆盖协议响应和隔离，授权实例的真实工具拒绝语义仍待核对。
+
 ### PR 自动回归
 
 GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传输、Observe、本体投影及 Odoo 关联测试，同时复跑 Carbon REST、Carbon MCP 和 Odoo 关联的离线探针用例。默认使用本地回环和合成数据。真实来源和正式 Observe 验收使用各自的获批环境，继续按本台账登记。
@@ -74,4 +76,4 @@ AgentNexus #251 已合并单站点探针，默认模式仍要求三源。候选�
 
 ## Adapter 与 Mock 工单读取意图预验收
 
-运行 `cargo test --locked --test stdio adapter_and_mock_read_the_same_work_order_intent -- --exact`。在同一验收用例中，Mock 走实际 stdio MCP 工具发现及 `get_work_order`，Adapter 走授权路由和 OpenMES 回环 HTTP。两边读取显示号 `WO-1`，分别保留 Mock 的 `planned` 与 OpenMES 的源状态 `ACCEPTED`。Adapter 输出来源实例及世界内不透明引用，规范状态为空。Mock 缺失工单、来源对象不可见及来源不可用分别校验各自结果。正式联调仍需由共同宿主验证跨世界授权、来源标识、能力声明和公开错误包络。
+运行 `cargo test --locked --test stdio adapter_and_mock_read_the_same_work_order_intent -- --exact`。 GitHub Actions 的 Acceptance 工作流在 `adapter-contracts` 中运行同一条命令。在同一验收用例中，Mock 走实际 stdio MCP 工具发现及 `get_work_order`，Adapter 走授权路由和 OpenMES 回环 HTTP。两边读取显示号 `WO-1`，分别保留 Mock 的 `planned` 与 OpenMES 的源状态 `ACCEPTED`。Adapter 输出来源实例及世界内不透明引用，规范状态为空。Mock 缺失工单、来源对象不可见及来源不可用分别校验各自结果。正式联调仍需由共同宿主验证跨世界授权、来源标识、能力声明和公开错误包络。

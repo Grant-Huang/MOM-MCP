@@ -190,7 +190,7 @@ async fn carbon_negotiates_legacy_mcp_and_projects_only_the_fixed_read() {
             assert!(!headers.contains_key("mcp-protocol-version"));
             assert_eq!(body["id"], 1);
             assert_eq!(body["params"]["protocolVersion"], "2025-11-25");
-            return Json(json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}))
+            return Json(json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}}))
                 .into_response();
         }
         assert_eq!(headers["mcp-protocol-version"], "2025-11-25");
@@ -395,6 +395,65 @@ async fn rereads_carbon_job_status_after_release() {
             assert_eq!(observation.normalized_status, None);
             assert_eq!(observation.mapping_version, "0.2");
         }
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn carbon_stops_at_unsupported_mcp_initialization() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new().route(
+        "/api/mcp",
+        post({
+            let calls = calls.clone();
+            move |headers: HeaderMap, Json(body): Json<Value>| {
+                let calls = calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    assert_eq!(body["method"], "initialize");
+                    let expects_session = headers["authorization"] == "Bearer session-fixture";
+                    let capabilities = if expects_session {
+                        json!({"tools": {}})
+                    } else {
+                        json!({})
+                    };
+                    let mut response = Json(json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "result": { "protocolVersion": "2025-11-25", "capabilities": capabilities },
+                    }))
+                    .into_response();
+                    if expects_session {
+                        response
+                            .headers_mut()
+                            .insert("mcp-session-id", "fixture-session".parse().unwrap());
+                    }
+                    response
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    for (index, token) in ["session-fixture", "missing-tools-fixture"]
+        .into_iter()
+        .enumerate()
+    {
+        let reader = HttpOrderReader::new(HttpSource {
+            token,
+            ..source(&url, HttpSourceKind::Carbon)
+        })
+        .unwrap();
+        assert_eq!(
+            reader.read_order("fixture-own").await,
+            Err(ReadError::InvalidResponse)
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), index + 1);
     }
     server.abort();
 }

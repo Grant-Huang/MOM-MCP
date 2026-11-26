@@ -198,7 +198,7 @@ pub(crate) fn reverse(
                 "movement_id",
             )));
         }
-        let required = match crate::inventory::required_quantity(
+        let demand = match crate::inventory::material_demand(
             tx,
             run,
             &target.order,
@@ -210,23 +210,9 @@ pub(crate) fn reverse(
             Ok(quantity) => quantity,
             Err(error) => return Ok(Err(error)),
         };
-        let reserved = crate::reservations::order_quantity_by_state(
-            tx,
-            run,
-            &target.order,
-            &target.item,
-            target.revision,
-            false,
-        )?;
-        let issued = crate::reservations::order_quantity_by_state(
-            tx,
-            run,
-            &target.order,
-            &target.item,
-            target.revision,
-            true,
-        )?;
-        if target.quantity > required - reserved - issued {
+        let reserved = demand.committed(tx, run, &target.order, false)?;
+        let issued = demand.committed(tx, run, &target.order, true)?;
+        if target.quantity > demand.required - reserved - issued {
             return Ok(Err(reject("ORDER_REQUIREMENT_EXCEEDED", "movement_id")));
         }
     }

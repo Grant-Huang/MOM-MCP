@@ -1225,3 +1225,147 @@ spec = "acceptance/P11.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P11-09 Rework a recalled SMT board using issued stock" }
+
+[[case]]
+id = "P12-01"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p12_01_assembly_configuration_bom_effectivity" }
+
+[[case]]
+id = "P12-UI"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P12-UI Freeze configuration-specific assembly requirements" }
+
+[[case]]
+id = "P12-02"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p12_02_assembly_frozen_substitute" }
+
+[[case]]
+id = "P12-03"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P12-03 Trace a qualified assembly substitute" }
+
+[[case]]
+id = "P12-04"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p12_04_assembly_shared_resources" }
+
+[[case]]
+id = "P12-05"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10"]
+layers = ["playwright"]
+tests = { playwright = "P12-05 Observe contested assembly capacity" }
+
+[[case]]
+id = "P12-06"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p12_06_assembly_as_built_correction" }
+
+[[case]]
+id = "P12-07"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P12-07 Read assembly as-built correction history" }
+
+[[case]]
+id = "P12-08"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p12_08_assembly_versioned_retest" }
+
+[[case]]
+id = "P12-09"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P12-09 Deliver assembly after versioned retest" }
+
+[[case]]
+id = "P13-01"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p13_01_sheet_multi_order_nesting" }
+
+[[case]]
+id = "P13-UI"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P13-UI Cut a shared sheet nest" }
+
+[[case]]
+id = "P13-03"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F10", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p13_03_sheet_dimensional_compatibility" }
+
+[[case]]
+id = "P13-04"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P13-04 Route a wide sheet to a compatible laser" }
+
+[[case]]
+id = "P13-05"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p13_05_sheet_remnant_return_and_reuse" }
+
+[[case]]
+id = "P13-06"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P13-06 Return and reuse a sheet remnant" }
+
+[[case]]
+id = "P13-07"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p13_07_sheet_material_lineage" }
+
+[[case]]
+id = "P13-08"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P13-08 Trace a reused sheet remnant in both directions" }

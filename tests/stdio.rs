@@ -7905,3 +7905,866 @@ async fn smt_cross_order_recall(
         assert_eq!(stock["balance"]["on_hand"], "1");
     }
 }
+
+#[tokio::test]
+async fn p12_01_assembly_configuration_bom_effectivity() {
+    assembly_configuration_bom(30, false).await;
+}
+
+#[tokio::test]
+async fn p12_02_assembly_frozen_substitute() {
+    assembly_configuration_bom(31, false).await;
+}
+
+#[tokio::test]
+async fn p12_04_assembly_shared_resources() {
+    assembly_configuration_bom(31, true).await;
+}
+
+#[tokio::test]
+async fn p12_06_assembly_as_built_correction() {
+    assembly_configuration_bom(32, false).await;
+}
+
+#[tokio::test]
+async fn p12_08_assembly_versioned_retest() {
+    assembly_configuration_bom(33, false).await;
+}
+
+async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_options(
+        &dir.path().join("configuration.sqlite3"),
+        "0",
+        true,
+        version == 33,
+    )
+    .await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"assembly","version":version}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let invoke = async |name: &str, args| business(&client, run, name, args).await;
+    let write = async |name: &str, mut args: Value| {
+        let cursor = call(&client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+        if !name.starts_with("assembly_") {
+            args["expected_cursor"] = cursor.clone();
+        }
+        args["idempotency_key"] = json!(format!("{name}-{cursor}"));
+        invoke(name, args).await
+    };
+    let apply = async |name: &str, args| {
+        let result = write(name, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    };
+    let manifest = async || {
+        invoke(
+            "get_assembly_as_built",
+            json!({"serial_number":"UNIT-E-01"}),
+        )
+        .await
+    };
+    if version == 32 {
+        let search = call(
+            &client,
+            "search_tools",
+            json!({"run_id":run,"query":"get_assembly_as_built"}),
+        )
+        .await;
+        assert!(
+            search["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == "get_assembly_as_built")
+        );
+        let spec = call(
+            &client,
+            "describe_tool",
+            json!({"run_id":run,"name":"get_assembly_as_built"}),
+        )
+        .await;
+        assert_eq!(spec["tool"]["effect"], "read");
+        let original = manifest().await;
+        assert_eq!(original["builds"], json!([]));
+        assert_eq!(original["work_order"], "WO-E");
+        assert_eq!(
+            invoke("get_assembly_as_built", json!({"serial_number":"UNKNOWN"})).await["code"],
+            "SERIAL_NOT_FOUND"
+        );
+    }
+    for item in ["FRAME", "BASE", "STANDARD", "RUGGED", "ALT"] {
+        apply("create_item", json!({"item_id":item,"base_unit":"each"})).await;
+        if item != "FRAME" {
+            apply(
+                "create_item_revision",
+                json!({"item_id":item,"revision":1,"name":item}),
+            )
+            .await;
+            apply(
+                "activate_revision",
+                json!({"item_id":item,"revision":1,"revision_type":"item"}),
+            )
+            .await;
+        }
+    }
+    apply("create_inspection_plan_revision",json!({"plan_id":"QA","revision":1,"characteristics":{"width":{"unit":"mm","lower_limit":1,"upper_limit":2}}})).await;
+    apply(
+        "activate_inspection_plan_revision",
+        json!({"plan_id":"QA","revision":1}),
+    )
+    .await;
+    let activate = async |revision, rugged_quantity| {
+        apply(
+            "create_item_revision",
+            json!({"item_id":"FRAME","revision":revision,"name":"Frame"}),
+        )
+        .await;
+        apply(
+            "activate_revision",
+            json!({"item_id":"FRAME","revision":revision,"revision_type":"item"}),
+        )
+        .await;
+        apply(
+            "create_bom_revision",
+            json!({"item_id":"FRAME","revision":revision}),
+        )
+        .await;
+        let mut components = json!({"item_id":"FRAME","revision":revision,"components":{
+            "BASE":{"revision":1,"quantity":1,"unit":"each"},
+            "STANDARD":{"revision":1,"quantity":1,"unit":"each","configurations":["standard"]},
+            "RUGGED":{"revision":1,"quantity":rugged_quantity,"unit":"each","configurations":["rugged"]}
+        }});
+        if version >= 31 && revision == 1 {
+            components["components"]["STANDARD"]["alternate"] =
+                json!({"item_id":"ALT","revision":1,"qualification_id":"QA-ALT-1"});
+        }
+        apply("set_bom_components", components).await;
+        apply(
+            "activate_revision",
+            json!({"item_id":"FRAME","revision":revision,"revision_type":"bom"}),
+        )
+        .await;
+        apply(
+            "create_route_revision",
+            json!({"item_id":"FRAME","revision":revision}),
+        )
+        .await;
+        apply("set_route_operations",json!({"item_id":"FRAME","revision":revision,"operations":{"build":{"work_center":"CELL-A","predecessors":[]}}})).await;
+        apply(
+            "activate_revision",
+            json!({"item_id":"FRAME","revision":revision,"revision_type":"route"}),
+        )
+        .await;
+    };
+    let selection = |order| json!({"work_order":order,"definition_selection":{"item_id":"FRAME","inspection_plan_id":"QA"}});
+    let release = async |order| {
+        let mut args = selection(order);
+        let ready = invoke("get_release_readiness", args.clone()).await;
+        assert_eq!(ready["ready"], true, "{ready}");
+        args["snapshot_fingerprint"] = ready["definition_snapshot"]["fingerprint"].clone();
+        args
+    };
+    activate(1, 2).await;
+    let mut spoofed = selection("WO-E");
+    spoofed["definition_selection"]["configuration"] = json!("rugged");
+    assert_eq!(
+        invoke("get_release_readiness", spoofed).await["code"],
+        "INVALID_ARGUMENT"
+    );
+    let early = apply("release_work_order", release("WO-E").await).await;
+    let stale = release("WO-L").await;
+    activate(2, 3).await;
+    assert_eq!(
+        write("release_work_order", stale).await["code"],
+        "SNAPSHOT_CHANGED"
+    );
+    let late = apply("release_work_order", release("WO-L").await).await;
+    for (order, config, revision, required, excluded, released) in [
+        ("WO-E", "standard", 1, "STANDARD", "RUGGED", &early),
+        ("WO-L", "rugged", 2, "RUGGED", "STANDARD", &late),
+    ] {
+        let snapshot =
+            invoke("get_order_snapshot", json!({"work_order":order})).await["snapshot"].clone();
+        assert_eq!(snapshot, released["definition_snapshot"]);
+        assert_eq!(snapshot["definition_selection"]["configuration"], config);
+        assert_eq!(snapshot["bom"]["revision"], revision);
+        let items = snapshot["bom"]["components"].as_object().unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(
+            items.contains_key("BASE")
+                && items.contains_key(required)
+                && !items.contains_key(excluded)
+        );
+        let material = invoke("get_material_requirements", json!({"work_order":order})).await;
+        let rows = material["requirements"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        let variant = rows.iter().find(|row| row["item_id"] == required).unwrap();
+        assert_eq!(variant["required"], if order == "WO-E" { "1" } else { "3" });
+    }
+    let impact = invoke("assess_engineering_change", json!({"work_order":"WO-E"})).await;
+    assert_eq!(impact["requires_review"], true, "{impact}");
+    assert_eq!(
+        impact["current"]["definition_selection"]["configuration"],
+        "standard"
+    );
+    assert!(impact["current"]["bom"]["components"]["RUGGED"].is_null());
+    if version >= 31 {
+        assert_eq!(
+            early["definition_snapshot"]["bom"]["components"]["STANDARD"]["alternate"]["qualification_id"],
+            "QA-ALT-1"
+        );
+        assert!(impact["current"]["bom"]["components"]["STANDARD"]["alternate"].is_null());
+        for item in ["BASE", "STANDARD", "ALT"] {
+            let receipt = format!("RC-{item}");
+            let lot = format!("LOT-{item}");
+            apply("create_receipt",json!({"receipt_id":receipt,"item_id":item,"revision":1,"quantity":"1","requires_inspection":false})).await;
+            apply("assign_receipt_tracking",json!({"receipt_id":receipt,"lot_id":lot,"supplier_lot":format!("SUP-{item}"),"location":"RAW-02"})).await;
+            apply("post_receipt", json!({"receipt_id":receipt})).await;
+        }
+        let alt = json!({"reservation_id":"RS-ALT","work_order":"WO-E","lot_id":"LOT-ALT","quantity":"1"});
+        let mut unqualified = alt.clone();
+        unqualified["work_order"] = json!("WO-L");
+        assert_eq!(
+            write("reserve_material", unqualified).await["code"],
+            "MATERIAL_NOT_REQUIRED"
+        );
+        apply("reserve_material", alt).await;
+        assert_eq!(write("reserve_material",json!({"reservation_id":"RS-STD","work_order":"WO-E","lot_id":"LOT-STANDARD","quantity":"1"})).await["code"],"ORDER_REQUIREMENT_EXCEEDED");
+        apply("reserve_material",json!({"reservation_id":"RS-BASE","work_order":"WO-E","lot_id":"LOT-BASE","quantity":"1"})).await;
+        let scope = json!({"work_order":"WO-E","operation":"build"});
+        apply(
+            "dispatch_operation",
+            json!({"work_order":"WO-E","operation":"build","work_center":"CELL-A"}),
+        )
+        .await;
+        let list = async |center| {
+            invoke("list_dispatch_queue", json!({"work_center":center})).await["operations"].clone()
+        };
+        let late_dispatch = json!({"work_order":"WO-L","operation":"build","work_center":"CELL-A"});
+        if shared_resources {
+            assert_eq!(list("CELL-A").await[0]["blocking"], "RESOURCE_BUSY");
+            assert_eq!(list("CELL-B").await[0]["work_order"], "WO-L");
+            assert!(list("CELL-B").await[0]["blocking"].is_null());
+        }
+        for reservation in ["RS-ALT", "RS-BASE"] {
+            apply("pick_material", json!({"reservation_id":reservation})).await;
+            apply(
+                "issue_material_to_operation",
+                json!({"reservation_id":reservation,"operation":"build"}),
+            )
+            .await;
+        }
+        apply("start_operation", scope.clone()).await;
+        if shared_resources {
+            apply(
+                "pause_operation",
+                json!({"work_order":"WO-E","operation":"build","reason":"inspect fixture"}),
+            )
+            .await;
+            let before = call(&client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+            let busy = write("dispatch_operation", late_dispatch.clone()).await;
+            assert_eq!(busy["code"], "RESOURCE_BUSY");
+            assert_eq!(busy["occupied_by"], "WO-E");
+            assert_eq!(
+                call(&client, "get_run", json!({"run_id":run})).await["cursor"],
+                before
+            );
+            assert_eq!(list("CELL-A").await[0]["blocking"], "RESOURCE_BUSY");
+            apply("resume_operation", scope.clone()).await;
+        }
+        let report = apply(
+            "post_operation_report",
+            json!({"work_order":"WO-E","operation":"build","quantity":1,
+            "material_inputs":{"RS-ALT":"1","RS-BASE":"1"}}),
+        )
+        .await;
+        let inputs = report["report"]["material_inputs"].as_array().unwrap();
+        let usage = inputs
+            .iter()
+            .find(|input| input["reservation_id"] == "RS-ALT")
+            .unwrap();
+        assert_eq!(usage["lot_id"], "LOT-ALT");
+        assert_eq!(
+            usage["substitute"],
+            json!({"required_item_id":"STANDARD","qualification_id":"QA-ALT-1"})
+        );
+        let trace = invoke(
+            "trace_serial_backward",
+            json!({"serial_number":"UNIT-E-01"}),
+        )
+        .await;
+        assert!(
+            trace["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|edge| edge["source"]["id"] == "LOT-ALT")
+        );
+        if shared_resources {
+            assert_eq!(list("CELL-A").await[0]["blocking"], "RESOURCE_BUSY");
+        }
+        apply("complete_operation", scope).await;
+        if version == 33 {
+            let order = json!({"work_order":"WO-E"});
+            apply("create_inspection_plan_revision",json!({"plan_id":"QA","revision":2,"characteristics":{"width":{"unit":"mm","lower_limit":1,"upper_limit":3}}})).await;
+            apply(
+                "activate_inspection_plan_revision",
+                json!({"plan_id":"QA","revision":2}),
+            )
+            .await;
+            let start = apply("assembly_start_test", order.clone()).await;
+            let first = &start["state"]["tests"][0];
+            assert_eq!(first["basis"]["specification_version"], "QA@1");
+            assert_eq!(
+                first["basis"]["snapshot_fingerprint"],
+                early["definition_snapshot"]["fingerprint"]
+            );
+            assert_eq!(first["basis"]["build_report_id"], report["report"]["id"]);
+            assert_eq!(
+                write("assembly_finish_test", order.clone()).await["code"],
+                "TEST_NOT_READY"
+            );
+            advance(&client, run, 2).await;
+            let failed = apply("assembly_finish_test", order.clone()).await;
+            assert_eq!(failed["state"]["tests"][0]["result"], "fail");
+            assert_eq!(
+                write("assembly_deliver", order.clone()).await["code"],
+                "TEST_PASS_REQUIRED"
+            );
+            apply(
+                "assembly_repair",
+                json!({"work_order":"WO-E","reason":"adjust fixture alignment"}),
+            )
+            .await;
+            let retry = apply("assembly_start_test", order.clone()).await;
+            let second = &retry["state"]["tests"][1];
+            assert_eq!(second["basis"]["specification_version"], "QA@1");
+            assert_eq!(second["basis"]["build_report_id"], report["report"]["id"]);
+            assert_eq!(
+                second["basis"]["repair"],
+                json!({"failed_test_ticket":first["ticket"],"reason":"adjust fixture alignment"})
+            );
+            advance(&client, run, 1).await;
+            let passed = apply("assembly_finish_test", order.clone()).await;
+            assert_eq!(passed["state"]["tests"][1]["result"], "pass");
+            apply("assembly_deliver", order).await;
+            let trace = invoke("assembly_trace", json!({"subject":"UNIT-E-01"})).await;
+            assert_eq!(trace["links"][0]["tests"], passed["state"]["tests"]);
+            assert_eq!(trace["links"][0]["delivery"]["serial"], "UNIT-E-01");
+        }
+        if version == 32 {
+            let first = manifest().await;
+            assert_eq!(first["bom_revision"], 1);
+            assert_eq!(
+                first["snapshot_fingerprint"],
+                early["definition_snapshot"]["fingerprint"]
+            );
+            assert_eq!(first["builds"][0]["status"], "active");
+            assert_eq!(
+                first["builds"][0]["material_inputs"][0],
+                json!({
+                    "item_id":"ALT","revision":1,"reservation_id":"RS-ALT","lot_id":"LOT-ALT",
+                    "quantity":"1","unit":"each","substitute":{"required_item_id":"STANDARD","qualification_id":"QA-ALT-1"}
+                })
+            );
+            apply("reverse_operation_report", json!({"work_order":"WO-E","report_id":report["report"]["id"],"reason":"correct actual inputs"})).await;
+            assert_eq!(manifest().await["builds"][0]["status"], "reversed");
+            apply("return_unused_material", json!({"movement_id":"RET-ALT","reservation_id":"RS-ALT","quantity":"1","reason":"replace part"})).await;
+            apply("reserve_material", json!({"reservation_id":"RS-STD","work_order":"WO-E","lot_id":"LOT-STANDARD","quantity":"1"})).await;
+            apply("pick_material", json!({"reservation_id":"RS-STD"})).await;
+            apply(
+                "issue_material_to_operation",
+                json!({"reservation_id":"RS-STD","operation":"build"}),
+            )
+            .await;
+            let corrected = apply("post_operation_report", json!({
+                "work_order":"WO-E","operation":"build","quantity":1,"material_inputs":{"RS-BASE":"1","RS-STD":"1"}
+            })).await;
+            let after = manifest().await;
+            assert_eq!(
+                after["builds"][0]["material_inputs"],
+                first["builds"][0]["material_inputs"]
+            );
+            assert_eq!(after["builds"][0]["status"], "reversed");
+            assert_eq!(after["builds"][1]["report_id"], corrected["report"]["id"]);
+            assert_eq!(after["builds"][1]["status"], "active");
+            assert!(
+                after["builds"][1]["material_inputs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|input| input["lot_id"] == "LOT-STANDARD"
+                        && input["item_id"] == "STANDARD"
+                        && input["substitute"].is_null())
+            );
+            let edges = invoke(
+                "trace_serial_backward",
+                json!({"serial_number":"UNIT-E-01"}),
+            )
+            .await;
+            let edges = edges["edges"].as_array().unwrap();
+            assert!(
+                edges
+                    .iter()
+                    .any(|edge| edge["source"]["id"] == "LOT-STANDARD")
+            );
+            assert!(
+                edges
+                    .iter()
+                    .any(|edge| edge["source"]["id"] == "LOT-ALT" && edge["status"] == "reversed")
+            );
+        }
+        if shared_resources {
+            assert!(list("CELL-A").await[0]["blocking"].is_null());
+            apply("dispatch_operation", late_dispatch).await;
+            let reverse = json!({"work_order":"WO-E","report_id":report["report"]["id"],"reason":"correct the report"});
+            assert_eq!(
+                write("reverse_operation_report", reverse.clone()).await["code"],
+                "RESOURCE_BUSY"
+            );
+            let current = invoke(
+                "list_operation_reports",
+                json!({"work_order":"WO-E","operation":"build"}),
+            )
+            .await;
+            assert_eq!(current["reports"][0]["reversed"], false);
+            apply(
+                "reassign_operation",
+                json!({"work_order":"WO-L","operation":"build","work_center":"CELL-C"}),
+            )
+            .await;
+            apply("reverse_operation_report", reverse).await;
+            let cell = invoke("get_resource_capability", json!({"work_center":"CELL-A"})).await;
+            assert_eq!(cell["resource"]["occupied_by"], "WO-E");
+        }
+    }
+}
+
+#[tokio::test]
+async fn p13_01_sheet_multi_order_nesting() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("nesting.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    let (peer, _peer_child) = connect_mode(&db, "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"sheet-metal","version":2}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let search = call(
+        &client,
+        "search_tools",
+        json!({"run_id":run,"query":"create_sheet_nest"}),
+    )
+    .await;
+    assert!(
+        search["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "create_sheet_nest")
+    );
+    let create = |id, stock, orders| json!({"nest_id":id,"stock":stock,"work_orders":orders});
+    let orders = ["WO-SHEET-A", "WO-SHEET-B"];
+    let (a, b) = tokio::join!(
+        shop_action(
+            &client,
+            run,
+            "create_sheet_nest",
+            "a",
+            create("N-A", "SHEET-FULL", orders)
+        ),
+        shop_action(
+            &peer,
+            run,
+            "create_sheet_nest",
+            "b",
+            json!({"nest_id":"N-B","stock":"SHEET-FULL","work_orders":["WO-SHEET-C"]})
+        )
+    );
+    let (owner, loser) = if a["ok"] == true {
+        ("N-A", b)
+    } else {
+        ("N-B", a)
+    };
+    assert_eq!(loser["code"], "STOCK_RESERVED", "{loser}");
+    assert_eq!(
+        shop_action(
+            &client,
+            run,
+            "cancel_sheet_nest",
+            "cancel-owner",
+            json!({"nest_id":owner})
+        )
+        .await["nest"]["status"],
+        "cancelled"
+    );
+    let too_small = shop_action(
+        &client,
+        run,
+        "create_sheet_nest",
+        "small",
+        create("N-S", "REM-OK", orders),
+    )
+    .await;
+    assert_eq!(too_small["code"], "INSUFFICIENT_AREA");
+    let duplicate = shop_action(
+        &client,
+        run,
+        "create_sheet_nest",
+        "duplicate",
+        create("N-S", "SHEET-FULL", ["WO-SHEET-A", "WO-SHEET-A"]),
+    )
+    .await;
+    assert_eq!(duplicate["code"], "DUPLICATE_WORK_ORDER");
+    let request = create("N-FINAL", "SHEET-FULL", orders);
+    let planned = shop_action(&client, run, "create_sheet_nest", "plan", request.clone()).await;
+    assert_eq!(planned["cursor"], 3, "{planned}");
+    assert_eq!(
+        shop_action(&peer, run, "create_sheet_nest", "plan", request).await,
+        planned
+    );
+    let conflict = shop_action(
+        &peer,
+        run,
+        "create_sheet_nest",
+        "conflict",
+        create("N-X", "REM-OK", orders),
+    )
+    .await;
+    assert_eq!(conflict["code"], "WORK_ORDER_ALLOCATED");
+    let invalid = shop_action(
+        &client,
+        run,
+        "cut_sheet_nest",
+        "cut",
+        json!({"nest_id":"N-FINAL","machine":"OTHER"}),
+    )
+    .await;
+    assert_eq!(invalid["code"], "MACHINE_NOT_CAPABLE");
+    let cut = shop_action(
+        &client,
+        run,
+        "cut_sheet_nest",
+        "cut",
+        json!({"nest_id":"N-FINAL","machine":"LASER-B"}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 4, "{cut}");
+    let nest = &cut["nest"];
+    assert_eq!(nest["status"], "cut");
+    assert_eq!(
+        nest["order_area_mm2"],
+        json!({"WO-SHEET-A":600,"WO-SHEET-B":600})
+    );
+    assert_eq!(nest["lot"], "LOT-AL-1");
+    assert_eq!(nest["input_mm2"], 1800);
+    assert_eq!(nest["product_mm2"], 1200);
+    assert_eq!(nest["scrap_mm2"], 100);
+    assert_eq!(nest["remnant_mm2"], 500);
+    assert_eq!(
+        business(&peer, run, "get_sheet_nest", json!({"nest_id":"N-FINAL"})).await["nest"],
+        *nest
+    );
+    assert_eq!(
+        shop_action(
+            &peer,
+            run,
+            "cut_sheet_nest",
+            "repeat",
+            json!({"nest_id":"N-FINAL","machine":"LASER-A"})
+        )
+        .await["code"],
+        "INVALID_STATE"
+    );
+}
+
+#[tokio::test]
+async fn p13_03_sheet_dimensional_compatibility() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("dimensions.sqlite3"), "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"sheet-metal","version":3}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let create = |id, stock, orders| json!({"nest_id":id,"stock":stock,"work_orders":orders});
+    let write =
+        async |name: &str, key: &str, args| shop_action(&client, run, name, key, args).await;
+    assert_eq!(
+        write(
+            "create_sheet_nest",
+            "strip",
+            create("N-S", "REM-STRIP", vec!["WO-SHEET-C"])
+        )
+        .await["code"],
+        "STOCK_DIMENSIONS_INSUFFICIENT"
+    );
+    let wide = write(
+        "create_sheet_nest",
+        "wide",
+        create("N-W", "SHEET-FULL", vec!["WO-SHEET-A", "WO-SHEET-B"]),
+    )
+    .await;
+    assert_eq!(wide["cursor"], 1, "{wide}");
+    let fit = &wide["nest"]["dimensional_fit"];
+    assert_eq!(
+        fit["stock_dimensions"],
+        json!({"length_mm":60,"width_mm":30})
+    );
+    assert_eq!(fit["size_grade"], "wide");
+    assert_eq!(fit["eligible_machines"], json!(["LASER-B"]));
+    assert_eq!(
+        fit["order_footprints"]["WO-SHEET-A"],
+        json!({"length_mm":30,"width_mm":20})
+    );
+    let bad = write(
+        "cut_sheet_nest",
+        "cut-wide",
+        json!({"nest_id":"N-W","machine":"LASER-A"}),
+    )
+    .await;
+    assert_eq!(bad["code"], "MACHINE_NOT_CAPABLE");
+    assert_eq!(
+        business(&client, run, "get_sheet_nest", json!({"nest_id":"N-W"})).await["nest"],
+        wide["nest"]
+    );
+    let cut = write(
+        "cut_sheet_nest",
+        "cut-wide",
+        json!({"nest_id":"N-W","machine":"LASER-B"}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 2, "{cut}");
+    assert_eq!(cut["nest"]["dimensional_fit"], *fit);
+    let standard = write(
+        "create_sheet_nest",
+        "standard",
+        create("N-STD", "REM-OK", vec!["WO-SHEET-C"]),
+    )
+    .await;
+    assert_eq!(
+        standard["nest"]["dimensional_fit"]["size_grade"],
+        "standard"
+    );
+    assert_eq!(
+        standard["nest"]["dimensional_fit"]["eligible_machines"],
+        json!(["LASER-A", "LASER-B"])
+    );
+    assert_eq!(
+        write(
+            "cut_sheet_nest",
+            "cut-standard",
+            json!({"nest_id":"N-STD","machine":"LASER-A"})
+        )
+        .await["nest"]["status"],
+        "cut"
+    );
+}
+
+#[tokio::test]
+async fn p13_05_sheet_remnant_return_and_reuse() {
+    sheet_remnant_workflow(4).await;
+}
+
+#[tokio::test]
+async fn p13_07_sheet_material_lineage() {
+    sheet_remnant_workflow(5).await;
+}
+
+async fn sheet_remnant_workflow(version: u64) {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("remnants.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    let (peer, _peer_child) = connect_mode(&db, "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"sheet-metal","version":version}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let write =
+        async |name: &str, key: &str, args| shop_action(&client, run, name, key, args).await;
+    let plan = |nest, stock, order| json!({"nest_id":nest,"stock":stock,"work_orders":[order]});
+    let request = json!({"nest_id":"FIRST","remnant_id":"REM-NEW"});
+    assert_eq!(
+        write(
+            "create_sheet_nest",
+            "plan",
+            plan("FIRST", "SHEET-FULL", "WO-SHEET-A")
+        )
+        .await["cursor"],
+        1
+    );
+    assert_eq!(
+        write("return_sheet_remnant", "return", request.clone()).await["code"],
+        "INVALID_STATE"
+    );
+    assert_eq!(
+        write(
+            "create_sheet_nest",
+            "early",
+            plan("SECOND", "REM-NEW", "WO-SHEET-B")
+        )
+        .await["code"],
+        "STOCK_NOT_FOUND"
+    );
+    let cut = write(
+        "cut_sheet_nest",
+        "cut",
+        json!({"nest_id":"FIRST","machine":"LASER-B"}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 2);
+    assert_eq!(cut["nest"]["remnant_mm2"], 900);
+    assert_eq!(cut["nest"]["scrap_mm2"], 300);
+    assert_eq!(
+        cut["nest"]["remnant_dimensions"],
+        json!({"length_mm":30,"width_mm":30})
+    );
+    let returned = write("return_sheet_remnant", "return", request.clone()).await;
+    assert_eq!(returned["cursor"], 3, "{returned}");
+    assert_eq!(returned["nest"]["returned_remnant"], "REM-NEW");
+    assert_eq!(
+        shop_action(
+            &peer,
+            run,
+            "return_sheet_remnant",
+            "return",
+            request.clone()
+        )
+        .await,
+        returned
+    );
+    assert_eq!(
+        write("return_sheet_remnant", "duplicate", request).await["code"],
+        "REMNANT_ALREADY_RETURNED"
+    );
+    let (a, b) = tokio::join!(
+        write(
+            "create_sheet_nest",
+            "left",
+            plan("LEFT", "REM-NEW", "WO-SHEET-B")
+        ),
+        shop_action(
+            &peer,
+            run,
+            "create_sheet_nest",
+            "right",
+            plan("RIGHT", "REM-NEW", "WO-SHEET-D")
+        )
+    );
+    let (winner, loser) = if a["ok"] == true { (a, b) } else { (b, a) };
+    assert_eq!(winner["cursor"], 4, "{winner}");
+    assert_eq!(loser["code"], "STOCK_RESERVED");
+    assert_eq!(winner["nest"]["lot"], "LOT-AL-1");
+    assert_eq!(winner["nest"]["parent_stock"], "SHEET-FULL");
+    assert_eq!(winner["nest"]["input_mm2"], 900);
+    let id = &winner["nest"]["nest_id"];
+    let cut = write(
+        "cut_sheet_nest",
+        "reuse",
+        json!({"nest_id":id,"machine":"LASER-A"}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 5, "{cut}");
+    assert_eq!(cut["nest"]["product_mm2"], 600);
+    assert_eq!(cut["nest"]["scrap_mm2"], 300);
+    assert_eq!(cut["nest"]["remnant_mm2"], 0);
+    assert_eq!(
+        write(
+            "return_sheet_remnant",
+            "empty",
+            json!({"nest_id":id,"remnant_id":"EMPTY"})
+        )
+        .await["code"],
+        "NO_REUSABLE_REMNANT"
+    );
+    if version == 5 {
+        let trace = async |kind, subject| {
+            business(
+                &peer,
+                run,
+                "trace_sheet_material",
+                json!({"subject_type":kind,"subject":subject}),
+            )
+            .await
+        };
+        let search = call(
+            &peer,
+            "search_tools",
+            json!({"run_id":run,"query":"trace_sheet_material"}),
+        )
+        .await;
+        assert!(
+            search["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == "trace_sheet_material")
+        );
+        assert_eq!(
+            write(
+                "create_sheet_nest",
+                "unrelated",
+                plan("UNRELATED", "REM-OK", "WO-SHEET-C")
+            )
+            .await["cursor"],
+            6
+        );
+        assert_eq!(trace("work_order", "WO-SHEET-C").await["cuts"], json!([]));
+        assert_eq!(
+            write(
+                "cut_sheet_nest",
+                "cut-unrelated",
+                json!({"nest_id":"UNRELATED","machine":"LASER-A"})
+            )
+            .await["cursor"],
+            7
+        );
+        let root = trace("stock", "SHEET-FULL").await;
+        assert_eq!(root["cuts"].as_array().unwrap().len(), 2);
+        assert_eq!(root["cuts"][0]["nest_id"], "FIRST");
+        assert_eq!(root["cuts"][0]["returned_remnant"], "REM-NEW");
+        assert_eq!(root["cuts"][1]["nest_id"], *id);
+        assert_eq!(root["cuts"][1]["parent_stock"], "SHEET-FULL");
+        assert_eq!(trace("lot", "LOT-AL-1").await["cuts"], root["cuts"]);
+        assert_eq!(
+            trace("lot", "LOT-AL-2").await["cuts"][0]["nest_id"],
+            "UNRELATED"
+        );
+        let order = winner["nest"]["order_area_mm2"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap();
+        assert_eq!(trace("work_order", order).await["cuts"], root["cuts"]);
+        assert_eq!(
+            trace("stock", "REM-NEW").await["cuts"],
+            json!([root["cuts"][1]])
+        );
+        assert_eq!(
+            trace("stock", "UNKNOWN").await["code"],
+            "TRACE_SUBJECT_NOT_FOUND"
+        );
+        assert_eq!(
+            call(&peer, "get_run", json!({"run_id":run})).await["cursor"],
+            7
+        );
+    }
+}

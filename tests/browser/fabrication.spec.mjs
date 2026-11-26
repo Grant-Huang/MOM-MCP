@@ -64,3 +64,95 @@ test("P7-UI sheet and harness exception flows share the scenario console", async
     await expect(status).toContainText('"closed": true');
   }
 });
+
+test("P13-UI Cut a shared sheet nest", async ({ page }) => {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption("sheet-metal@2");
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  await button("搜索工具").click();
+  const invoke = async (name, args, evidence) => {
+    await page.getByLabel("匹配工具").selectOption(name);
+    await page.getByLabel("JSON 参数").fill(JSON.stringify({ nest_id: "N-BROWSER", ...args }));
+    await button("调用工具").click();
+    await expect(status).toContainText(evidence);
+    if (name === "get_sheet_nest") await expect(status).not.toContainText('"cursor"');
+    return JSON.parse(await status.textContent());
+  };
+  await invoke("create_sheet_nest", {
+    stock: "SHEET-FULL", work_orders: ["WO-SHEET-A", "WO-SHEET-B"], idempotency_key: "plan",
+  }, '"status": "planned"');
+  await invoke("cut_sheet_nest", { machine: "LASER-B", idempotency_key: "cut" }, '"status": "cut"');
+  const { nest } = await invoke("get_sheet_nest", {}, '"remnant_mm2": 500');
+  expect(nest.status).toBe("cut");
+  expect(nest.lot).toBe("LOT-AL-1");
+  expect(nest.order_area_mm2).toEqual({ "WO-SHEET-A": 600, "WO-SHEET-B": 600 });
+  expect(nest.input_mm2).toBe(nest.product_mm2 + nest.scrap_mm2 + nest.remnant_mm2);
+});
+
+test("P13-04 Route a wide sheet to a compatible laser", async ({ page }) => {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption("sheet-metal@3");
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  await button("搜索工具").click();
+  const invoke = async (name, args, evidence) => {
+    await page.getByLabel("匹配工具").selectOption(name);
+    await page.getByLabel("JSON 参数").fill(JSON.stringify({ nest_id: "N-WIDE", ...args }));
+    await button("调用工具").click();
+    await expect(status).toContainText(evidence);
+    return JSON.parse(await status.textContent());
+  };
+  const { nest } = await invoke("create_sheet_nest", {
+    stock: "SHEET-FULL", work_orders: ["WO-SHEET-A", "WO-SHEET-B"], idempotency_key: "plan",
+  }, '"size_grade": "wide"');
+  expect(nest.dimensional_fit.eligible_machines).toEqual(["LASER-B"]);
+  await invoke("cut_sheet_nest", { machine: "LASER-A", idempotency_key: "cut" }, "MACHINE_NOT_CAPABLE");
+  const cut = await invoke("cut_sheet_nest", { machine: "LASER-B", idempotency_key: "cut" }, '"status": "cut"');
+  expect(cut.nest.machine).toBe("LASER-B");
+});
+
+test("P13-06 Return and reuse a sheet remnant", ({ page }) => sheetRemnantFlow(page, 4));
+test("P13-08 Trace a reused sheet remnant in both directions", ({ page }) => sheetRemnantFlow(page, 5));
+
+async function sheetRemnantFlow(page, version) {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption(`sheet-metal@${version}`);
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  await button("搜索工具").click();
+  const invoke = async (name, args, evidence) => {
+    await page.getByLabel("匹配工具").selectOption(name);
+    await page.getByLabel("JSON 参数").fill(JSON.stringify(args));
+    await button("调用工具").click();
+    await expect(status).toContainText(evidence);
+    return JSON.parse(await status.textContent());
+  };
+  await invoke("create_sheet_nest", { nest_id: "FIRST", stock: "SHEET-FULL",
+    work_orders: ["WO-SHEET-A"], idempotency_key: "plan" }, '"status": "planned"');
+  await invoke("cut_sheet_nest", { nest_id: "FIRST", machine: "LASER-B", idempotency_key: "cut" }, '"status": "cut"');
+  await invoke("return_sheet_remnant", { nest_id: "FIRST", remnant_id: "REM-REUSE",
+    idempotency_key: "return" }, '"returned_remnant": "REM-REUSE"');
+  await invoke("create_sheet_nest", { nest_id: "SECOND", stock: "REM-REUSE",
+    work_orders: ["WO-SHEET-B"], idempotency_key: "plan-next" }, '"status": "planned"');
+  const { nest } = await invoke("cut_sheet_nest", { nest_id: "SECOND", machine: "LASER-A",
+    idempotency_key: "cut-next" }, '"status": "cut"');
+  expect(nest.parent_stock).toBe("SHEET-FULL");
+  expect(nest.lot).toBe("LOT-AL-1");
+  expect(nest.input_mm2).toBe(900);
+  if (version === 5) {
+    const forward = await invoke("trace_sheet_material", { subject_type: "stock", subject: "SHEET-FULL" }, '"subject_type": "stock"');
+    expect(forward.cuts.map(cut => cut.nest_id)).toEqual(["FIRST", "SECOND"]);
+    const backward = await invoke("trace_sheet_material", { subject_type: "work_order", subject: "WO-SHEET-B" }, '"subject_type": "work_order"');
+    expect(backward.cuts).toEqual(forward.cuts);
+  }
+}

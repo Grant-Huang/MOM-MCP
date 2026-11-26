@@ -50,7 +50,7 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
     (
         Action::AssemblyFinishTest,
         "assembly_finish_test",
-        "收集模拟终测结果",
+        "收集终测结果",
         "quality",
     ),
     (
@@ -71,10 +71,57 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "查询测试台、实装与交付追溯",
         "production",
     ),
+    (
+        Action::GetAssemblyAsBuilt,
+        "get_assembly_as_built",
+        "按成品序列号查询实装物料及报工更正历史",
+        "production",
+    ),
 ];
 
 pub fn spec(action: Action) -> Spec {
     let &(_, name, description, domain) = TOOLS.iter().find(|entry| entry.0 == action).unwrap();
+    if action == Action::GetAssemblyAsBuilt {
+        let material = object(
+            &[
+                "item_id",
+                "revision",
+                "reservation_id",
+                "lot_id",
+                "quantity",
+                "unit",
+            ],
+            json!({"item_id":text(),"revision":{"type":"integer","minimum":1},
+                "reservation_id":text(),"lot_id":text(),"quantity":crate::inventory::quantity_schema(),"unit":text(),
+                "substitute":object(&["required_item_id","qualification_id"],json!({"required_item_id":text(),"qualification_id":text()}))}),
+        );
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: "read",
+            input: object(&["serial_number"], json!({"serial_number":text()})),
+            output: object(
+                &[
+                    "ok",
+                    "serial_number",
+                    "work_order",
+                    "configuration",
+                    "builds",
+                ],
+                json!({"ok":{"const":true},"serial_number":text(),"work_order":text(),"configuration":text(),
+                    "bom_revision":{"type":"integer","minimum":1},"snapshot_fingerprint":text(),
+                    "builds":{"type":"array","items":object(
+                        &["report_id","status","material_inputs"],
+                        json!({"report_id":text(),"status":{"enum":["active","reversed"]},
+                            "material_inputs":{"type":"array","items":material}}))}}),
+            ),
+            preconditions: &["run_open", "tool_enabled_in_scenario"],
+            side_effect: "none",
+            errors: &["SERIAL_NOT_FOUND"],
+            visibility: "run",
+        };
+    }
     let read = matches!(action, Action::AssemblyKit | Action::AssemblyTrace);
     let mut required = vec![if action == Action::AssemblyTrace {
         "subject"
@@ -124,6 +171,7 @@ pub fn spec(action: Action) -> Spec {
             "TEST_BENCH_BUSY",
             "TEST_PRIORITY_BLOCKED",
             "TEST_NOT_READY",
+            "TEST_DEFINITION_REQUIRED",
             "TEST_PASS_REQUIRED",
         ],
         visibility: "run",
@@ -137,6 +185,10 @@ pub struct Setup {
     pub exclusive_dispatch: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub issued_report_inputs: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) configuration_bom: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    versioned_test: bool,
     stock: BTreeMap<String, usize>,
     orders: BTreeMap<String, OrderDefinition>,
     cells: BTreeMap<String, Vec<String>>,
@@ -153,6 +205,12 @@ struct OrderDefinition {
 }
 
 impl Setup {
+    pub(crate) fn configuration(&self, order: &str) -> Option<&str> {
+        self.orders
+            .get(order)
+            .map(|definition| definition.configuration.as_str())
+    }
+
     pub fn add_order(
         &mut self,
         id: &str,
@@ -183,6 +241,10 @@ impl Setup {
         anyhow::ensure!(
             model == mom_model_assembly::ID,
             "assembly requires configure_to_order"
+        );
+        anyhow::ensure!(
+            !self.versioned_test || (self.configuration_bom && self.issued_report_inputs),
+            "versioned final test requires a frozen definition and recorded build"
         );
         anyhow::ensure!(
             self.orders.len() == orders.len()
@@ -281,6 +343,23 @@ struct Test {
     start_minute: u64,
     end_minute: Option<u64>,
     result: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    basis: Option<TestBasis>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TestBasis {
+    specification_version: String,
+    snapshot_fingerprint: String,
+    build_report_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repair: Option<RetestRepair>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RetestRepair {
+    failed_test_ticket: i64,
+    reason: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -541,6 +620,34 @@ pub fn operations(
     Ok(rows)
 }
 
+pub(crate) fn dispatch_candidates(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    center: &str,
+    rows: &mut [crate::operations::Operation],
+) -> anyhow::Result<()> {
+    let Some(configurations) = setup.cells.get(center).filter(|_| setup.configuration_bom) else {
+        return Ok(());
+    };
+    let state = load(tx, run, setup)?;
+    for row in rows
+        .iter_mut()
+        .filter(|row| row.operation == "build" && row.status == "ready")
+    {
+        if configurations.contains(&setup.orders[&row.work_order].configuration) {
+            row.work_center = Some(center.into());
+            if row.blocking.is_none()
+                && setup.exclusive_dispatch
+                && cell_occupant(&state, center, &row.work_order).is_some()
+            {
+                row.blocking = Some("RESOURCE_BUSY");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn cell_occupant<'a>(state: &'a State, cell: &str, except: &str) -> Option<&'a str> {
     state
         .orders
@@ -617,6 +724,47 @@ fn dispatch_blocker(
     } else {
         None
     }
+}
+
+pub(crate) fn as_built(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    serial: &str,
+) -> anyhow::Result<Result<Value, crate::scenario::Rejection>> {
+    let Some((id, spec)) = setup.orders.iter().find(|(_, spec)| spec.serial == serial) else {
+        return Ok(Err(crate::scenario::reject(
+            "SERIAL_NOT_FOUND",
+            "serial_number",
+        )));
+    };
+    let state = load(tx, run, setup)?;
+    let mut builds = Vec::new();
+    for report in &state.orders[id].build_reports {
+        let mut materials = Vec::new();
+        for input in &report.material_inputs {
+            let (item, revision): (String, u32) = tx.query_row(
+                "SELECT item,revision FROM stock_lot_origins WHERE run=?1 AND lot=?2",
+                params![run, input.lot_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let mut material = serde_json::to_value(input)?;
+            material["item_id"] = json!(item);
+            material["revision"] = json!(revision);
+            materials.push(material);
+        }
+        builds.push(
+            json!({"report_id":report.id,"status":if report.reversed {"reversed"} else {"active"},
+            "material_inputs":materials}),
+        );
+    }
+    let mut result = json!({"ok":true,"serial_number":serial,"work_order":id,
+        "configuration":spec.configuration,"builds":builds});
+    if let Some(snapshot) = crate::snapshots::load(tx, run, id)? {
+        result["bom_revision"] = snapshot["bom"]["revision"].clone();
+        result["snapshot_fingerprint"] = snapshot["fingerprint"].clone();
+    }
+    Ok(Ok(result))
 }
 
 pub fn invoke(
@@ -732,6 +880,39 @@ pub fn invoke(
     {
         return Ok((failure("INVALID_STATE"), false));
     }
+    let basis = if setup.versioned_test
+        && action == Action::AssemblyStartTest
+        && order.phase == Phase::Queued
+    {
+        let Some(snapshot) = crate::snapshots::load(tx, run, id)? else {
+            return Ok((failure("TEST_DEFINITION_REQUIRED"), false));
+        };
+        let Some(report) = order.build_reports.iter().find(|report| !report.reversed) else {
+            return Ok((failure("TEST_DEFINITION_REQUIRED"), false));
+        };
+        Some(TestBasis {
+            specification_version: snapshot["inspection_plan"]["specification_version"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid frozen inspection specification"))?
+                .into(),
+            snapshot_fingerprint: snapshot["fingerprint"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid frozen definition fingerprint"))?
+                .into(),
+            build_report_id: report.id.clone(),
+            repair: order
+                .tests
+                .last()
+                .filter(|test| test.result.as_deref() == Some("fail"))
+                .zip(order.repairs.last())
+                .map(|(test, reason)| RetestRepair {
+                    failed_test_ticket: test.ticket,
+                    reason: reason.clone(),
+                }),
+        })
+    } else {
+        None
+    };
     let mut response = apply(
         &mut state,
         setup,
@@ -745,6 +926,11 @@ pub fn invoke(
     );
     if response["ok"] != true {
         return Ok((response, false));
+    }
+    if let Some(basis) = basis {
+        let order = state.orders.get_mut(id).unwrap();
+        order.tests.last_mut().unwrap().basis = Some(basis);
+        response["state"] = serde_json::to_value(order)?;
     }
     if setup.issued_report_inputs
         && action == Action::CancelWorkOrder
@@ -764,11 +950,11 @@ pub fn invoke(
             }
         } else {
             let reports = &mut state.orders.get_mut(id).unwrap().build_reports;
-            let inputs = match crate::mes::report_material_inputs(tx, run, reports, id, args)? {
+            let mut inputs = match crate::mes::report_material_inputs(tx, run, reports, id, args)? {
                 Ok(inputs) => inputs,
                 Err(code) => return Ok((failure(code), false)),
             };
-            if !crate::inventory::matches_build_requirements(tx, run, id, &inputs)? {
+            if !crate::inventory::matches_build_requirements(tx, run, id, &mut inputs)? {
                 return Ok((failure("MATERIAL_INPUTS_INCOMPLETE"), false));
             }
             let report = reports.last_mut().unwrap();
@@ -1098,6 +1284,7 @@ fn apply(
                 start_minute: simulation.timeline.clock,
                 end_minute: None,
                 result: None,
+                basis: None,
             });
         }
         Action::AssemblyFinishTest if order.phase == Phase::Testing => {

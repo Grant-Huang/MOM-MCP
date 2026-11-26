@@ -149,7 +149,7 @@ Odoo JSON-2 和 OpenMES HTTP 已接入 Rust 工单投影。调用方从可信配
 
 ### Rust Carbon MCP 读取试实现
 
-Carbon 使用同一个绑定读取器和工单投影。候选实现对站点配置的来源根地址固定调用 `/api/mcp`，协商 `2025-11-25` 的无会话 JSON 传输，随后只通过 `call_tool` 执行 `production_getJob`。客户端只请求已声明的工单字段，检查 RPC 关联 ID，解码单条文本 JSON，再校验源工单身份。沿用 HTTP 读取器的 HTTPS、无重定向、时限及响应大小限制。
+Carbon 使用同一个绑定读取器和工单投影。候选实现对站点配置的来源根地址固定调用 `/api/mcp`，协商 `2025-11-25` 的无会话 JSON 传输。初始化须声明工具能力，出现会话标头或工具能力缺失时停止。固定 Carbon 版本的兼容路径启用 JSON 响应并关闭会话 ID 生成。协商通过后只通过 `call_tool` 执行 `production_getJob`。客户端只请求已声明的工单字段，检查 RPC 关联 ID，解码单条文本 JSON，再校验源工单身份。沿用 HTTP 读取器的 HTTPS、无重定向、时限及响应大小限制。 [Carbon 固定版本传输实现](https://github.com/crbnos/carbon/blob/05bd067c0a72ca9f0983f6278d2a7c9bb48b716c/packages/ee/src/mcp/server.ts#L60)
 
 HTTP 402 保留为权益未开通。Carbon 工具级拒绝单独返回且不附上游正文，调用方仍需获授权实例和受信侧证据，才能区分记录不可见与上游故障。读取器无模拟回退路径。运行 `cargo test --locked --test external_http` 验证回环协议夹具。本切片尚未对获授权的 Carbon 实例运行，也尚未接入 AgentNexus Observe。
 
@@ -210,10 +210,12 @@ MOM-MCP 侧已用 `cargo test --locked --test external_observe one_observe_entry
 
 独立包名为 `mom-external-adapter`，版本为 `0.1.0`。宿主可用 Git 仓库及完整提交 SHA 固定依赖。包包含工单本体投影、只读 HTTP／MCP 传输和逐请求授权的 `ExternalObserve`。MOM-MCP 继续通过原模块路径导出同一实现。
 
-执行 `bash scripts/check-external-adapter-consumer.sh FULL_COMMIT_SHA [GIT_URL]`。脚本在临时 Cargo 项目中从固定 Git 提交解析 adapter，并连接 AgentNexus 当前采用的 `rusqlite 0.43`。它检查 adapter 的依赖子树，启动空的 adapter 注册表，并通过宿主 SQLite 执行内存查询。省略 URL 时使用当前 Git 仓库的文件传输，正式宿主接线时提供可访问的远端 Git URL 并更新宿主锁文件。
+执行 `bash scripts/check-external-adapter-consumer.sh FULL_COMMIT_SHA [GIT_URL]`。脚本在临时 Cargo 项目中从固定 Git 提交解析 adapter，并连接 AgentNexus 当前采用的 `rusqlite 0.43`。它检查 adapter 的依赖子树，从该 Git 版本投影一条已绑定的 OpenMES 工单，确认错配记录返回 `UnexpectedRecord`，并将投影的源 ID 传入宿主 SQLite 内存查询，核对返回值。省略 URL 时使用当前 Git 仓库的文件传输。Acceptance 工作流的 `adapter-contracts` 任务以检出的完整 SHA 运行该检查。正式宿主接线时提供可访问的远端 Git URL 并更新宿主锁文件。 远端 Git 复验固定于 MOM-MCP 提交 `f059dfc976c3297abbd33b4e5036e19577904c7b`，绑定投影、错配拒绝和宿主 SQLite 查询均通过。
 
 ### AgentNexus 整仓依赖复跑
 
-执行 `bash scripts/check-external-adapter-agentnexus.sh ADAPTER_SHA AGENTNEXUS_CHECKOUT HOST_SHA [ADAPTER_GIT_URL]`。两个 SHA 均为完整提交。脚本按宿主 SHA 导出干净源码，在临时项目的 `an-server` 测试依赖中固定 adapter 的 Git revision，并生成该临时项目的锁文件。用同一个宿主工作区执行正式 M3 桩合同及 adapter 的工单投影、HTTP／MCP 传输和逐请求绑定回归。移植测试只调整导入名。来源请求使用回环协议夹具，真实生产凭据及出站接线按宿主方案评审。
+执行 `bash scripts/check-external-adapter-agentnexus.sh ADAPTER_SHA AGENTNEXUS_CHECKOUT HOST_SHA [ADAPTER_GIT_URL]`。两个 SHA 均为完整提交。脚本按宿主 SHA 导出干净源码，在临时项目的 `an-server` 测试依赖中新增或替换 adapter 的 Git revision，并更新该临时项目的锁文件。用同一个宿主工作区执行正式 M3 桩合同及 adapter 的工单投影、HTTP／MCP 传输、逐请求绑定和 Odoo 关系回归。移植测试只调整导入名。来源请求使用回环协议夹具，真实生产凭据及出站接线按宿主方案评审。
 
 本地复跑使用 adapter 提交 `01e9318` 和 AgentNexus `ba9a7c7`。Cargo 在临时宿主锁文件中只新增 `mom-external-adapter 0.1.0`。同一宿主通过正式 M3 桩合同 6 项、工单投影 3 项、连接器传输 5 项和 Observe 绑定 4 项。复跑使用 Git 文件传输。远端发布复核需换用可访问的 Git URL。
+
+远端 Git 复跑使用 MOM-MCP `39f5d88bdd101702cf85549d88a763f58747e8c1` 与 AgentNexus `cf8d793e740eb1a0f946bfdc8653c3295d37a44b`。锁文件仅替换 Adapter Git 版本。9 项 M3 宿主合同及 23 项 Adapter 回归通过，依赖独立真实 Odoo 实例的关系用例按配置跳过。正式三源联调仍按验收台账执行。本次只操作临时宿主快照。

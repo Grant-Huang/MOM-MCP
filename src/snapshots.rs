@@ -13,6 +13,8 @@ use crate::{
 pub(crate) struct Selection {
     item_id: String,
     inspection_plan_id: String,
+    #[serde(default)]
+    pub(crate) configuration: Option<String>,
 }
 
 fn selection_schema() -> Value {
@@ -35,6 +37,8 @@ pub(crate) fn release_spec(action: Action) -> Spec {
             "INVALID_ARGUMENT",
             "WORK_ORDER_NOT_FOUND",
             "MASTER_DEFINITION_NOT_ACTIVE",
+            "BOM_CONFIGURATION_REQUIRED",
+            "BOM_CONFIGURATION_EMPTY",
         ];
     } else {
         spec.input["properties"]["snapshot_fingerprint"] =
@@ -96,6 +100,8 @@ pub(crate) fn spec(action: Action) -> Spec {
             "INVALID_ARGUMENT",
             "ORDER_SNAPSHOT_NOT_FOUND",
             "MASTER_DEFINITION_NOT_ACTIVE",
+            "BOM_CONFIGURATION_REQUIRED",
+            "BOM_CONFIGURATION_EMPTY",
         ],
         visibility: "run",
     }
@@ -104,7 +110,10 @@ pub(crate) fn spec(action: Action) -> Spec {
 pub(crate) fn selection(value: &Value) -> Result<Selection, Rejection> {
     let selection: Selection = serde_json::from_value(value.clone())
         .map_err(|_| Rejection::invalid("definition_selection"))?;
-    if !identifier(&selection.item_id) || !identifier(&selection.inspection_plan_id) {
+    if !identifier(&selection.item_id)
+        || !identifier(&selection.inspection_plan_id)
+        || selection.configuration.is_some()
+    {
         return Err(Rejection::invalid("definition_selection"));
     }
     Ok(selection)
@@ -134,7 +143,13 @@ pub(crate) fn resolve(
             "definition_selection",
         )));
     };
-    let bom = crate::bom::read(tx, run, &selection.item_id, revision)?.expect("selected BOM");
+    let bom = match crate::bom::read(tx, run, &selection.item_id, revision)?
+        .expect("selected BOM")
+        .for_configuration(selection.configuration.as_deref())
+    {
+        Ok(bom) => bom,
+        Err(error) => return Ok(Err(error)),
+    };
     let route =
         crate::routes::read(tx, run, &selection.item_id, revision)?.expect("selected route");
     let mut snapshot = json!({"work_order":order,
@@ -143,6 +158,9 @@ pub(crate) fn resolve(
         "bom":bom,"route":route,
         "inspection_plan":{"plan_id":selection.inspection_plan_id,"revision":plan_revision,"specification_version":specification,
             "characteristics":serde_json::from_str::<Value>(&characteristics)?}});
+    if let Some(configuration) = &selection.configuration {
+        snapshot["definition_selection"]["configuration"] = json!(configuration);
+    }
     let fingerprint = Sha256::digest(serde_json::to_vec(
         &json!({"run_id":run,"definition":snapshot}),
     )?);

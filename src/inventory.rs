@@ -94,7 +94,7 @@ pub(crate) fn spec(action: Action) -> Spec {
                 "requirements":{"type":"array","items":object(
                     &["item_id","revision","unit","required","available","shortage"],
                     json!({"item_id":id_schema(),"revision":revision_schema(),"unit":text(),
-                        "required":quantity_schema(),"available":quantity_schema(),"shortage":quantity_schema(),"reserved":quantity_schema(),"issued":quantity_schema()}))}}),
+                        "required":quantity_schema(),"available":quantity_schema(),"shortage":quantity_schema(),"reserved":quantity_schema(),"issued":quantity_schema(),"alternate":crate::bom::alternate_schema()}))}}),
             )
         }
         Action::GetStockBalance | Action::GetMaterialAvailability => {
@@ -778,18 +778,75 @@ fn expanded_order(
     Ok(Ok((snapshot, expansion)))
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct QualifiedSubstitute {
+    required_item_id: String,
+    qualification_id: String,
+}
+
+fn substitute<'a>(
+    snapshot: &'a Value,
+    item: &str,
+    revision: i64,
+    unit: &str,
+) -> Option<(&'a str, &'a Value)> {
+    snapshot["bom"]["components"]
+        .as_object()?
+        .iter()
+        .find_map(|(primary, component)| {
+            (component["alternate"]["item_id"] == item
+                && component["alternate"]["revision"] == revision
+                && component["unit"] == unit)
+                .then_some((primary.as_str(), component))
+        })
+}
+
+pub(crate) struct Demand {
+    pub(crate) required: i64,
+    members: Vec<(String, i64)>,
+}
+
+impl Demand {
+    pub(crate) fn committed(
+        &self,
+        tx: &Transaction<'_>,
+        run: &str,
+        order: &str,
+        issued: bool,
+    ) -> rusqlite::Result<i64> {
+        self.members.iter().try_fold(0, |sum, (item, revision)| {
+            Ok(sum
+                + crate::reservations::order_quantity_by_state(
+                    tx, run, order, item, *revision, issued,
+                )?)
+        })
+    }
+}
+
+fn demand(snapshot: &Value, item: &str, revision: i64, required: i64) -> Demand {
+    let mut members = vec![(item.to_owned(), revision)];
+    let alternate = &snapshot["bom"]["components"][item]["alternate"];
+    if let (Some(item), Some(revision)) = (
+        alternate["item_id"].as_str(),
+        alternate["revision"].as_i64(),
+    ) {
+        members.push((item.to_owned(), revision));
+    }
+    Demand { required, members }
+}
+
 pub(crate) fn matches_build_requirements(
     tx: &Transaction<'_>,
     run: &str,
     order: &str,
-    inputs: &[crate::mes::MaterialInput],
+    inputs: &mut [crate::mes::MaterialInput],
 ) -> anyhow::Result<bool> {
-    let Ok((_, expansion)) = expanded_order(tx, run, order, 1)? else {
+    let Ok((snapshot, expansion)) = expanded_order(tx, run, order, 1)? else {
         return Ok(false);
     };
     let mut actual = std::collections::BTreeMap::new();
     for input in inputs {
-        let key = tx.query_row(
+        let mut key = tx.query_row(
             "SELECT item,revision,unit FROM stock_lot_origins WHERE run=?1 AND lot=?2",
             params![run, input.lot_id],
             |row| {
@@ -800,13 +857,26 @@ pub(crate) fn matches_build_requirements(
                 ))
             },
         )?;
+        if let Some((primary, component)) = substitute(&snapshot, &key.0, key.1, &key.2) {
+            key.0 = primary.into();
+            key.1 = component["revision"]
+                .as_i64()
+                .expect("frozen component revision");
+            input.substitute = Some(QualifiedSubstitute {
+                required_item_id: primary.into(),
+                qualification_id: component["alternate"]["qualification_id"]
+                    .as_str()
+                    .expect("frozen qualification")
+                    .into(),
+            });
+        }
         *actual.entry(key).or_insert(0_i64) +=
             parse_quantity(&input.quantity).expect("validated material quantity");
     }
     Ok(actual == expansion.quantities)
 }
 
-pub(crate) fn required_quantity(
+pub(crate) fn material_demand(
     tx: &Transaction<'_>,
     run: &str,
     order: &str,
@@ -814,14 +884,26 @@ pub(crate) fn required_quantity(
     item: &str,
     revision: i64,
     unit: &str,
-) -> anyhow::Result<Result<i64, Rejection>> {
+) -> anyhow::Result<Result<Demand, Rejection>> {
     Ok(
-        expanded_order(tx, run, order, order_quantity)?.map(|(_, expansion)| {
-            expansion
+        expanded_order(tx, run, order, order_quantity)?.map(|(snapshot, expansion)| {
+            let (item, revision) = substitute(&snapshot, item, revision, unit).map_or(
+                (item, revision),
+                |(primary, component)| {
+                    (
+                        primary,
+                        component["revision"]
+                            .as_i64()
+                            .expect("frozen component revision"),
+                    )
+                },
+            );
+            let required = expansion
                 .quantities
                 .get(&(item.into(), revision, unit.into()))
                 .copied()
-                .unwrap_or(0)
+                .unwrap_or(0);
+            demand(&snapshot, item, revision, required)
         }),
     )
 }
@@ -838,15 +920,20 @@ pub(crate) fn requirements(
     };
     let mut requirements = Vec::with_capacity(expansion.quantities.len());
     for ((item, revision, unit), required) in expansion.quantities {
-        let (on_hand, pending, reserved, held) =
-            balance(tx, run, &item, Some(revision), None, None)?;
-        let available = on_hand - pending - reserved - held;
-        let assigned =
-            crate::reservations::order_quantity_by_state(tx, run, order, &item, revision, false)?;
-        let issued =
-            crate::reservations::order_quantity_by_state(tx, run, order, &item, revision, true)?;
+        let group = demand(&snapshot, &item, revision, required);
+        let mut available = 0;
+        for (member, version) in &group.members {
+            let (on_hand, pending, reserved, held) =
+                balance(tx, run, member, Some(*version), None, None)?;
+            available += on_hand - pending - reserved - held;
+        }
+        let assigned = group.committed(tx, run, order, false)?;
+        let issued = group.committed(tx, run, order, true)?;
         let mut line = json!({"item_id":item,"revision":revision,"unit":unit,"required":quantity(required),
             "available":quantity(available),"shortage":quantity((required-assigned-issued-available).max(0))});
+        if group.members.len() > 1 {
+            line["alternate"] = snapshot["bom"]["components"][&item]["alternate"].clone();
+        }
         if assigned > 0 {
             line["reserved"] = json!(quantity(assigned));
         }

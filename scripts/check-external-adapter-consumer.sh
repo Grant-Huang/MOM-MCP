@@ -30,17 +30,40 @@ edition = "2024"
 [dependencies]
 mom-external-adapter = {{ git = {json.dumps(repository)}, rev = {json.dumps(revision)} }}
 rusqlite = {{ version = "0.43", features = ["bundled", "fallible_uint"] }}
+serde_json = "1"
 """)
 PY
 cat > "$sandbox/src/main.rs" <<'RS'
-use mom_external_adapter::external_observe::ExternalObserve;
+use mom_external_adapter::{
+    external_observe::ExternalObserve,
+    external_order::{BoundOrder, ProjectionError, Source, project_order},
+};
 use rusqlite::Connection;
+use serde_json::json;
 
 fn main() {
     ExternalObserve::new([]).expect("adapter registry initializes");
+    let binding = BoundOrder {
+        source: Source::OpenMes,
+        tenant: "sample-tenant",
+        site: "sample-site",
+        instance: "openmes",
+        source_id: "42",
+    };
+    let payload = |id| json!({"data":{"id":id,"order_no":"WO-42","status":"PENDING"}});
+    let order = project_order(&binding, payload(42)).expect("bound work order projects");
+    assert_eq!(order.identity.source_id, "42");
+    assert_eq!(order.source_status.as_deref(), Some("PENDING"));
+    assert_eq!(
+        project_order(&binding, payload(43)).unwrap_err(),
+        ProjectionError::UnexpectedRecord,
+    );
+
     let connection = Connection::open_in_memory().expect("host SQLite initializes");
-    let expected: i64 = connection.query_row("SELECT 42", [], |row| row.get(0)).unwrap();
-    assert_eq!(expected, 42);
+    let stored_id: String = connection
+        .query_row("SELECT ?1", [order.identity.source_id], |row| row.get(0))
+        .unwrap();
+    assert_eq!(stored_id, binding.source_id);
 }
 RS
 
@@ -51,4 +74,4 @@ if grep -Eq '^(mom-mcp|mom-des|mom-model-[^ ]+|rusqlite|libsqlite3-sys) v' <<<"$
     exit 1
 fi
 cargo run --locked --quiet --manifest-path "$manifest"
-echo "PASS pinned adapter Git dependency and host SQLite initialize independently"
+echo "PASS pinned adapter projects a bound order, rejects a mismatched record, and coexists with host SQLite"
