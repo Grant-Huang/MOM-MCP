@@ -1,0 +1,11 @@
+{
+  "scenario_id": "sheet-metal",
+  "version": 2,
+  "title": "钣金加工 · 多工单套料",
+  "model": "sheet_metal",
+  "model_parameters": { "mean_minutes": 12.0 },
+  "work_orders": ["WO-SHEET-A", "WO-SHEET-B", "WO-SHEET-C"],
+  "materials": {},
+  "capabilities": ["create_sheet_nest", "get_sheet_nest", "cut_sheet_nest", "cancel_sheet_nest"],
+  "fabrication": "sheet_nesting"
+}

@@ -962,6 +962,7 @@ impl Scenarios {
             include_str!("../fixtures/assembly-release-readiness.json"),
             include_str!("../fixtures/assembly-shortage-readiness.json"),
             include_str!("../fixtures/sheet-metal.json"),
+            include_str!("../fixtures/sheet-metal-nesting.json"),
             include_str!("../fixtures/wire-harness.json"),
         ] {
             let definition = parse_definition(source)?;
@@ -1933,8 +1934,16 @@ impl Scenarios {
             let events = stored
                 .as_ref()
                 .map_or(&[][..], |state| state.timeline.events.as_slice());
-            let (response, changed) =
-                crate::fabrication::invoke(&tx, run, setup, action, parameters, cursor, events)?;
+            let (response, changed) = crate::fabrication::invoke(
+                &tx,
+                run,
+                setup,
+                &definition.work_orders,
+                action,
+                parameters,
+                cursor,
+                events,
+            )?;
             if changed {
                 tx.commit()?;
             }

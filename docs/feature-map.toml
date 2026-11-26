@@ -1305,3 +1305,19 @@ spec = "acceptance/P12.md"
 features = ["F08", "F09", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P12-09 Deliver assembly after versioned retest" }
+
+[[case]]
+id = "P13-01"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p13_01_sheet_multi_order_nesting" }
+
+[[case]]
+id = "P13-UI"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P13-UI Cut a shared sheet nest" }
