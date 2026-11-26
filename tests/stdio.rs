@@ -7200,10 +7200,15 @@ async fn p11_04_smt_aoi_review_by_board() {
     smt_shared_material(7).await;
 }
 
+#[tokio::test]
+async fn p11_06_smt_recall_impact_across_orders() {
+    smt_shared_material(8).await;
+}
+
 async fn smt_shared_material(version: u64) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("smt-ledger.sqlite3");
-    let (client, _child) = connect_mode(&db, "0", true).await;
+    let (client, _child) = connect_options(&db, "0", true, version == 8).await;
     timeout(WAIT, async {
         let opened = call(&client,"open_scenario",json!({"scenario_id":"smt","version":version})).await;
         assert_eq!(opened["ok"],true,"{opened}");
@@ -7250,8 +7255,8 @@ async fn smt_shared_material(version: u64) {
         apply("create_receipt","reel-receipt",json!({"receipt_id":"RC-1","item_id":"COMPONENT","revision":1,"quantity":"3","requires_inspection":false})).await;
         apply("assign_receipt_tracking","reel-tracking",json!({"receipt_id":"RC-1","lot_id":"REEL-C","supplier_lot":"SUP-C","location":"RAW-01"})).await;
         apply("post_receipt","reel-post",json!({"receipt_id":"RC-1"})).await;
-        if matches!(version,6 | 7) {
-            Box::pin(smt_spliced_panel(&client,run,version == 7)).await;
+        if matches!(version,6..=8) {
+            Box::pin(smt_spliced_panel(&client,run,version)).await;
             return;
         }
         let reel = if version == 5 {
@@ -7361,7 +7366,8 @@ async fn smt_shared_material(version: u64) {
     }).await.unwrap();
 }
 
-async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value, review_aoi: bool) {
+async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value, version: u64) {
+    let review_aoi = version == 7;
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
     let write = async |name: &str, key: &str, mut args: Value| {
@@ -7482,6 +7488,10 @@ async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value,
         );
     }
     apply("smt_split", "split-splice", split).await;
+    if version == 8 {
+        Box::pin(smt_cross_order_recall(client, run)).await;
+        return;
+    }
     for (serial, other, lot, load) in [
         ("A-01", "A-02", "REEL-C", &old),
         ("A-02", "A-01", "REEL-N", &splice),
@@ -7562,5 +7572,123 @@ async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value,
         )
         .await["balance"]["on_hand"],
         "0"
+    );
+}
+
+async fn smt_cross_order_recall(client: &RunningService<RoleClient, ()>, run: &Value) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["idempotency_key"] = json!(key);
+        if !matches!(
+            name,
+            "smt_load" | "smt_aoi" | "smt_split" | "smt_finish" | "smt_isolate"
+        ) {
+            args["expected_cursor"] = cursor().await;
+        }
+        invoke(name, args).await
+    };
+    let apply = async |name: &str, key: &str, args| {
+        let result = write(name, key, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    };
+    let mut release = json!({"work_order":"WO-B","definition_selection":{"item_id":"BOARD","inspection_plan_id":"QA"}});
+    release["snapshot_fingerprint"]=invoke("get_release_readiness",release.clone()).await["definition_snapshot"]["fingerprint"].clone();
+    apply("release_work_order", "release-recall-order", release).await;
+    apply("create_stock_transfer","recall-split-reel",json!({"transfer_id":"TR-C","lot_id":"REEL-C","child_lot_id":"REEL-C-B","quantity":"2","source_location":"RAW-01","destination_location":"RAW-02","reason":"second feeder"})).await;
+    apply(
+        "post_stock_transfer",
+        "recall-post-split",
+        json!({"transfer_id":"TR-C"}),
+    )
+    .await;
+    let reservation = json!({"reservation_id":"RS-B"});
+    apply(
+        "reserve_material",
+        "reserve-recall",
+        json!({"reservation_id":"RS-B","work_order":"WO-B","lot_id":"REEL-C-B","quantity":"2"}),
+    )
+    .await;
+    apply("pick_material", "pick-recall", reservation.clone()).await;
+    apply(
+        "issue_material_to_operation",
+        "issue-recall",
+        json!({"reservation_id":"RS-B","operation":"placement"}),
+    )
+    .await;
+    apply(
+        "smt_load",
+        "load-recall",
+        json!({"slot":"F2","reel":"REEL-C-B"}),
+    )
+    .await;
+    apply(
+        "smt_place",
+        "place-recall",
+        json!({"panel":"P-B","slot":"F2","reservation_id":"RS-B"}),
+    )
+    .await;
+    apply(
+        "smt_aoi",
+        "aoi-recall",
+        json!({"panel":"P-B","result":"pass"}),
+    )
+    .await;
+    apply("smt_finish", "finish-prior", json!({"serial":"A-01"})).await;
+    assert_eq!(
+        invoke("smt_get_recall_impact", json!({"event_cursor":1})).await["code"],
+        "RECALL_NOT_DELIVERED"
+    );
+    assert_eq!(advance(client, run, 2).await["ok"], true);
+    let read = delivered(client, run).await;
+    let event = read["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["kind"] == "supplier_recall")
+        .unwrap();
+    let args = json!({"event_cursor":event["cursor"]});
+    let current = cursor().await;
+    let impact = invoke("smt_get_recall_impact", args.clone()).await;
+    assert_eq!(cursor().await, current);
+    assert_eq!(
+        impact["targets"],
+        json!([
+            {"work_order":"WO-A","panel":"P-A","serial":"A-01","actual_reel":"REEL-C","split":true,"previously_finished":true},
+            {"work_order":"WO-B","panel":"P-B","serial":"B-01","actual_reel":"REEL-C-B","split":false,"previously_finished":false},
+            {"work_order":"WO-B","panel":"P-B","serial":"B-02","actual_reel":"REEL-C-B","split":false,"previously_finished":false}
+        ])
+    );
+    let isolated = apply("smt_isolate", "isolate-recall", args.clone()).await;
+    assert_eq!(isolated["affected"], json!(["A-01"]));
+    assert_eq!(isolated["pending_serials"], json!(["B-01", "B-02"]));
+    assert_eq!(
+        write("smt_isolate", "isolate-second", args).await["code"],
+        "RECALL_ALREADY_ISOLATED"
+    );
+    apply("smt_split", "split-after-recall", json!({"panel":"P-B"})).await;
+    assert_eq!(
+        apply("smt_finish", "finish-unaffected", json!({"serial":"A-02"})).await["finished"],
+        true
+    );
+    for serial in ["A-01", "B-01", "B-02"] {
+        assert_eq!(
+            write("smt_finish", serial, json!({"serial":serial})).await["code"],
+            "QUALITY_HOLD"
+        );
+        let trace = invoke("smt_trace", json!({"subject":serial})).await;
+        assert_eq!(trace["links"][0]["finished"], false);
+        assert_eq!(trace["links"][0]["quality"], "held");
+    }
+    let trace = invoke("trace_serial_backward", json!({"serial_number":"B-01"})).await;
+    assert!(
+        trace["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["kind"] == "material_split"
+                && edge["source"]["id"] == "REEL-C"
+                && edge["target"]["id"] == "REEL-C-B")
     );
 }
