@@ -1022,6 +1022,7 @@ fn apply(
                     serial_numbers: vec![serial.clone()],
                     components: order.installed.clone(),
                     material_inputs: Vec::new(),
+                    material_input_serials: Default::default(),
                     wip_move: None,
                     wip_movement_reversals: Vec::new(),
                     wip_partitions: Vec::new(),

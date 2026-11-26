@@ -20,6 +20,12 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "料卷换料与飞达上料",
         "inventory",
     ),
+    (
+        Action::SmtSpliceReel,
+        "smt_splice_reel",
+        "在飞达上登记相同物料版本的接料",
+        "production",
+    ),
     (Action::SmtPlace, "smt_place", "贴装拼板", "production"),
     (Action::SmtAoi, "smt_aoi", "拼板 AOI 检测", "quality"),
     (
@@ -67,6 +73,7 @@ pub fn spec(action: Action) -> Spec {
     let mut required = match action {
         Action::SmtRelease | Action::SmtStatus => vec!["work_order"],
         Action::SmtLoad => vec!["slot", "reel"],
+        Action::SmtSpliceReel => vec!["slot", "reel", "expected_cursor"],
         Action::SmtPlace => vec!["panel", "slot"],
         Action::SmtAoi => vec!["panel", "result"],
         Action::SmtSplit => vec!["panel"],
@@ -89,6 +96,7 @@ pub fn spec(action: Action) -> Spec {
                 field.into(),
                 match field {
                     "result" => json!({"type":"string","enum":["pass","fail"]}),
+                    "expected_cursor" => json!({"type":"integer","minimum":0,"maximum":i64::MAX}),
                     "event_cursor" => json!({"type":"integer","minimum":1,"maximum":10000}),
                     _ => text(),
                 },
@@ -109,6 +117,10 @@ pub fn spec(action: Action) -> Spec {
             "REEL_RECALLED",
             "QUALITY_HOLD",
             "MATERIAL_HELD",
+            "REEL_NOT_FOUND",
+            "FEEDER_EMPTY",
+            "SPLICE_MATERIAL_MISMATCH",
+            "VERSION_CONFLICT",
             "RETEST_REQUIRED",
             "BOARD_SCRAPPED",
             "IDEMPOTENCY_CONFLICT",
@@ -124,6 +136,8 @@ pub struct Setup {
     pub shared_material: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     split_reels: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) spliced_placement: bool,
     reels: BTreeMap<String, usize>,
     panels: BTreeMap<String, PanelDefinition>,
 }
@@ -164,6 +178,10 @@ impl Setup {
             !self.split_reels || self.shared_material,
             "split reels require the shared material ledger"
         );
+        anyhow::ensure!(
+            !self.spliced_placement || self.split_reels,
+            "spliced placement requires split reel support"
+        );
         let mut serials = BTreeSet::new();
         for (panel, spec) in &self.panels {
             anyhow::ensure!(
@@ -196,10 +214,14 @@ struct State {
     remaining: BTreeMap<String, usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     material_reports: Vec<crate::mes::Report>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    crossed_splices: BTreeSet<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct FeederLoad {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    previous_load_id: Option<usize>,
     id: usize,
     reel: String,
     slot: String,
@@ -208,11 +230,27 @@ struct FeederLoad {
 
 #[derive(Serialize, Deserialize)]
 struct Panel {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    placement_sources: BTreeMap<String, PlacementSource>,
     reel: String,
     load_id: usize,
     slot: String,
     aoi: Option<String>,
     split: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PlacementSource {
+    reel: String,
+    load_id: usize,
+}
+
+impl Panel {
+    fn reel_for(&self, serial: &str) -> &str {
+        self.placement_sources
+            .get(serial)
+            .map_or(self.reel.as_str(), |source| &source.reel)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -265,12 +303,12 @@ fn recall(event: &Event) -> Option<&str> {
         .flatten()
 }
 
-fn current_reel<'a>(board: &'a Board, panel: &'a Panel) -> &'a str {
+fn current_reel<'a>(board: &'a Board, panel: &'a Panel, serial: &str) -> &'a str {
     board
         .replacements
         .last()
         .map(String::as_str)
-        .unwrap_or(&panel.reel)
+        .unwrap_or_else(|| panel.reel_for(serial))
 }
 
 pub fn work_order_status(
@@ -350,7 +388,7 @@ pub(crate) fn genealogy(
     )
 }
 
-pub(crate) fn placement_spec(mut spec: Spec) -> Spec {
+pub(crate) fn placement_spec(mut spec: Spec, spliced: bool) -> Spec {
     spec.input["properties"]["reservation_id"] = crate::inventory::id_schema();
     spec.input["properties"]["expected_cursor"] =
         json!({"type":"integer","minimum":0,"maximum":i64::MAX});
@@ -358,6 +396,14 @@ pub(crate) fn placement_spec(mut spec: Spec) -> Spec {
         .as_array_mut()
         .unwrap()
         .extend([json!("reservation_id"), json!("expected_cursor")]);
+    if spliced {
+        spec.input["required"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|field| field != "reservation_id");
+        spec.input["properties"]["reservation_ids"] = json!({"type":"array","minItems":1,"maxItems":64,
+            "items":crate::inventory::id_schema(),"description":"按拼板序列号的登记顺序填写每块板的发料编号"});
+    }
     spec.errors = &[
         "INVALID_ARGUMENT",
         "INVALID_STATE",
@@ -373,6 +419,7 @@ pub(crate) fn placement_spec(mut spec: Spec) -> Spec {
         "MATERIAL_ISSUE_NOT_FOUND",
         "MATERIAL_ISSUE_QUANTITY_EXCEEDED",
         "FEEDER_LOT_MISMATCH",
+        "SPLICE_SEQUENCE_INVALID",
         "MATERIAL_UNIT_MISMATCH",
     ];
     spec
@@ -413,15 +460,22 @@ pub fn invoke(
         let subject = args["subject"].as_str().unwrap();
         let links: Vec<_>=state.boards.iter().filter_map(|(serial,board)| {
             let panel=&state.panels[&board.panel];
-            (subject==serial || subject==board.panel || subject==panel.reel || board.replacements.iter().any(|id| id==subject)).then(||
+            (subject==serial || subject==board.panel || subject==panel.reel_for(serial) || board.replacements.iter().any(|id| id==subject)).then(||
                 json!({"serial":serial,"panel":board.panel,"work_order":setup.panels[&board.panel].order,
-                    "reel":panel.reel,"slot":panel.slot,"machine":"SMT-1","load_id":panel.load_id,"aoi":panel.aoi,
+                    "reel":panel.reel_for(serial),"slot":panel.slot,"machine":"SMT-1","load_id":panel.placement_sources.get(serial).map_or(panel.load_id,|source|source.load_id),"aoi":panel.aoi,
                     "replacements":board.replacements,"quality":board.quality,"finished":board.finished,"history":board.history}))
         }).collect();
         let panels: BTreeMap<_, _> = state
             .panels
             .iter()
-            .filter(|(id, panel)| subject == id.as_str() || subject == panel.reel)
+            .filter(|(id, panel)| {
+                subject == id.as_str()
+                    || subject == panel.reel
+                    || panel
+                        .placement_sources
+                        .values()
+                        .any(|source| source.reel == subject)
+            })
             .collect();
         return Ok((json!({"ok":true,"links":links,"panels":panels}), false));
     }
@@ -444,7 +498,7 @@ pub fn invoke(
             false,
         ));
     }
-    if matches!(action, Action::ReleaseWorkOrder)
+    if matches!(action, Action::ReleaseWorkOrder | Action::SmtSpliceReel)
         || (setup.shared_material && action == Action::SmtPlace)
     {
         if args["expected_cursor"].as_i64() != Some(cursor) {
@@ -467,15 +521,27 @@ pub fn invoke(
             if let Some(code) = crate::quality::blocking(tx, run, &panel.order)? {
                 return Ok((failure(&code), false));
             }
-            if action != Action::SmtPlace
-                && let Some(report) = state.material_reports.iter().find(|report| {
+            if action != Action::SmtPlace {
+                let held = if action == Action::SmtFinish
+                    && let Some(serial) = args["serial"].as_str()
+                    && let Some(source) = affected
+                        .and_then(|id| state.panels.get(id))
+                        .and_then(|panel| panel.placement_sources.get(serial))
+                {
+                    tx.query_row("SELECT EXISTS(SELECT 1 FROM stock_effective_lot_holds WHERE run=?1 AND batch=?2)",
+                        params![run,source.reel], |row| row.get(0))?
+                } else if let Some(report) = state.material_reports.iter().find(|report| {
                     report.order == panel.order
                         && report.serial_numbers == panel.serials
                         && !report.reversed
-                })
-                && crate::wip::material_held(tx, run, report)?
-            {
-                return Ok((failure("MATERIAL_HELD"), false));
+                }) {
+                    crate::wip::material_held(tx, run, report)?
+                } else {
+                    false
+                };
+                if held {
+                    return Ok((failure("MATERIAL_HELD"), false));
+                }
             }
         }
     }
@@ -487,7 +553,7 @@ pub fn invoke(
                 Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
             })?
             .collect::<rusqlite::Result<_>>()?;
-        if action == Action::SmtLoad {
+        if matches!(action, Action::SmtLoad | Action::SmtSpliceReel) {
             let reel = args["reel"].as_str().unwrap();
             if !reel_parents.contains_key(reel) {
                 return Ok((failure("REEL_NOT_FOUND"), false));
@@ -502,6 +568,27 @@ pub fn invoke(
             }
         }
     }
+    if action == Action::SmtSpliceReel {
+        let slot = args["slot"].as_str().unwrap();
+        let reel = args["reel"].as_str().unwrap();
+        let Some(load_id) = state.slots.get(slot) else {
+            return Ok((failure("FEEDER_EMPTY"), false));
+        };
+        let old = &state.load_history[*load_id - 1];
+        let same_material: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM stock_available_lots a JOIN stock_available_lots b
+             ON b.run=a.run AND b.item=a.item AND b.revision=a.revision
+             WHERE a.run=?1 AND a.lot=?2 AND b.lot=?3)",
+            params![run, old.reel, reel],
+            |row| row.get(0),
+        )?;
+        if !same_material
+            || old.reel == reel
+            || (old.previous_load_id.is_some() && !state.crossed_splices.contains(load_id))
+        {
+            return Ok((failure("SPLICE_MATERIAL_MISMATCH"), false));
+        }
+    }
     let mut response = apply(&mut state, setup, action, args, events, &reel_parents);
     if response["ok"] != true {
         return Ok((response, false));
@@ -509,10 +596,30 @@ pub fn invoke(
     if setup.shared_material && action == Action::SmtPlace {
         let panel = args["panel"].as_str().unwrap();
         let definition = &setup.panels[panel];
-        let reservation = args["reservation_id"].as_str().unwrap();
         let amount = definition.serials.len();
-        let query =
-            json!({"operation":PLACEMENT,"material_inputs":{(reservation):amount.to_string()}});
+        let reservation = args.get("reservation_id").and_then(Value::as_str);
+        let ordered = args.get("reservation_ids").and_then(Value::as_array);
+        if reservation.is_some() == ordered.is_some()
+            || ordered.is_some_and(|ids| ids.len() != amount)
+        {
+            return Ok((failure("INVALID_ARGUMENT"), false));
+        }
+        let ordered_ids: Vec<_> = ordered.map_or_else(
+            || vec![reservation.unwrap(); amount],
+            |ids| ids.iter().map(|id| id.as_str().unwrap()).collect(),
+        );
+        let mut serials_by_reservation: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (reservation, serial) in ordered_ids.iter().zip(&definition.serials) {
+            serials_by_reservation
+                .entry((*reservation).to_owned())
+                .or_default()
+                .push(serial.clone());
+        }
+        let quantities: BTreeMap<_, _> = serials_by_reservation
+            .iter()
+            .map(|(reservation, serials)| (reservation, serials.len().to_string()))
+            .collect();
+        let query = json!({"operation":PLACEMENT,"material_inputs":quantities});
         let inputs = match crate::mes::report_material_inputs(
             tx,
             run,
@@ -523,22 +630,66 @@ pub fn invoke(
             Ok(inputs) => inputs,
             Err(code) => return Ok((failure(code), false)),
         };
-        if inputs[0].unit != "each" {
+        if inputs.iter().any(|input| input.unit != "each") {
             return Ok((failure("MATERIAL_UNIT_MISMATCH"), false));
         }
-        if inputs[0].lot_id != state.panels[panel].reel {
-            return Ok((failure("FEEDER_LOT_MISMATCH"), false));
+        let panel_state = state.panels.get_mut(panel).unwrap();
+        let active = &state.load_history[panel_state.load_id - 1];
+        let previous = active
+            .previous_load_id
+            .filter(|_| !state.crossed_splices.contains(&active.id))
+            .map(|id| &state.load_history[id - 1]);
+        let mut crossed = false;
+        for (reservation, serial) in ordered_ids.iter().zip(&definition.serials) {
+            let input = inputs
+                .iter()
+                .find(|input| input.reservation_id == *reservation)
+                .unwrap();
+            let source = if input.lot_id == active.reel {
+                crossed = true;
+                active
+            } else if let Some(previous) = previous.filter(|load| load.reel == input.lot_id) {
+                if crossed {
+                    return Ok((failure("SPLICE_SEQUENCE_INVALID"), false));
+                }
+                previous
+            } else {
+                return Ok((failure("FEEDER_LOT_MISMATCH"), false));
+            };
+            if events.iter().filter_map(recall).any(|root| {
+                source.reel == root
+                    || reel_parents.get(&source.reel).and_then(Option::as_deref) == Some(root)
+            }) {
+                return Ok((failure("REEL_RECALLED"), false));
+            }
+            if setup.spliced_placement {
+                panel_state.placement_sources.insert(
+                    serial.clone(),
+                    PlacementSource {
+                        reel: source.reel.clone(),
+                        load_id: source.id,
+                    },
+                );
+            }
+        }
+        if crossed && active.previous_load_id.is_some() {
+            state.crossed_splices.insert(active.id);
         }
         let report = crate::mes::Report {
             id: format!("report-{}", cursor + 1),
             order: definition.order.clone(),
             step: 0,
-            batch: Some(inputs[0].lot_id.clone()),
+            batch: (inputs.len() == 1).then(|| inputs[0].lot_id.clone()),
             quantity: amount,
             reversed: false,
             serial_numbers: definition.serials.clone(),
             components: BTreeMap::new(),
             material_inputs: inputs,
+            material_input_serials: if setup.spliced_placement {
+                serials_by_reservation
+            } else {
+                BTreeMap::new()
+            },
             wip_move: None,
             wip_movement_reversals: Vec::new(),
             wip_partitions: Vec::new(),
@@ -595,7 +746,7 @@ fn apply(
                 return failure("INVALID_STATE");
             }
         }
-        Action::SmtLoad => {
+        Action::SmtLoad | Action::SmtSpliceReel => {
             let reel = string("reel");
             let slot = string("slot");
             if !matches!(slot, "F1" | "F2") {
@@ -608,9 +759,11 @@ fn apply(
                 return failure("REEL_RECALLED");
             }
             let id = state.load_history.len() + 1;
+            let previous_load_id = (action == Action::SmtSpliceReel).then(|| state.slots[slot]);
             state.slots.insert(slot.into(), id);
             state.load_history.push(FeederLoad {
                 id,
+                previous_load_id,
                 reel: reel.into(),
                 slot: slot.into(),
                 machine: "SMT-1".into(),
@@ -643,6 +796,7 @@ fn apply(
             state.panels.insert(
                 id.into(),
                 Panel {
+                    placement_sources: BTreeMap::new(),
                     reel: reel.clone(),
                     load_id,
                     slot: slot.into(),
@@ -677,7 +831,7 @@ fn apply(
                 panel.split = true;
                 let serials = &setup.panels[id].serials;
                 for serial in serials {
-                    let quality = if aoi == "fail" || recalled(&panel.reel) {
+                    let quality = if aoi == "fail" || recalled(panel.reel_for(serial)) {
                         Quality::Held
                     } else {
                         Quality::Clear
@@ -706,8 +860,10 @@ fn apply(
             }
             let mut affected = Vec::new();
             for (serial, board) in &mut state.boards {
-                if affected_reel(current_reel(board, &state.panels[&board.panel]), reel)
-                    && board.quality != Quality::Scrapped
+                if affected_reel(
+                    current_reel(board, &state.panels[&board.panel], serial),
+                    reel,
+                ) && board.quality != Quality::Scrapped
                 {
                     board.quality = Quality::Held;
                     board.finished = false;
@@ -720,7 +876,16 @@ fn apply(
             let panels: Vec<_> = state
                 .panels
                 .iter()
-                .filter(|(_, panel)| affected_reel(&panel.reel, reel))
+                .filter(|(_, panel)| {
+                    if panel.placement_sources.is_empty() {
+                        affected_reel(&panel.reel, reel)
+                    } else {
+                        panel
+                            .placement_sources
+                            .values()
+                            .any(|source| affected_reel(&source.reel, reel))
+                    }
+                })
                 .map(|(id, _)| id)
                 .collect();
             return json!({"ok":true,"affected":affected,"affected_panels":panels,"reel":reel,"event_cursor":cursor});
@@ -733,7 +898,7 @@ fn apply(
             if board.quality == Quality::Scrapped {
                 return failure("BOARD_SCRAPPED");
             }
-            let reel = current_reel(board, &state.panels[&board.panel]);
+            let reel = current_reel(board, &state.panels[&board.panel], serial);
             match action {
                 Action::SmtFinish => {
                     if board.quality == Quality::AwaitingRetest {

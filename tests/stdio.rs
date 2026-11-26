@@ -7190,6 +7190,11 @@ async fn p11_01_smt_split_reel_placement() {
     smt_shared_material(5).await;
 }
 
+#[tokio::test]
+async fn p11_02_smt_splice_allocates_by_serial() {
+    smt_shared_material(6).await;
+}
+
 async fn smt_shared_material(version: u64) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("smt-ledger.sqlite3");
@@ -7240,6 +7245,10 @@ async fn smt_shared_material(version: u64) {
         apply("create_receipt","reel-receipt",json!({"receipt_id":"RC-1","item_id":"COMPONENT","revision":1,"quantity":"3","requires_inspection":false})).await;
         apply("assign_receipt_tracking","reel-tracking",json!({"receipt_id":"RC-1","lot_id":"REEL-C","supplier_lot":"SUP-C","location":"RAW-01"})).await;
         apply("post_receipt","reel-post",json!({"receipt_id":"RC-1"})).await;
+        if version == 6 {
+            Box::pin(smt_spliced_panel(&client,run)).await;
+            return;
+        }
         let reel = if version == 5 {
             apply("create_stock_transfer","split-reel",json!({"transfer_id":"TR-SMT","lot_id":"REEL-C","child_lot_id":"REEL-C-SPLIT","quantity":"2","source_location":"RAW-01","destination_location":"RAW-02","reason":"split for feeder"})).await;
             apply("post_stock_transfer","post-reel-split",json!({"transfer_id":"TR-SMT"})).await;
@@ -7345,4 +7354,161 @@ async fn smt_shared_material(version: u64) {
             assert_eq!(smt["tool"],cnc["tool"],"{name}");
         }
     }).await.unwrap();
+}
+
+async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value) {
+    let invoke = async |name: &str, args| business(client, run, name, args).await;
+    let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+    let write = async |name: &str, key: &str, mut args: Value| {
+        args["idempotency_key"] = json!(key);
+        if !matches!(name, "smt_load" | "smt_aoi" | "smt_split" | "smt_finish") {
+            args["expected_cursor"] = cursor().await;
+        }
+        invoke(name, args).await
+    };
+    let apply = async |name: &str, key: &str, args| {
+        let result = write(name, key, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    };
+    apply("create_receipt","new-receipt",json!({"receipt_id":"RC-2","item_id":"COMPONENT","revision":1,"quantity":"1","requires_inspection":false})).await;
+    apply(
+        "assign_receipt_tracking",
+        "new-tracking",
+        json!({"receipt_id":"RC-2","lot_id":"REEL-N","supplier_lot":"SUP-N","location":"RAW-02"}),
+    )
+    .await;
+    apply("post_receipt", "new-post", json!({"receipt_id":"RC-2"})).await;
+    for (lot, reservation, key) in [("REEL-C", "RS-OLD", "old"), ("REEL-N", "RS-NEW", "new")] {
+        apply(
+            "reserve_material",
+            &format!("{key}-reserve"),
+            json!({"reservation_id":reservation,"work_order":"WO-A","lot_id":lot,"quantity":"1"}),
+        )
+        .await;
+        apply(
+            "pick_material",
+            &format!("{key}-pick"),
+            json!({"reservation_id":reservation}),
+        )
+        .await;
+        apply(
+            "issue_material_to_operation",
+            &format!("{key}-issue"),
+            json!({"reservation_id":reservation,"operation":"placement"}),
+        )
+        .await;
+    }
+    let old = apply("smt_load", "load-old", json!({"slot":"F1","reel":"REEL-C"})).await;
+    let splice = apply(
+        "smt_splice_reel",
+        "splice",
+        json!({"slot":"F1","reel":"REEL-N"}),
+    )
+    .await;
+    assert_ne!(splice["load_id"], old["load_id"]);
+    let place = |ids| json!({"panel":"P-A","slot":"F1","reservation_ids":ids});
+    let before = cursor().await;
+    assert_eq!(
+        write("smt_place", "wrong-order", place(["RS-NEW", "RS-OLD"])).await["code"],
+        "SPLICE_SEQUENCE_INVALID"
+    );
+    assert_eq!(cursor().await, before);
+    apply(
+        "hold_stock_lot",
+        "hold-old",
+        json!({"lot_id":"REEL-C","hold_id":"H-PRE","reason":"supplier review"}),
+    )
+    .await;
+    let before = cursor().await;
+    assert_eq!(
+        write("smt_place", "held-input", place(["RS-OLD", "RS-NEW"])).await["code"],
+        "MATERIAL_HELD"
+    );
+    assert_eq!(cursor().await, before);
+    apply(
+        "release_stock_lot_hold",
+        "release-old",
+        json!({"hold_id":"H-PRE","reason":"review cleared"}),
+    )
+    .await;
+    let mut request = place(["RS-OLD", "RS-NEW"]);
+    request["expected_cursor"] = cursor().await;
+    request["idempotency_key"] = json!("placement-splice");
+    let placed = invoke("smt_place", request.clone()).await;
+    assert_eq!(placed["ok"], true, "{placed}");
+    assert_eq!(invoke("smt_place", request).await, placed);
+    apply(
+        "smt_aoi",
+        "aoi-splice",
+        json!({"panel":"P-A","result":"pass"}),
+    )
+    .await;
+    apply("smt_split", "split-splice", json!({"panel":"P-A"})).await;
+    for (serial, other, lot, load) in [
+        ("A-01", "A-02", "REEL-C", &old),
+        ("A-02", "A-01", "REEL-N", &splice),
+    ] {
+        let trace = invoke("trace_serial_backward", json!({"serial_number":serial})).await;
+        let inputs: Vec<_> = trace["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|edge| edge["kind"] == "material_input")
+            .collect();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0]["source"]["id"], lot);
+        assert_eq!(inputs[0]["quantity"], "1");
+        let forward = invoke("trace_lot_forward", json!({"lot_id":lot})).await;
+        assert!(
+            forward["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|edge| edge["target"]["id"] != other)
+        );
+        let direct = invoke("smt_trace", json!({"subject":serial})).await;
+        assert_eq!(direct["links"][0]["load_id"], load["load_id"]);
+        assert_eq!(direct["links"][0]["reel"], lot);
+    }
+    apply(
+        "hold_stock_lot",
+        "hold-after-place",
+        json!({"lot_id":"REEL-C","hold_id":"H-POST","reason":"supplier review"}),
+    )
+    .await;
+    assert_eq!(
+        write("smt_finish", "blocked-A", json!({"serial":"A-01"})).await["code"],
+        "MATERIAL_HELD"
+    );
+    assert_eq!(
+        apply("smt_finish", "clear-B", json!({"serial":"A-02"})).await["finished"],
+        true
+    );
+    apply(
+        "release_stock_lot_hold",
+        "release-after-place",
+        json!({"hold_id":"H-POST","reason":"review cleared"}),
+    )
+    .await;
+    assert_eq!(
+        apply("smt_finish", "resume-A", json!({"serial":"A-01"})).await["finished"],
+        true
+    );
+    assert_eq!(
+        invoke(
+            "get_stock_balance",
+            json!({"item_id":"COMPONENT","location":"RAW-01"})
+        )
+        .await["balance"]["on_hand"],
+        "2"
+    );
+    assert_eq!(
+        invoke(
+            "get_stock_balance",
+            json!({"item_id":"COMPONENT","location":"RAW-02"})
+        )
+        .await["balance"]["on_hand"],
+        "0"
+    );
 }

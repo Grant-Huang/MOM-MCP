@@ -1027,6 +1027,7 @@ pub(crate) fn consolidate(
         serial_numbers,
         components: Default::default(),
         material_inputs: Vec::new(),
+        material_input_serials: Default::default(),
         wip_move: None,
         wip_movement_reversals: Vec::new(),
         wip_partitions: Vec::new(),

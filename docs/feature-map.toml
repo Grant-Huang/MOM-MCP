@@ -1161,3 +1161,19 @@ spec = "acceptance/P11.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P11-UI Split a reel and trace SMT placement" }
+
+[[case]]
+id = "P11-02"
+phase = "P11"
+spec = "acceptance/P11.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p11_02_smt_splice_allocates_by_serial" }
+
+[[case]]
+id = "P11-03"
+phase = "P11"
+spec = "acceptance/P11.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P11-03 Trace both sides of an SMT reel splice" }

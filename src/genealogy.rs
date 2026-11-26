@@ -280,8 +280,16 @@ pub(crate) fn read<'a>(
                 });
             }
         }
+        let matches_serial = |input: &crate::mes::MaterialInput, serial: &str| {
+            report
+                .material_input_serials
+                .get(&input.reservation_id)
+                .is_none_or(|serials| serials.iter().any(|number| number == serial))
+        };
         for (index, input) in report.material_inputs.iter().enumerate() {
-            if lot.is_some_and(|lot| !matches_lot(lot, &input.lot_id)) {
+            if lot.is_some_and(|lot| !matches_lot(lot, &input.lot_id))
+                || serial.is_some_and(|serial| !matches_serial(input, serial))
+            {
                 continue;
             }
             if let Some((parent, cursor)) = material_splits.get(&input.lot_id) {
@@ -316,7 +324,13 @@ pub(crate) fn read<'a>(
                 },
                 target: wip(),
                 status: status(report.reversed),
-                quantity: Some(&input.quantity),
+                quantity: Some(
+                    if serial.is_some() && !report.material_input_serials.is_empty() {
+                        "1"
+                    } else {
+                        &input.quantity
+                    },
+                ),
                 unit: Some(&input.unit),
                 reservation_id: Some(&input.reservation_id),
                 operation: None,
@@ -349,7 +363,14 @@ pub(crate) fn read<'a>(
             .filter(|_| !consolidated)
             .enumerate()
         {
-            if serial.is_some_and(|serial| number != serial) {
+            if serial.is_some_and(|serial| number != serial)
+                || (!report.material_input_serials.is_empty()
+                    && lot.is_some_and(|lot| {
+                        !report.material_inputs.iter().any(|input| {
+                            matches_lot(lot, &input.lot_id) && matches_serial(input, number)
+                        })
+                    }))
+            {
                 continue;
             }
             edges.push(Edge {

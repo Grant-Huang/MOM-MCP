@@ -112,6 +112,7 @@ pub enum Action {
     ReverseReport,
     SmtRelease,
     SmtLoad,
+    SmtSpliceReel,
     SmtPlace,
     SmtAoi,
     SmtSplit,
