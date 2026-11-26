@@ -173,12 +173,18 @@ test("P9A-09 Freeze a work order definition", async ({ page }) => {
   expect(comparison.current.inspection_plan.specification_version).toBe("QA@2");
 });
 
-test("P12-UI Freeze configuration-specific assembly requirements", async ({ page }) => {
+test("P12-UI Freeze configuration-specific assembly requirements", ({ page }) => assemblyConfiguration(page, false));
+
+test("P12-03 Trace a qualified assembly substitute", ({ page }) => assemblyConfiguration(page, true));
+
+test("P12-05 Observe contested assembly capacity", ({ page }) => assemblyConfiguration(page, true, true));
+
+async function assemblyConfiguration(page, qualified, sharedResources = false) {
   await page.goto("/scenarios");
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
   await button("加载场景").click();
-  await page.getByLabel("已发布场景").selectOption("assembly@30");
+  await page.getByLabel("已发布场景").selectOption(qualified ? "assembly@31" : "assembly@30");
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   const { run_id } = JSON.parse(await status.textContent());
@@ -197,7 +203,7 @@ test("P12-UI Freeze configuration-specific assembly requirements", async ({ page
     cursor = result.cursor;
     return result;
   };
-  for (const item_id of ["FRAME", "BASE", "STD", "RUG"]) {
+  for (const item_id of qualified ? ["FRAME", "BASE", "STD", "RUG", "ALT"] : ["FRAME", "BASE", "STD", "RUG"]) {
     await write("create_item", { item_id, base_unit: "each" });
     await write("create_item_revision", { item_id, revision: 1, name: item_id });
     await write("activate_revision", { item_id, revision: 1, revision_type: "item" });
@@ -206,7 +212,8 @@ test("P12-UI Freeze configuration-specific assembly requirements", async ({ page
   await write("create_bom_revision", frame);
   await write("set_bom_components", { ...frame, components: {
     BASE: { revision: 1, quantity: 1, unit: "each" },
-    STD: { revision: 1, quantity: 1, unit: "each", configurations: ["standard"] },
+    STD: { revision: 1, quantity: 1, unit: "each", configurations: ["standard"],
+      ...(qualified && { alternate: { item_id: "ALT", revision: 1, qualification_id: "QA-ALT-1" } }) },
     RUG: { revision: 1, quantity: 2, unit: "each", configurations: ["rugged"] },
   } });
   await write("activate_revision", { ...frame, revision_type: "bom" });
@@ -230,4 +237,45 @@ test("P12-UI Freeze configuration-specific assembly requirements", async ({ page
     const requirements = await invoke("get_material_requirements", { work_order });
     expect(requirements.requirements).toContainEqual(expect.objectContaining({ item_id: variant, required: quantity }));
   }
-});
+  if (qualified) {
+    for (const item of ["BASE", "ALT"]) {
+      const receipt_id = "RC-" + item;
+      const lot_id = "LOT-" + item;
+      await write("create_receipt", { receipt_id, item_id: item, revision: 1, quantity: "1", requires_inspection: false });
+      await write("assign_receipt_tracking", { receipt_id, lot_id, supplier_lot: "SUP-" + item, location: "RAW-02" });
+      await write("post_receipt", { receipt_id });
+      await write("reserve_material", { reservation_id: "RS-" + item, work_order: "WO-E", lot_id, quantity: "1" });
+    }
+    const operation = { work_order: "WO-E", operation: "build" };
+    await write("dispatch_operation", { ...operation, work_center: "CELL-A" });
+    for (const reservation_id of ["RS-BASE", "RS-ALT"]) {
+      await write("pick_material", { reservation_id });
+      await write("issue_material_to_operation", { reservation_id, operation: "build" });
+    }
+    await write("start_operation", operation);
+    const { report } = await write("post_operation_report", {
+      ...operation, quantity: 1, material_inputs: { "RS-BASE": "1", "RS-ALT": "1" },
+    });
+    expect(report.material_inputs).toContainEqual(expect.objectContaining({
+      lot_id: "LOT-ALT", substitute: { required_item_id: "STD", qualification_id: "QA-ALT-1" },
+    }));
+    if (sharedResources) {
+      await page.getByLabel("搜索词").fill("list_dispatch_queue");
+      await button("搜索工具").click();
+      await page.getByLabel("匹配工具").selectOption("list_dispatch_queue");
+      await page.getByLabel("JSON 参数").fill(JSON.stringify({ work_center: "CELL-A" }));
+      await button("调用工具").click();
+      await expect(status).toContainText('"blocking": "RESOURCE_BUSY"');
+      await write("complete_operation", operation);
+      await button("调用工具").click();
+      await expect(status).toContainText('"blocking": null');
+      expect(JSON.parse(await status.textContent()).operations[0].work_order).toBe("WO-L");
+      await write("dispatch_operation", { ...operation, work_order: "WO-L", work_center: "CELL-A" });
+      return;
+    }
+    await page.getByLabel("匹配工具").selectOption("trace_serial_backward");
+    await page.getByLabel("JSON 参数").fill(JSON.stringify({ serial_number: "UNIT-E-01" }));
+    await button("调用工具").click();
+    await expect(status).toContainText('"LOT-ALT"');
+  }
+}

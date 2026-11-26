@@ -915,6 +915,7 @@ impl Scenarios {
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-closed-loop.json"),
             include_str!("../fixtures/assembly-configuration-bom.json"),
+            include_str!("../fixtures/assembly-qualified-substitute.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
@@ -2143,6 +2144,9 @@ impl Scenarios {
             }
             if action == Action::ListDispatchQueue {
                 let center = parameters.get("work_center").and_then(Value::as_str);
+                if let (Some(setup), Some(center)) = (&definition.assembly, center) {
+                    crate::assembly::dispatch_candidates(&tx, run, setup, center, &mut rows)?;
+                }
                 rows.retain(|row| {
                     row.status == "ready"
                         && center.is_none_or(|center| row.work_center.as_deref() == Some(center))

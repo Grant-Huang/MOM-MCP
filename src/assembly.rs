@@ -549,6 +549,34 @@ pub fn operations(
     Ok(rows)
 }
 
+pub(crate) fn dispatch_candidates(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    center: &str,
+    rows: &mut [crate::operations::Operation],
+) -> anyhow::Result<()> {
+    let Some(configurations) = setup.cells.get(center).filter(|_| setup.configuration_bom) else {
+        return Ok(());
+    };
+    let state = load(tx, run, setup)?;
+    for row in rows
+        .iter_mut()
+        .filter(|row| row.operation == "build" && row.status == "ready")
+    {
+        if configurations.contains(&setup.orders[&row.work_order].configuration) {
+            row.work_center = Some(center.into());
+            if row.blocking.is_none()
+                && setup.exclusive_dispatch
+                && cell_occupant(&state, center, &row.work_order).is_some()
+            {
+                row.blocking = Some("RESOURCE_BUSY");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn cell_occupant<'a>(state: &'a State, cell: &str, except: &str) -> Option<&'a str> {
     state
         .orders
@@ -772,11 +800,11 @@ pub fn invoke(
             }
         } else {
             let reports = &mut state.orders.get_mut(id).unwrap().build_reports;
-            let inputs = match crate::mes::report_material_inputs(tx, run, reports, id, args)? {
+            let mut inputs = match crate::mes::report_material_inputs(tx, run, reports, id, args)? {
                 Ok(inputs) => inputs,
                 Err(code) => return Ok((failure(code), false)),
             };
-            if !crate::inventory::matches_build_requirements(tx, run, id, &inputs)? {
+            if !crate::inventory::matches_build_requirements(tx, run, id, &mut inputs)? {
                 return Ok((failure("MATERIAL_INPUTS_INCOMPLETE"), false));
             }
             let report = reports.last_mut().unwrap();
