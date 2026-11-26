@@ -34,10 +34,10 @@ v0.1 是首期工单观测切片。中期按来源证据增补对象、关系、
 
 ### Odoo 源更新时间
 
-固定 Odoo Community 19 与 PostgreSQL 16 的隔离复验将同一合成制造单的 `write_date` 设为已知 UTC 值。在默认上下文、`America/Vancouver` 和 `Asia/Tokyo` 下，用同一身份按同一 ID 查询 JSON-2 `search_read`，三次均返回相同的无偏移时间字符串，并与数据库基准吻合。可用 [Odoo 生命周期脚本](references/mcp/odoo-adapter-lifecycle-smoke.sh) 复跑。映射 v0.1 仍省略该字段，后续如纳入观测须明确适用来源版本与格式并登记映射版本。 [Odoo ORM 时间存储约定](https://www.odoo.com/documentation/19.0/developer/reference/backend/orm.html#date-time-fields)
+固定 Odoo Community 19 与 PostgreSQL 16 的隔离复验将同一合成制造单的 `write_date` 设为已知 UTC 值。在默认上下文、`America/Vancouver` 和 `Asia/Tokyo` 下，用同一身份按同一 ID 查询 JSON-2 `search_read`，三次均返回相同的无偏移时间字符串，并与数据库基准吻合。可用 [Odoo 生命周期脚本](references/mcp/odoo-adapter-lifecycle-smoke.sh) 复跑。Odoo 映射 v0.2 将固定格式 `YYYY-MM-DD HH:MM:SS` 转成 RFC 3339 UTC 并输出为 `source_updated_at`。缺失或不符合格式时省略该字段，仍使用 v0.2。Observe 的 `observed_at` 记录 Adapter 读取时刻。 [Odoo ORM 时间存储约定](https://www.odoo.com/documentation/19.0/developer/reference/backend/orm.html#date-time-fields)
 
 ### 离线契约回归
 
-运行 `cargo test --locked --test external_order`。用例调用实际 Adapter 的投影器，覆盖三源字段、映射版本、同号及跨作用域身份、记录 ID 精确匹配、缺失或畸形状态及单对象响应形状。数值 ID 在 Rust 中按整数保存并与绑定中的字符串精确匹配。OpenMES 带偏移量的源时间统一为 UTC，Odoo 与 Carbon 的候选源时间字段暂省略。
+运行 `cargo test --locked --test external_order`。用例调用实际 Adapter 的投影器，覆盖三源字段、映射版本、同号及跨作用域身份、记录 ID 精确匹配、缺失或畸形状态及单对象响应形状。数值 ID 在 Rust 中按整数保存并与绑定中的字符串精确匹配。OpenMES 带偏移量的源时间统一为 UTC，Odoo 使用已验证的 UTC 规则，Carbon 的候选源时间字段暂省略。
 
 输入从宿主已解析的绑定及传输层已分类的响应开始。身份元组用于内部断言，产品 Observe 对外使用不透明引用。Carbon 投影用合成记录验证。来源权限、传输包络、故障隔离和宿主接线按[短期验收台账](acceptance/ADAPTER_READ.md)复跑。

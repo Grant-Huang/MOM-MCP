@@ -238,7 +238,9 @@ async fn one_observe_entry_reads_three_authorized_worlds() {
 
     async fn odoo(Json(request): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(request["domain"][0][2], 4242);
-        Json(json!([{"id":4242,"name":"WO-42","state":"confirmed"}]))
+        Json(
+            json!([{"id":4242,"name":"WO-42","state":"confirmed","write_date":"2026-11-01 08:30:00"}]),
+        )
     }
 
     async fn carbon(Json(request): Json<serde_json::Value>) -> impl IntoResponse {
@@ -325,6 +327,20 @@ async fn one_observe_entry_reads_three_authorized_worlds() {
         assert_eq!(observation.source_instance, expected_instance);
         assert_eq!(observation.source_status.as_deref(), Some(expected_state));
         assert_eq!(observation.normalized_status, None);
+        if expected_instance == "odoo" {
+            assert_eq!(observation.mapping_version, "0.2");
+            assert_eq!(
+                observation.source_updated_at.as_deref(),
+                Some("2026-11-01T08:30:00Z")
+            );
+            assert_ne!(
+                observation.source_updated_at.as_deref(),
+                Some(observation.observed_at.as_str())
+            );
+        } else {
+            assert_eq!(observation.mapping_version, "0.1");
+            assert_eq!(observation.source_updated_at, None);
+        }
     }
     task.abort();
 }
