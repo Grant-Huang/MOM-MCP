@@ -9010,3 +9010,99 @@ async fn p14_03_harness_crimp_qualification() {
         1
     );
 }
+
+#[tokio::test]
+async fn p14_05_harness_segment_crimp() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("segment-crimp.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    let (peer, _peer_child) = connect_mode(&db, "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"wire-harness","version":4}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let status = async |serial| {
+        business(
+            &peer,
+            run,
+            "get_harness_crimp_status",
+            json!({"serial_number":serial}),
+        )
+        .await
+    };
+    assert_eq!(status("WIRE-01").await["code"], "SERIAL_NOT_CUT");
+    let batch = shop_action(
+        &client,
+        run,
+        "cut_harness_batch",
+        "cut",
+        json!({
+            "batch_id":"CUT-Q","wire_lot":"WIRE-CU-1","serial_numbers":["WIRE-01","WIRE-02"]
+        }),
+    )
+    .await;
+    assert_eq!(batch["cursor"], 1, "{batch}");
+    let endpoint = |serial, segment, end, lot, tool| {
+        json!({
+            "serial_number":serial,"segment_id":segment,"end":end,"terminal_lot":lot,"tooling_id":tool
+        })
+    };
+    let crimp = async |key: &str, args| {
+        shop_action(&client, run, "crimp_harness_endpoint", key, args).await
+    };
+    let first = endpoint("WIRE-01", "POWER", "B", "TERM-PWR-ALT", "TOOL-PWR-1");
+    let mut invalid = first.clone();
+    invalid["tooling_id"] = json!("TOOL-PWR-EXPIRED");
+    assert_eq!(
+        crimp("first", invalid).await["code"],
+        "TOOLING_CALIBRATION_EXPIRED"
+    );
+    let (left, right) = tokio::join!(
+        crimp("first", first.clone()),
+        shop_action(&peer, run, "crimp_harness_endpoint", "first", first.clone())
+    );
+    assert_eq!(left, right);
+    assert_eq!(left["cursor"], 2, "{left}");
+    assert_eq!(left["remaining_terminals"], 0);
+    assert_eq!(left["crimp"]["cut_batch_id"], "CUT-Q");
+    assert_eq!(left["crimp"]["terminal_qualification"], "TERM-PWR-B-ALT@1");
+    assert_eq!(
+        crimp("duplicate", first).await["code"],
+        "ENDPOINT_ALREADY_CRIMPED"
+    );
+    assert_eq!(
+        crimp(
+            "shortage",
+            endpoint("WIRE-02", "POWER", "B", "TERM-PWR-ALT", "TOOL-PWR-1")
+        )
+        .await["code"],
+        "TERMINAL_STOCK_EXHAUSTED"
+    );
+    assert_eq!(status("WIRE-02").await["crimps"], json!([]));
+    assert_eq!(status("WIRE-01").await["complete"], false);
+    for (segment, end, lot, tool) in [
+        ("POWER", "A", "TERM-PWR-1", "TOOL-PWR-1"),
+        ("SIGNAL", "A", "TERM-SIG-1", "TOOL-SIG-1"),
+        ("SIGNAL", "B", "TERM-SIG-1", "TOOL-SIG-1"),
+    ] {
+        let result = crimp(
+            &format!("{segment}-{end}"),
+            endpoint("WIRE-01", segment, end, lot, tool),
+        )
+        .await;
+        assert_eq!(result["ok"], true, "{result}");
+    }
+    let complete = status("WIRE-01").await;
+    assert_eq!(complete["complete"], true);
+    assert_eq!(complete["required_endpoints"], 4);
+    assert_eq!(complete["crimps"].as_array().unwrap().len(), 4);
+    assert_eq!(complete["crimps"][0], left["crimp"]);
+    assert_eq!(
+        call(&client, "get_run", json!({"run_id":run})).await["cursor"],
+        5
+    );
+}
