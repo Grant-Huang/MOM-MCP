@@ -27,7 +27,7 @@
 
 适配器回环共用入口可执行 `cargo test --locked --test external_observe one_observe_entry_preserves_source_time_across_authorized_worlds -- --exact`。另执行 `cargo test --locked --test external_observe` 验证逐请求授权、配置与故障隔离。 共用入口的序列化验收覆盖 Odoo、OpenMES 和 Carbon 社区 REST，核对 `source_updated_at` 统一为 UTC、与读取时点 `observed_at` 独立，并按来源发布映射版本。无源时间的响应及 Carbon 原生 MCP 路径省略该字段。此证据来自 MOM-MCP 回环测试。工作区候选证据使用 `/api/world/production/observe`，依赖适配器提交 `ea1fcd8` 和宿主提交 `7a680bf`。用 `scripts/accept-m3-observe.py` 复跑，覆盖 Odoo、OpenMES、Carbon 原生 MCP、Carbon REST 四条回环传输及拒绝、撤权和故障隔离。Carbon 社区版数据路径作为短期取证候选，原生 MCP 兼容性证据单列。MOM-MCP `fbd798a` 的三个适配器 Rust 集成套件共 11 项通过，Carbon 原生探针与本体离线用例共 11 项通过。
 
-执行 `cargo test --locked --test external_observe source_failures_keep_their_classification_without_fallback -- --exact` 复跑三源失败矩阵。Odoo 空结果、OpenMES 对象级 403 和 Carbon REST 空结果均返回不可见。OpenMES 无效正文或记录错配、Carbon REST 跨公司记录错配均返回响应无效。Odoo 上游 401 和 Carbon REST 上游 503 均返回来源不可用。八种失败各触发一次已绑定来源请求，备用站点请求数为零。此为 MOM-MCP 候选 Observe 回环证据。
+执行 `cargo test --locked --test external_observe source_failures_keep_their_classification_without_fallback -- --exact` 复跑三源失败矩阵。Odoo 空结果、OpenMES 对象级 403 和 Carbon REST 空结果均返回不可见。OpenMES 无效正文或记录错配、Carbon REST 跨公司记录错配均返回响应无效。Odoo、OpenMES 和 Carbon REST 的上游 401 均返回来源不可用，Carbon REST 的上游 503 同样归为来源不可用。十种失败各触发一次已绑定来源请求，备用站点请求数为零。此为 MOM-MCP 候选 Observe 回环证据。
 
 运行 `cargo test --locked --test external_observe interrupted_source_response_is_unavailable_without_fallback -- --exact` 复跑响应中断。绑定来源发送 HTTP 200 和一段可解析为工单的 JSON，但在达到声明的正文长度前关闭连接。候选 Observe 返回来源不可用，备用站点零调用，且未发布工单快照。
 
@@ -60,6 +60,16 @@ Carbon 固定提交为 `05bd067c0a72ca9f0983f6278d2a7c9bb48b716c`。用官方社
 Carbon 社区版补充 [双会话隔离探针](../references/mcp/README.md#carbon-社区版公司隔离取证)。两个会话先分别读到自己的工单，再交叉读取。查询省略公司过滤，用源端响应验证双向隔离。已在 PostgreSQL 16／PostgREST 12.2.12 中复跑双会话。夹具沿用 Carbon 的视图与工单读取规则，用本地签发的测试 JWT 验证两次范围内读取和两次跨公司空结果。候选宿主仍返回范围内 200 和范围外 404。
 
 Carbon 社区 REST 的双身份探针可额外接收 `MOM_CARBON_EXPIRED_A_TOKEN`。使用公司 A 工单已通过有效会话确认可见后，探针用其过期会话读取同一 ID，要求返回 HTTP 401。复验在回环隔离后端完成，测试凭据保留原会话身份，用隔离实例的签名配置将过期时间置为过去。Rust `external_order_smoke` 用同一绑定分别传入有效、过期和有效令牌，结果依次为成功、脱敏的来源不可用、成功。双向跨公司查询仍返回空结果。正式宿主服务身份撤权另行验收。[探针](../references/mcp/carbon-community-smoke.mjs)
+
+### 三源凭据失效对照
+
+| 来源 | 真实接口验收 | Adapter 结果 |
+|---|---|---|
+| Odoo JSON-2 | 删除隔离实例的主读取密钥，读取原可见制造单返回 401。另一公司见证密钥继续可用。 [生命周期脚本](../references/mcp/odoo-adapter-lifecycle-smoke.sh) | 来源不可用 |
+| OpenMES HTTP | 删除隔离实例的主 Operator 令牌，读取原可见工单返回 401。另一产线见证身份继续可用。 [生命周期脚本](../references/mcp/openmes-adapter-http-smoke.sh) | 来源不可用 |
+| Carbon 社区 REST | 用过期会话读取已证实可见的工单返回 401。有效会话仍可读取。 [双会话探针](../references/mcp/carbon-community-smoke.mjs) | 来源不可用 |
+
+候选 Observe 回环对三条上游 401 路径均验证来源不可用和备用站点零调用。正式宿主收到失效调用身份时的拒绝及零来源调用，按 M3 宿主验收单独取证。
 
 ## AgentNexus 正式接口联审输入
 
