@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup, machiningInspections, deviceRecovery, operationGenealogy } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup, machiningInspections, deviceRecovery, operationGenealogy, smtSplitReel } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -170,6 +170,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9D-19 Replenish after a quality reinspection", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", replenish: true },
   { title: "P9D-21 Hold WIP across workshops", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, crossShopHold: true },
   { title: "P9D-23 Trace SMT placement through the common stock ledger", scenario: "smt@3", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true },
+  { title: "P11-UI Split a reel and trace SMT placement", scenario: "smt@5", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplitReel: true },
   { title: "P9D-33 Release a held SMT reel and resume placement", scenario: "smt@4", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtLotHold: true },
   { title: "P9D-25 Block only WIP with a held input lot", scenario: "cnc@43", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, scopedLotHold: true },
   { title: "P9D-27 Consolidate WIP from two source reports", scenario: "cnc@44", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, consolidateWip: true },
@@ -236,15 +237,25 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     await write("release_work_order", { ...order, snapshot_fingerprint: ready.definition_snapshot.fingerprint });
     const receipt = { receipt_id: "RC-1" };
     const lot = { lot_id: sharedSmt ? "REEL-C" : "LOT-1" };
-    await write("create_receipt", { ...receipt, item_id: "WIRE", revision: 1, quantity: "2", requires_inspection: false });
+    await write("create_receipt", { ...receipt, item_id: "WIRE", revision: 1, quantity: smtSplitReel ? "3" : "2", requires_inspection: false });
     await write("assign_receipt_tracking", { ...receipt, ...lot, supplier_lot: "SUP-42", location: "RAW-02" });
     await write("post_receipt", receipt);
     if (sharedSmt) {
       const reservation_id = "RS-1";
-      await write("reserve_material", { ...lot, reservation_id, work_order, quantity: "2" });
+      const loadedLot = smtSplitReel ? { lot_id: "REEL-C-SPLIT" } : lot;
+      if (smtSplitReel) {
+        await write("create_stock_transfer", {
+          ...lot, transfer_id: "TR-SMT", child_lot_id: loadedLot.lot_id, quantity: "2",
+          source_location: "RAW-02", destination_location: "RAW-01", reason: "split for feeder",
+        });
+        await write("post_stock_transfer", { transfer_id: "TR-SMT" });
+        expect((await invoke("get_lot", loadedLot)).lot.parent_lot_id).toBe(lot.lot_id);
+      }
+
+      await write("reserve_material", { ...loadedLot, reservation_id, work_order, quantity: "2" });
       await write("pick_material", { reservation_id });
       await write("issue_material_to_operation", { reservation_id, operation });
-      await write("smt_load", { slot: "F1", reel: lot.lot_id });
+      await write("smt_load", { slot: "F1", reel: loadedLot.lot_id });
       if (smtLotHold) {
         await write("hold_stock_lot", { ...lot, hold_id: "H-SMT", reason: "supplier review" });
         await button("搜索工具").click();
@@ -266,8 +277,11 @@ for (const { title, scenario, work_order, operation, work_center, report, return
       await button("调用工具").click();
       await expect(status).toContainText('"reservation_id": "RS-1"');
       const trace = JSON.parse(await status.textContent());
-      expect(trace.edges[0]).toMatchObject({ source: { id: lot.lot_id }, target: { id: placed.report_id }, quantity: "2" });
-      expect((await invoke("get_stock_balance", { item_id: "WIRE", location: "RAW-02" })).balance.on_hand).toBe("0");
+      expect(trace.edges[0]).toMatchObject({ source: { id: loadedLot.lot_id }, target: { id: placed.report_id }, quantity: "2" });
+      if (smtSplitReel) {
+        expect(trace.edges).toContainEqual(expect.objectContaining({ kind: "material_split", source: { kind: "material_lot", id: lot.lot_id }, target: { kind: "material_lot", id: loadedLot.lot_id } }));
+      }
+      expect((await invoke("get_stock_balance", { item_id: "WIRE", location: "RAW-02" })).balance.on_hand).toBe(smtSplitReel ? "1" : "0");
       return;
     }
 

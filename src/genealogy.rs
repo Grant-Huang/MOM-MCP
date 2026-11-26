@@ -71,7 +71,7 @@ pub(crate) fn spec(action: Action) -> Spec {
             "status",
         ],
         json!({
-        "edge_id":id_schema(),"kind":{"enum":["material_input","serial_output","wip_consumption","wip_split","wip_merge","finished_output_receipt","operation_output","coating_input","coating_output"]},
+        "edge_id":id_schema(),"kind":{"enum":["material_input","serial_output","wip_consumption","wip_split","wip_merge","finished_output_receipt","material_split","operation_output","coating_input","coating_output"]},
         "work_order":id_schema(),"source":node,"target":node,"status":{"enum":["active","reversed"]},
         "reservation_id":id_schema(),"quantity":quantity_schema(),"unit":text(),"operation":id_schema(),"work_center":id_schema(),"process_record":id_schema()}),
     );
@@ -96,13 +96,19 @@ fn status(reversed: bool) -> &'static str {
     if reversed { "reversed" } else { "active" }
 }
 
+pub(crate) enum Detail {
+    Standard,
+    Operations,
+    MaterialSplits,
+}
+
 pub(crate) fn read<'a>(
     tx: &Transaction<'_>,
     run: &str,
     action: Action,
     reports: &'a [Report],
     args: &Map<String, Value>,
-    operation_detail: bool,
+    detail: Detail,
 ) -> anyhow::Result<Value> {
     let selector = |name: &str| args.get(name).and_then(Value::as_str);
     let order = selector("work_order");
@@ -127,6 +133,30 @@ pub(crate) fn read<'a>(
         }
     }
 
+    let operation_detail = matches!(detail, Detail::Operations);
+    let mut material_splits = BTreeMap::new();
+    if matches!(detail, Detail::MaterialSplits) {
+        let mut query = tx.prepare(
+            "SELECT p.child,t.lot,t.posted_cursor FROM stock_lot_splits p
+             JOIN stock_transfers t ON t.run=p.run AND t.transfer=p.transfer
+             JOIN stock_available_lots s ON s.run=p.run AND s.lot=p.child
+             WHERE p.run=?1 AND t.posted_cursor IS NOT NULL",
+        )?;
+        material_splits = query
+            .query_map([run], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    (row.get::<_, String>(1)?, row.get::<_, i64>(2)?),
+                ))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+    }
+    let matches_lot = |requested: &str, actual: &str| {
+        requested == actual
+            || material_splits
+                .get(actual)
+                .is_some_and(|(parent, _)| parent == requested)
+    };
     let receipts = crate::finished_output::genealogy(tx, run, order)?;
     let mut edges = Vec::new();
     for report in reports
@@ -143,7 +173,7 @@ pub(crate) fn read<'a>(
                         && source
                             .material_inputs
                             .iter()
-                            .any(|input| input.lot_id == lot)
+                            .any(|input| matches_lot(lot, &input.lot_id))
                 })
             })
             .flat_map(|source| source.serial_numbers.iter())
@@ -155,7 +185,7 @@ pub(crate) fn read<'a>(
                 !report
                     .material_inputs
                     .iter()
-                    .any(|input| input.lot_id == lot)
+                    .any(|input| matches_lot(lot, &input.lot_id))
             }
         }) || serial.is_some_and(|serial| {
             !report
@@ -251,8 +281,30 @@ pub(crate) fn read<'a>(
             }
         }
         for (index, input) in report.material_inputs.iter().enumerate() {
-            if lot.is_some_and(|lot| input.lot_id != lot) {
+            if lot.is_some_and(|lot| !matches_lot(lot, &input.lot_id)) {
                 continue;
+            }
+            if let Some((parent, cursor)) = material_splits.get(&input.lot_id) {
+                edges.push(Edge {
+                    edge_id: format!("{}-material-split-{cursor}", report.id),
+                    kind: "material_split",
+                    work_order,
+                    source: Node {
+                        kind: "material_lot",
+                        id: parent.as_str().into(),
+                    },
+                    target: Node {
+                        kind: "material_lot",
+                        id: input.lot_id.as_str().into(),
+                    },
+                    status: status(report.reversed),
+                    quantity: None,
+                    unit: None,
+                    reservation_id: None,
+                    operation: None,
+                    work_center: None,
+                    process_record: None,
+                });
             }
             edges.push(Edge {
                 edge_id: format!("{}-input-{index}", report.id),

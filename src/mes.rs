@@ -1294,7 +1294,11 @@ pub fn invoke(
                 action,
                 &state.reports,
                 args,
-                setup.operation_genealogy,
+                if setup.operation_genealogy {
+                    crate::genealogy::Detail::Operations
+                } else {
+                    crate::genealogy::Detail::Standard
+                },
             )?,
             false,
         ));

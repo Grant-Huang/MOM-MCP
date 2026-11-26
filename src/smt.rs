@@ -122,6 +122,8 @@ pub fn spec(action: Action) -> Spec {
 pub struct Setup {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub shared_material: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    split_reels: bool,
     reels: BTreeMap<String, usize>,
     panels: BTreeMap<String, PanelDefinition>,
 }
@@ -157,6 +159,10 @@ impl Setup {
                 .and_then(Value::as_str)
                 .is_some_and(|id| self.panels.contains_key(id)),
             "model_parameters.aoi_panel references unknown panel"
+        );
+        anyhow::ensure!(
+            !self.split_reels || self.shared_material,
+            "split reels require the shared material ledger"
         );
         let mut serials = BTreeSet::new();
         for (panel, spec) in &self.panels {
@@ -336,7 +342,11 @@ pub(crate) fn genealogy(
         action,
         &load(tx, run, setup)?.material_reports,
         args,
-        false,
+        if setup.split_reels {
+            crate::genealogy::Detail::MaterialSplits
+        } else {
+            crate::genealogy::Detail::Standard
+        },
     )
 }
 
@@ -469,7 +479,30 @@ pub fn invoke(
             }
         }
     }
-    let mut response = apply(&mut state, setup, action, args, events);
+    let mut reel_parents = BTreeMap::new();
+    if setup.split_reels {
+        let mut query = tx.prepare("SELECT lot,parent_lot FROM stock_available_lots WHERE run=?1 AND posted_cursor IS NOT NULL AND unit='each'")?;
+        reel_parents = query
+            .query_map([run], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        if action == Action::SmtLoad {
+            let reel = args["reel"].as_str().unwrap();
+            if !reel_parents.contains_key(reel) {
+                return Ok((failure("REEL_NOT_FOUND"), false));
+            }
+            let held: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM stock_effective_lot_holds WHERE run=?1 AND batch=?2)",
+                params![run, reel],
+                |row| row.get(0),
+            )?;
+            if held {
+                return Ok((failure("MATERIAL_HELD"), false));
+            }
+        }
+    }
+    let mut response = apply(&mut state, setup, action, args, events, &reel_parents);
     if response["ok"] != true {
         return Ok((response, false));
     }
@@ -540,9 +573,18 @@ fn apply(
     action: Action,
     args: &Map<String, Value>,
     events: &[Event],
+    reel_parents: &BTreeMap<String, Option<String>>,
 ) -> Value {
     let string = |field: &str| args[field].as_str().unwrap();
-    let recalled = |reel: &str| events.iter().any(|event| recall(event) == Some(reel));
+    let affected_reel = |reel: &str, recalled: &str| {
+        reel == recalled || reel_parents.get(reel).and_then(Option::as_deref) == Some(recalled)
+    };
+    let recalled = |reel: &str| {
+        events
+            .iter()
+            .filter_map(recall)
+            .any(|root| affected_reel(reel, root))
+    };
     match action {
         Action::SmtRelease | Action::ReleaseWorkOrder => {
             let order = string("work_order");
@@ -559,7 +601,7 @@ fn apply(
             if !matches!(slot, "F1" | "F2") {
                 return failure("SLOT_NOT_FOUND");
             }
-            if !setup.reels.contains_key(reel) {
+            if !setup.split_reels && !setup.reels.contains_key(reel) {
                 return failure("REEL_NOT_FOUND");
             }
             if recalled(reel) {
@@ -664,7 +706,7 @@ fn apply(
             }
             let mut affected = Vec::new();
             for (serial, board) in &mut state.boards {
-                if current_reel(board, &state.panels[&board.panel]) == reel
+                if affected_reel(current_reel(board, &state.panels[&board.panel]), reel)
                     && board.quality != Quality::Scrapped
                 {
                     board.quality = Quality::Held;
@@ -678,7 +720,7 @@ fn apply(
             let panels: Vec<_> = state
                 .panels
                 .iter()
-                .filter(|(_, panel)| panel.reel == reel)
+                .filter(|(_, panel)| affected_reel(&panel.reel, reel))
                 .map(|(id, _)| id)
                 .collect();
             return json!({"ok":true,"affected":affected,"affected_panels":panels,"reel":reel,"event_cursor":cursor});

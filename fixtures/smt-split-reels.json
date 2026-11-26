@@ -1,0 +1,100 @@
+{
+  "scenario_id": "smt",
+  "version": 5,
+  "title": "电子装联 SMT · 拆卷与飞达实投",
+  "model": "smt_line",
+  "model_parameters": {
+    "recall_reel": "REEL-R",
+    "recall_mean_minutes": 25,
+    "aoi_panel": "P-B",
+    "aoi_mean_minutes": 28
+  },
+  "work_orders": [
+    "WO-A",
+    "WO-B"
+  ],
+  "materials": {},
+  "capabilities": [
+    "get_work_order",
+    "smt_load",
+    "smt_place",
+    "smt_aoi",
+    "smt_split",
+    "smt_finish",
+    "smt_status",
+    "smt_trace",
+    "smt_isolate",
+    "smt_retest",
+    "smt_scrap",
+    "get_release_readiness",
+    "release_work_order",
+    "get_order_snapshot",
+    "create_item",
+    "create_item_revision",
+    "activate_revision",
+    "create_bom_revision",
+    "set_bom_components",
+    "create_route_revision",
+    "set_route_operations",
+    "create_inspection_plan_revision",
+    "activate_inspection_plan_revision",
+    "create_receipt",
+    "assign_receipt_tracking",
+    "post_receipt",
+    "get_stock_balance",
+    "get_material_requirements",
+    "reserve_material",
+    "list_reservations",
+    "pick_material",
+    "issue_material_to_operation",
+    "list_inventory_movements",
+    "create_inspection",
+    "record_measurement",
+    "complete_inspection",
+    "open_nonconformance",
+    "place_quality_hold",
+    "disposition_nonconformance",
+    "release_quality_hold",
+    "trace_lot_forward",
+    "trace_serial_backward",
+    "list_genealogy_edges",
+    "get_lot",
+    "hold_stock_lot",
+    "release_stock_lot_hold",
+    "create_stock_transfer",
+    "post_stock_transfer",
+    "reverse_inventory_movement"
+  ],
+  "smt": {
+    "reels": {
+      "REEL-R": 12,
+      "REEL-C": 20
+    },
+    "panels": {
+      "P-A": {
+        "order": "WO-A",
+        "serials": [
+          "A-01",
+          "A-02"
+        ]
+      },
+      "P-B": {
+        "order": "WO-B",
+        "serials": [
+          "B-01",
+          "B-02"
+        ]
+      },
+      "P-C": {
+        "order": "WO-B",
+        "serials": [
+          "C-01",
+          "C-02"
+        ]
+      }
+    },
+    "shared_material": true,
+    "split_reels": true
+  },
+  "partial_lot_transfers": true
+}

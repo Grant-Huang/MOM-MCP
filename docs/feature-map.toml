@@ -1145,3 +1145,19 @@ spec = "acceptance/P10.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P10-07 Trace CNC operations through closeout" }
+
+[[case]]
+id = "P11-01"
+phase = "P11"
+spec = "acceptance/P11.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p11_01_smt_split_reel_placement" }
+
+[[case]]
+id = "P11-UI"
+phase = "P11"
+spec = "acceptance/P11.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P11-UI Split a reel and trace SMT placement" }

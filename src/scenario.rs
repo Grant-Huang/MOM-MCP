@@ -212,11 +212,14 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                         .contains(&Action::IssueMaterialToOperation)
                     && !definition.capabilities.iter().any(|action| matches!(
                         action,
-                        Action::SmtRelease
-                            | Action::SmtRework
-                            | Action::ReturnUnusedMaterial
-                            | Action::ReverseInventoryMovement
-                    ))),
+                        Action::SmtRelease | Action::SmtRework | Action::ReturnUnusedMaterial
+                    ))
+                    && (!definition
+                        .capabilities
+                        .contains(&Action::ReverseInventoryMovement)
+                        || (definition.partial_lot_transfers
+                            && !definition.receipt_reversals
+                            && !definition.operation_material_reversals))),
             "shared SMT inventory requires frozen order release and placement-only consumption"
         );
         setup.validate(
@@ -905,6 +908,7 @@ impl Scenarios {
             include_str!("../fixtures/smt-production.json"),
             include_str!("../fixtures/smt-shared-ledger.json"),
             include_str!("../fixtures/smt-lot-holds.json"),
+            include_str!("../fixtures/smt-split-reels.json"),
             include_str!("../fixtures/assembly.json"),
             include_str!("../fixtures/assembly-production.json"),
             include_str!("../fixtures/assembly-public-orders.json"),

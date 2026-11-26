@@ -7185,6 +7185,11 @@ async fn p9d_32_smt_lot_hold_recovery() {
     capture_p9d_evidence("p9d-smt-lot-holds.json", smt_shared_material(4)).await;
 }
 
+#[tokio::test]
+async fn p11_01_smt_split_reel_placement() {
+    smt_shared_material(5).await;
+}
+
 async fn smt_shared_material(version: u64) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("smt-ledger.sqlite3");
@@ -7235,14 +7240,21 @@ async fn smt_shared_material(version: u64) {
         apply("create_receipt","reel-receipt",json!({"receipt_id":"RC-1","item_id":"COMPONENT","revision":1,"quantity":"3","requires_inspection":false})).await;
         apply("assign_receipt_tracking","reel-tracking",json!({"receipt_id":"RC-1","lot_id":"REEL-C","supplier_lot":"SUP-C","location":"RAW-01"})).await;
         apply("post_receipt","reel-post",json!({"receipt_id":"RC-1"})).await;
-        let mut reservation=json!({"reservation_id":"RS-1","work_order":"WO-A","lot_id":"REEL-C","quantity":"3"});
+        let reel = if version == 5 {
+            apply("create_stock_transfer","split-reel",json!({"transfer_id":"TR-SMT","lot_id":"REEL-C","child_lot_id":"REEL-C-SPLIT","quantity":"2","source_location":"RAW-01","destination_location":"RAW-02","reason":"split for feeder"})).await;
+            apply("post_stock_transfer","post-reel-split",json!({"transfer_id":"TR-SMT"})).await;
+            assert_eq!(invoke("get_lot",json!({"lot_id":"REEL-C-SPLIT"})).await["lot"]["parent_lot_id"],"REEL-C");
+            assert_eq!(write("smt_load","unknown-lot",json!({"slot":"F1","reel":"MISSING"})).await["code"],"REEL_NOT_FOUND");
+            "REEL-C-SPLIT"
+        } else {"REEL-C"};
+        let mut reservation=json!({"reservation_id":"RS-1","work_order":"WO-A","lot_id":reel,"quantity":"3"});
         assert_eq!(write("reserve_material","excess-demand",reservation.clone()).await["code"],"ORDER_REQUIREMENT_EXCEEDED");
         reservation["quantity"]=json!("2");
         apply("reserve_material","reserve",reservation).await;
         apply("pick_material","pick",json!({"reservation_id":"RS-1"})).await;
         let issue=json!({"reservation_id":"RS-1","operation":"placement"});
         let placement=json!({"panel":"P-A","slot":"F1","reservation_id":"RS-1"});
-        apply("smt_load","load-other",json!({"slot":"F1","reel":"REEL-R"})).await;
+        apply("smt_load","load-other",json!({"slot":"F1","reel":if version == 5 {"REEL-C"} else {"REEL-R"}})).await;
         assert_eq!(write("smt_place","unissued",placement.clone()).await["code"],"MATERIAL_ISSUE_NOT_FOUND");
         apply("create_inspection","inspect",json!({"work_order":"WO-A","inspection_id":"INS-1","specification_version":"QA@1"})).await;
         apply("record_measurement","measure",json!({"inspection_id":"INS-1","characteristic":"width","value":3,"unit":"mm","lower_limit":1,"upper_limit":2})).await;
@@ -7261,8 +7273,8 @@ async fn smt_shared_material(version: u64) {
         let issued=apply("issue_material_to_operation","issue",issue).await;
         assert_eq!(issued["reservation"]["work_center"],"SMT-1");
         assert_eq!(write("smt_place","wrong-reel",placement.clone()).await["code"],"FEEDER_LOT_MISMATCH");
-        apply("smt_load","load-reel",json!({"slot":"F1","reel":"REEL-C"})).await;
-        if version == 4 {
+        apply("smt_load","load-reel",json!({"slot":"F1","reel":reel})).await;
+        if version >= 4 {
             apply("hold_stock_lot","hold-before-place",json!({"lot_id":"REEL-C","hold_id":"H-PRE","reason":"supplier review"})).await;
             let before=cursor().await;
             assert_eq!(write("smt_place","blocked-place",placement.clone()).await["code"],"MATERIAL_HELD");
@@ -7312,11 +7324,19 @@ async fn smt_shared_material(version: u64) {
         assert_eq!(split["serial_numbers"],json!(["A-01","A-02"]));
         assert_eq!(invoke("get_stock_balance",json!({"item_id":"COMPONENT","location":"RAW-01"})).await["balance"]["on_hand"],"1");
         let forward=invoke("trace_lot_forward",json!({"lot_id":"REEL-C"})).await;
-        assert_eq!(forward["edges"].as_array().unwrap().len(),3);
-        assert_eq!(forward["edges"][0]["reservation_id"],"RS-1");
+        assert_eq!(forward["edges"].as_array().unwrap().len(),if version == 5 {4} else {3});
+        assert!(forward["edges"].as_array().unwrap().iter().any(|edge| edge["reservation_id"]=="RS-1"));
+        if version == 5 {
+            assert!(forward["edges"].as_array().unwrap().iter().any(|edge| edge["kind"]=="material_split"
+                && edge["source"]["id"]=="REEL-C" && edge["target"]["id"]==reel));
+            assert_eq!(write("reverse_inventory_movement","reverse-used-reel",json!({"movement_type":"transfer","movement_id":"TR-SMT","reversal_id":"REV-SMT","reason":"incorrect split"})).await["code"],"TRANSFER_HAS_DEPENDENCIES");
+        }
         let (peer,_child)=connect_mode(&db,"0",true).await;
         let backward=business(&peer,run,"trace_serial_backward",json!({"serial_number":"A-01"})).await;
-        assert_eq!(backward["edges"][0]["source"]["id"],"REEL-C");
+        assert_eq!(backward["edges"][0]["source"]["id"],reel);
+        if version == 5 {
+            assert!(backward["edges"].as_array().unwrap().iter().any(|edge| edge["kind"]=="material_split" && edge["source"]["id"]=="REEL-C"));
+        }
         assert_eq!(backward["edges"][0]["quantity"],"2");
         let cnc=call(&client,"open_scenario",json!({"scenario_id":"cnc","version":42})).await;
         for name in ["reserve_material","issue_material_to_operation","trace_lot_forward","trace_serial_backward"] {
