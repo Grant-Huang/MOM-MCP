@@ -1028,6 +1028,7 @@ pub(crate) fn consolidate(
         components: Default::default(),
         material_inputs: Vec::new(),
         material_input_serials: Default::default(),
+        rework: false,
         wip_move: None,
         wip_movement_reversals: Vec::new(),
         wip_partitions: Vec::new(),

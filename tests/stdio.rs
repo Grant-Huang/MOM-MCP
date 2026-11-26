@@ -7205,10 +7205,15 @@ async fn p11_06_smt_recall_impact_across_orders() {
     smt_shared_material(8).await;
 }
 
+#[tokio::test]
+async fn p11_08_smt_rework_issued_replacement() {
+    smt_shared_material(9).await;
+}
+
 async fn smt_shared_material(version: u64) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("smt-ledger.sqlite3");
-    let (client, _child) = connect_options(&db, "0", true, version == 8).await;
+    let (client, _child) = connect_options(&db, "0", true, version >= 8).await;
     timeout(WAIT, async {
         let opened = call(&client,"open_scenario",json!({"scenario_id":"smt","version":version})).await;
         assert_eq!(opened["ok"],true,"{opened}");
@@ -7255,7 +7260,7 @@ async fn smt_shared_material(version: u64) {
         apply("create_receipt","reel-receipt",json!({"receipt_id":"RC-1","item_id":"COMPONENT","revision":1,"quantity":"3","requires_inspection":false})).await;
         apply("assign_receipt_tracking","reel-tracking",json!({"receipt_id":"RC-1","lot_id":"REEL-C","supplier_lot":"SUP-C","location":"RAW-01"})).await;
         apply("post_receipt","reel-post",json!({"receipt_id":"RC-1"})).await;
-        if matches!(version,6..=8) {
+        if matches!(version,6..=9) {
             Box::pin(smt_spliced_panel(&client,run,version)).await;
             return;
         }
@@ -7488,8 +7493,8 @@ async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value,
         );
     }
     apply("smt_split", "split-splice", split).await;
-    if version == 8 {
-        Box::pin(smt_cross_order_recall(client, run)).await;
+    if version >= 8 {
+        Box::pin(smt_cross_order_recall(client, run, version == 9)).await;
         return;
     }
     for (serial, other, lot, load) in [
@@ -7575,14 +7580,18 @@ async fn smt_spliced_panel(client: &RunningService<RoleClient, ()>, run: &Value,
     );
 }
 
-async fn smt_cross_order_recall(client: &RunningService<RoleClient, ()>, run: &Value) {
+async fn smt_cross_order_recall(
+    client: &RunningService<RoleClient, ()>,
+    run: &Value,
+    rework: bool,
+) {
     let invoke = async |name: &str, args| business(client, run, name, args).await;
     let cursor = async || call(client, "get_run", json!({"run_id":run})).await["cursor"].clone();
     let write = async |name: &str, key: &str, mut args: Value| {
         args["idempotency_key"] = json!(key);
         if !matches!(
             name,
-            "smt_load" | "smt_aoi" | "smt_split" | "smt_finish" | "smt_isolate"
+            "smt_load" | "smt_aoi" | "smt_split" | "smt_finish" | "smt_isolate" | "smt_retest"
         ) {
             args["expected_cursor"] = cursor().await;
         }
@@ -7691,4 +7700,100 @@ async fn smt_cross_order_recall(client: &RunningService<RoleClient, ()>, run: &V
                 && edge["source"]["id"] == "REEL-C"
                 && edge["target"]["id"] == "REEL-C-B")
     );
+    if rework {
+        let args = json!({"serial":"A-01","replacement_reel":"REEL-F","reservation_id":"RS-F","reason":"supplier recall"});
+        let before = cursor().await;
+        assert_eq!(
+            write("smt_rework", "unissued-replacement", args.clone()).await["code"],
+            "MATERIAL_ISSUE_NOT_FOUND"
+        );
+        assert_eq!(cursor().await, before);
+        apply("create_receipt","rework-receipt",json!({"receipt_id":"RC-F","item_id":"COMPONENT","revision":1,"quantity":"2","requires_inspection":false})).await;
+        apply("assign_receipt_tracking","rework-track",json!({"receipt_id":"RC-F","lot_id":"REEL-F","supplier_lot":"SUP-F","location":"RAW-02"})).await;
+        apply("post_receipt", "rework-post", json!({"receipt_id":"RC-F"})).await;
+        let mut reserve =
+            json!({"reservation_id":"RS-F","work_order":"WO-A","lot_id":"REEL-F","quantity":"2"});
+        assert_eq!(
+            write("reserve_material", "too-many-replacements", reserve.clone()).await["code"],
+            "ORDER_REQUIREMENT_EXCEEDED"
+        );
+        reserve["quantity"] = json!("1");
+        apply("reserve_material", "reserve-replacement", reserve).await;
+        apply(
+            "pick_material",
+            "pick-replacement",
+            json!({"reservation_id":"RS-F"}),
+        )
+        .await;
+        apply(
+            "issue_material_to_operation",
+            "issue-replacement",
+            json!({"reservation_id":"RS-F","operation":"placement"}),
+        )
+        .await;
+        let mut request = args;
+        request["expected_cursor"] = cursor().await;
+        request["idempotency_key"] = json!("rework-A");
+        let replaced = invoke("smt_rework", request.clone()).await;
+        assert_eq!(replaced["quality"], "awaiting_retest", "{replaced}");
+        assert_eq!(invoke("smt_rework", request).await, replaced);
+        assert_eq!(
+            write("smt_finish", "before-retest", json!({"serial":"A-01"})).await["code"],
+            "RETEST_REQUIRED"
+        );
+        apply(
+            "hold_stock_lot",
+            "hold-replacement",
+            json!({"hold_id":"H-F","lot_id":"REEL-F","reason":"incoming review"}),
+        )
+        .await;
+        assert_eq!(
+            write(
+                "smt_retest",
+                "held-retest",
+                json!({"serial":"A-01","result":"pass"})
+            )
+            .await["code"],
+            "MATERIAL_HELD"
+        );
+        apply(
+            "release_stock_lot_hold",
+            "release-replacement",
+            json!({"hold_id":"H-F","reason":"review cleared"}),
+        )
+        .await;
+        apply(
+            "smt_retest",
+            "retest-A",
+            json!({"serial":"A-01","result":"pass"}),
+        )
+        .await;
+        assert_eq!(
+            apply("smt_finish", "finish-reworked", json!({"serial":"A-01"})).await["finished"],
+            true
+        );
+        let trace = invoke("trace_serial_backward", json!({"serial_number":"A-01"})).await;
+        let inputs: Vec<_> = trace["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|edge| edge["kind"] == "material_input")
+            .collect();
+        assert_eq!(inputs.len(), 2);
+        assert!(
+            inputs
+                .iter()
+                .any(|edge| edge["source"]["id"] == "REEL-C" && edge["quantity"] == "1")
+        );
+        assert!(inputs.iter().any(|edge| edge["source"]["id"] == "REEL-F"
+            && edge["quantity"] == "1"
+            && edge["operation"] == "rework"
+            && edge["target"]["id"] == replaced["report_id"]));
+        let stock = invoke(
+            "get_stock_balance",
+            json!({"item_id":"COMPONENT","location":"RAW-02"}),
+        )
+        .await;
+        assert_eq!(stock["balance"]["on_hand"], "1");
+    }
 }

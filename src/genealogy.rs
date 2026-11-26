@@ -333,7 +333,7 @@ pub(crate) fn read<'a>(
                 ),
                 unit: Some(&input.unit),
                 reservation_id: Some(&input.reservation_id),
-                operation: None,
+                operation: report.rework.then_some("rework"),
                 work_center: None,
                 process_record: None,
             });

@@ -203,6 +203,8 @@ pub struct Setup {
     pub(crate) aoi_review: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) recall_impact: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) shared_rework: bool,
     reels: BTreeMap<String, usize>,
     panels: BTreeMap<String, PanelDefinition>,
 }
@@ -246,6 +248,10 @@ impl Setup {
         anyhow::ensure!(
             !self.spliced_placement || self.split_reels,
             "spliced placement requires split reel support"
+        );
+        anyhow::ensure!(
+            !self.shared_rework || self.shared_material && self.recall_impact,
+            "shared rework requires shared material and recall impact"
         );
         let mut serials = BTreeSet::new();
         for (panel, spec) in &self.panels {
@@ -486,6 +492,24 @@ pub(crate) fn planned_units(setup: &Setup, order: &str) -> i64 {
         .sum()
 }
 
+pub(crate) fn rework_units(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    order: &str,
+) -> anyhow::Result<i64> {
+    if !setup.shared_rework {
+        return Ok(0);
+    }
+    let state = load(tx, run, setup)?;
+    Ok(state
+        .boards
+        .values()
+        .filter(|board| setup.panels[&board.panel].order == order)
+        .map(|board| board.replacements.len() as i64 + i64::from(board.quality == Quality::Held))
+        .sum())
+}
+
 pub(crate) fn can_issue(
     tx: &Transaction<'_>,
     run: &str,
@@ -493,11 +517,15 @@ pub(crate) fn can_issue(
     order: &str,
 ) -> anyhow::Result<bool> {
     let state = load(tx, run, setup)?;
-    Ok(state.released.contains(order)
-        && setup
-            .panels
-            .iter()
-            .any(|(id, panel)| panel.order == order && !state.panels.contains_key(id)))
+    let placement_pending = setup
+        .panels
+        .iter()
+        .any(|(id, panel)| panel.order == order && !state.panels.contains_key(id));
+    let rework_pending = setup.shared_rework
+        && state.boards.values().any(|board| {
+            setup.panels[&board.panel].order == order && board.quality == Quality::Held
+        });
+    Ok(state.released.contains(order) && (placement_pending || rework_pending))
 }
 
 pub(crate) fn genealogy(
@@ -554,6 +582,32 @@ pub(crate) fn placement_spec(mut spec: Spec, spliced: bool) -> Spec {
         "FEEDER_LOT_MISMATCH",
         "SPLICE_SEQUENCE_INVALID",
         "MATERIAL_UNIT_MISMATCH",
+    ];
+    spec
+}
+
+pub(crate) fn shared_rework_spec(mut spec: Spec) -> Spec {
+    spec.input["properties"]["reservation_id"] = crate::inventory::id_schema();
+    spec.input["properties"]["expected_cursor"] =
+        json!({"type":"integer","minimum":0,"maximum":i64::MAX});
+    spec.input["required"]
+        .as_array_mut()
+        .unwrap()
+        .extend([json!("reservation_id"), json!("expected_cursor")]);
+    spec.errors = &[
+        "INVALID_ARGUMENT",
+        "INVALID_STATE",
+        "BOARD_NOT_FOUND",
+        "BOARD_SCRAPPED",
+        "MATERIAL_HELD",
+        "QUALITY_HOLD",
+        "QUALITY_SCRAPPED",
+        "MATERIAL_ISSUE_NOT_FOUND",
+        "MATERIAL_ISSUE_QUANTITY_EXCEEDED",
+        "REEL_RECALLED",
+        "REWORK_MATERIAL_MISMATCH",
+        "VERSION_CONFLICT",
+        "IDEMPOTENCY_CONFLICT",
     ];
     spec
 }
@@ -651,6 +705,7 @@ pub fn invoke(
         action,
         Action::ReleaseWorkOrder | Action::SmtSpliceReel | Action::SmtReviewAoi
     ) || (setup.shared_material && action == Action::SmtPlace)
+        || (setup.shared_rework && action == Action::SmtRework)
     {
         if args["expected_cursor"].as_i64() != Some(cursor) {
             return Ok((failure("VERSION_CONFLICT"), false));
@@ -661,7 +716,7 @@ pub fn invoke(
             Action::SmtPlace | Action::SmtAoi | Action::SmtReviewAoi | Action::SmtSplit => {
                 args.get("panel").and_then(Value::as_str)
             }
-            Action::SmtFinish => args
+            Action::SmtFinish | Action::SmtRework | Action::SmtRetest => args
                 .get("serial")
                 .and_then(Value::as_str)
                 .and_then(|serial| state.boards.get(serial))
@@ -672,15 +727,15 @@ pub fn invoke(
             if let Some(code) = crate::quality::blocking(tx, run, &panel.order)? {
                 return Ok((failure(&code), false));
             }
-            if action != Action::SmtPlace {
-                let held = if action == Action::SmtFinish
-                    && let Some(serial) = args["serial"].as_str()
-                    && let Some(source) = affected
-                        .and_then(|id| state.panels.get(id))
-                        .and_then(|panel| panel.placement_sources.get(serial))
+            if !matches!(action, Action::SmtPlace | Action::SmtRework) {
+                let held = if matches!(action, Action::SmtFinish | Action::SmtRetest)
+                    && let Some(serial) = args.get("serial").and_then(Value::as_str)
+                    && let Some(board) = state.boards.get(serial)
+                    && let Some(panel) = state.panels.get(&board.panel)
+                    && (setup.shared_rework || panel.placement_sources.contains_key(serial))
                 {
                     tx.query_row("SELECT EXISTS(SELECT 1 FROM stock_effective_lot_holds WHERE run=?1 AND batch=?2)",
-                        params![run,source.reel], |row| row.get(0))?
+                        params![run,current_reel(board,panel,serial)], |row| row.get(0))?
                 } else if let Some(report) = state.material_reports.iter().find(|report| {
                     report.order == panel.order
                         && report.serial_numbers == panel.serials
@@ -735,9 +790,84 @@ pub fn invoke(
             return Ok((failure("SPLICE_MATERIAL_MISMATCH"), false));
         }
     }
+    let replacement = if setup.shared_rework && action == Action::SmtRework {
+        let serial = args["serial"].as_str().unwrap();
+        let reel = args["replacement_reel"].as_str().unwrap();
+        let reason = args["reason"].as_str().unwrap();
+        let Some(board) = state.boards.get(serial) else {
+            return Ok((failure("BOARD_NOT_FOUND"), false));
+        };
+        if board.quality != Quality::Held {
+            let code = if board.quality == Quality::Scrapped {
+                "BOARD_SCRAPPED"
+            } else {
+                "INVALID_STATE"
+            };
+            return Ok((failure(code), false));
+        }
+        if reason.trim().is_empty() {
+            return Ok((failure("INVALID_ARGUMENT"), false));
+        }
+        let panel = &state.panels[&board.panel];
+        let original = panel.reel_for(serial);
+        let order = &setup.panels[&board.panel].order;
+        let reservation = args["reservation_id"].as_str().unwrap();
+        let query = json!({"operation":PLACEMENT,"material_inputs":{(reservation):"1"}});
+        let inputs = match crate::mes::report_material_inputs(
+            tx,
+            run,
+            &state.material_reports,
+            order,
+            query.as_object().unwrap(),
+        )? {
+            Ok(inputs) => inputs,
+            Err(code) => return Ok((failure(code), false)),
+        };
+        let compatible: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM stock_lot_origins a JOIN stock_available_lots b
+             ON b.run=a.run AND b.item=a.item AND b.revision=a.revision AND b.unit=a.unit
+             WHERE a.run=?1 AND a.lot=?2 AND b.lot=?3)",
+            params![run, original, reel],
+            |row| row.get(0),
+        )?;
+        if inputs[0].lot_id != reel
+            || inputs[0].unit != "each"
+            || !compatible
+            || current_reel(board, panel, serial) == reel
+        {
+            return Ok((failure("REWORK_MATERIAL_MISMATCH"), false));
+        }
+        Some(crate::mes::Report {
+            id: format!("report-{}", cursor + 1),
+            order: order.clone(),
+            step: 0,
+            batch: Some(reel.into()),
+            quantity: 1,
+            reversed: false,
+            serial_numbers: vec![serial.into()],
+            components: BTreeMap::new(),
+            material_inputs: inputs,
+            material_input_serials: BTreeMap::from([(reservation.into(), vec![serial.into()])]),
+            rework: true,
+            wip_move: None,
+            wip_movement_reversals: Vec::new(),
+            wip_partitions: Vec::new(),
+            wip_inputs: Vec::new(),
+            wip_sources: Vec::new(),
+            consolidated_into: None,
+            coating: None,
+            tool_setup: None,
+        })
+    } else {
+        None
+    };
     let mut response = apply(&mut state, setup, action, args, events, &reel_parents);
     if response["ok"] != true {
         return Ok((response, false));
+    }
+    if let Some(report) = replacement {
+        response["report_id"] = json!(report.id);
+        state.material_reports.push(report);
     }
     if setup.shared_material && action == Action::SmtPlace {
         let panel = args["panel"].as_str().unwrap();
@@ -831,6 +961,7 @@ pub fn invoke(
             serial_numbers: definition.serials.clone(),
             components: BTreeMap::new(),
             material_inputs: inputs,
+            rework: false,
             material_input_serials: if setup.spliced_placement {
                 serials_by_reservation
             } else {
@@ -1137,13 +1268,15 @@ fn apply(
                     if recalled(replacement) {
                         return failure("REEL_RECALLED");
                     }
-                    let Some(available) = state.remaining.get_mut(replacement) else {
-                        return failure("REEL_NOT_FOUND");
-                    };
-                    if *available == 0 {
-                        return failure("MATERIAL_SHORTAGE");
+                    if !setup.shared_rework {
+                        let Some(available) = state.remaining.get_mut(replacement) else {
+                            return failure("REEL_NOT_FOUND");
+                        };
+                        if *available == 0 {
+                            return failure("MATERIAL_SHORTAGE");
+                        }
+                        *available -= 1;
                     }
-                    *available -= 1;
                     board.replacements.push(replacement.into());
                     board.quality = Quality::AwaitingRetest;
                     board.history.push(
