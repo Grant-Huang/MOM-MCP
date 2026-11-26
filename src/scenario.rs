@@ -930,6 +930,7 @@ impl Scenarios {
             include_str!("../fixtures/assembly-configuration-bom.json"),
             include_str!("../fixtures/assembly-qualified-substitute.json"),
             include_str!("../fixtures/assembly-as-built.json"),
+            include_str!("../fixtures/assembly-versioned-test.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),

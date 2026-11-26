@@ -7926,9 +7926,20 @@ async fn p12_06_assembly_as_built_correction() {
     assembly_configuration_bom(32, false).await;
 }
 
+#[tokio::test]
+async fn p12_08_assembly_versioned_retest() {
+    assembly_configuration_bom(33, false).await;
+}
+
 async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
     let dir = tempfile::tempdir().unwrap();
-    let (client, _child) = connect_mode(&dir.path().join("configuration.sqlite3"), "0", true).await;
+    let (client, _child) = connect_options(
+        &dir.path().join("configuration.sqlite3"),
+        "0",
+        true,
+        version == 33,
+    )
+    .await;
     let opened = call(
         &client,
         "open_scenario",
@@ -7940,7 +7951,9 @@ async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
     let invoke = async |name: &str, args| business(&client, run, name, args).await;
     let write = async |name: &str, mut args: Value| {
         let cursor = call(&client, "get_run", json!({"run_id":run})).await["cursor"].clone();
-        args["expected_cursor"] = cursor.clone();
+        if !name.starts_with("assembly_") {
+            args["expected_cursor"] = cursor.clone();
+        }
         args["idempotency_key"] = json!(format!("{name}-{cursor}"));
         invoke(name, args).await
     };
@@ -8197,6 +8210,54 @@ async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
             assert_eq!(list("CELL-A").await[0]["blocking"], "RESOURCE_BUSY");
         }
         apply("complete_operation", scope).await;
+        if version == 33 {
+            let order = json!({"work_order":"WO-E"});
+            apply("create_inspection_plan_revision",json!({"plan_id":"QA","revision":2,"characteristics":{"width":{"unit":"mm","lower_limit":1,"upper_limit":3}}})).await;
+            apply(
+                "activate_inspection_plan_revision",
+                json!({"plan_id":"QA","revision":2}),
+            )
+            .await;
+            let start = apply("assembly_start_test", order.clone()).await;
+            let first = &start["state"]["tests"][0];
+            assert_eq!(first["basis"]["specification_version"], "QA@1");
+            assert_eq!(
+                first["basis"]["snapshot_fingerprint"],
+                early["definition_snapshot"]["fingerprint"]
+            );
+            assert_eq!(first["basis"]["build_report_id"], report["report"]["id"]);
+            assert_eq!(
+                write("assembly_finish_test", order.clone()).await["code"],
+                "TEST_NOT_READY"
+            );
+            advance(&client, run, 2).await;
+            let failed = apply("assembly_finish_test", order.clone()).await;
+            assert_eq!(failed["state"]["tests"][0]["result"], "fail");
+            assert_eq!(
+                write("assembly_deliver", order.clone()).await["code"],
+                "TEST_PASS_REQUIRED"
+            );
+            apply(
+                "assembly_repair",
+                json!({"work_order":"WO-E","reason":"adjust fixture alignment"}),
+            )
+            .await;
+            let retry = apply("assembly_start_test", order.clone()).await;
+            let second = &retry["state"]["tests"][1];
+            assert_eq!(second["basis"]["specification_version"], "QA@1");
+            assert_eq!(second["basis"]["build_report_id"], report["report"]["id"]);
+            assert_eq!(
+                second["basis"]["repair"],
+                json!({"failed_test_ticket":first["ticket"],"reason":"adjust fixture alignment"})
+            );
+            advance(&client, run, 1).await;
+            let passed = apply("assembly_finish_test", order.clone()).await;
+            assert_eq!(passed["state"]["tests"][1]["result"], "pass");
+            apply("assembly_deliver", order).await;
+            let trace = invoke("assembly_trace", json!({"subject":"UNIT-E-01"})).await;
+            assert_eq!(trace["links"][0]["tests"], passed["state"]["tests"]);
+            assert_eq!(trace["links"][0]["delivery"]["serial"], "UNIT-E-01");
+        }
         if version == 32 {
             let first = manifest().await;
             assert_eq!(first["bom_revision"], 1);
