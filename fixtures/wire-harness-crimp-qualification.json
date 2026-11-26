@@ -1,0 +1,11 @@
+{
+  "scenario_id": "wire-harness",
+  "version": 3,
+  "title": "线束制造 · 端子与压接工装资格",
+  "model": "wire_harness",
+  "model_parameters": { "mean_minutes": 12.0 },
+  "work_orders": ["WO-HARNESS"],
+  "materials": {},
+  "capabilities": ["cut_harness_batch", "get_harness_cut_batch", "check_harness_crimp_qualification"],
+  "fabrication": "wire_harness_batches"
+}

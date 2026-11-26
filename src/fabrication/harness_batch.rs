@@ -17,6 +17,12 @@ pub(super) const TOOLS: &[(Action, &str, &str, &str)] = &[
         "查询裁线批次及序列号投入",
         "production",
     ),
+    (
+        Action::CheckHarnessCrimpQualification,
+        "check_harness_crimp_qualification",
+        "检查线束端点的端子批次与压接工装资格",
+        "quality",
+    ),
 ];
 
 const SEGMENTS: [(&str, u64); 2] = [("POWER", 400), ("SIGNAL", 250)];
@@ -25,6 +31,9 @@ const SERIALS: [&str; 3] = ["WIRE-01", "WIRE-02", "WIRE-03"];
 
 pub(super) fn spec(action: Action) -> Spec {
     let &(_, name, description, domain) = TOOLS.iter().find(|tool| tool.0 == action).unwrap();
+    if action == Action::CheckHarnessCrimpQualification {
+        return qualification_spec(name, description, domain);
+    }
     let read = action == Action::GetHarnessCutBatch;
     let length = json!({"type":"integer","minimum":0});
     let input = if read {
@@ -92,6 +101,48 @@ pub(super) fn spec(action: Action) -> Spec {
     }
 }
 
+fn qualification_spec(name: &'static str, description: &'static str, domain: &'static str) -> Spec {
+    let end = json!({"type":"string","enum":["A","B"]});
+    Spec {
+        name,
+        description,
+        domain,
+        effect: "read",
+        input: object(
+            &[
+                "serial_number",
+                "segment_id",
+                "end",
+                "terminal_lot",
+                "tooling_id",
+            ],
+            json!({"serial_number":text(),"segment_id":text(),"end":end,"terminal_lot":text(),"tooling_id":text()}),
+        ),
+        output: object(
+            &["ok", "qualified", "qualification"],
+            json!({
+                "ok":{"const":true},"qualified":{"const":true},"qualification":object(
+                    &["serial_number","segment_id","end","cut_batch_id","terminal_lot","tooling_id",
+                        "terminal_qualification","tooling_qualification","process_revision"],
+                    json!({"serial_number":text(),"segment_id":text(),"end":end,"cut_batch_id":text(),
+                        "terminal_lot":text(),"tooling_id":text(),"terminal_qualification":text(),
+                        "tooling_qualification":text(),"process_revision":text()}))
+            }),
+        ),
+        preconditions: &["run_open", "tool_enabled_in_scenario"],
+        side_effect: "none",
+        errors: &[
+            "SERIAL_NOT_FOUND",
+            "ENDPOINT_NOT_FOUND",
+            "SERIAL_NOT_CUT",
+            "TERMINAL_LOT_NOT_QUALIFIED",
+            "TOOLING_NOT_QUALIFIED",
+            "TOOLING_CALIBRATION_EXPIRED",
+        ],
+        visibility: "run",
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Segment {
     segment_id: String,
@@ -155,6 +206,14 @@ impl HarnessBatches {
         args: &Map<String, Value>,
         work_order: &str,
     ) -> Value {
+        if action == Action::CheckHarnessCrimpQualification {
+            return match self.crimp_qualification(args) {
+                Ok(qualification) => {
+                    json!({"ok":true,"qualified":true,"qualification":qualification})
+                }
+                Err(code) => error(code),
+            };
+        }
         let id = args["batch_id"].as_str().unwrap();
         if action == Action::GetHarnessCutBatch {
             return self.batches.get(id).map_or_else(
@@ -226,5 +285,40 @@ impl HarnessBatches {
         lot.remaining_mm = remaining_mm;
         self.batches.insert(id.into(), batch);
         result
+    }
+    fn crimp_qualification(&self, args: &Map<String, Value>) -> Result<Value, &'static str> {
+        let serial = args["serial_number"].as_str().unwrap();
+        let segment = args["segment_id"].as_str().unwrap();
+        let end = args["end"].as_str().unwrap();
+        let terminal = args["terminal_lot"].as_str().unwrap();
+        let tooling = args["tooling_id"].as_str().unwrap();
+        if !SERIALS.contains(&serial) {
+            return Err("SERIAL_NOT_FOUND");
+        }
+        if !SEGMENTS.iter().any(|(id, _)| *id == segment) {
+            return Err("ENDPOINT_NOT_FOUND");
+        }
+        let batch = self
+            .batches
+            .values()
+            .find(|batch| batch.segments.contains_key(serial))
+            .ok_or("SERIAL_NOT_CUT")?;
+        let terminal_qualification = match (segment, end, terminal) {
+            ("POWER", _, "TERM-PWR-1") => "TERM-PWR@1",
+            ("POWER", "B", "TERM-PWR-ALT") => "TERM-PWR-B-ALT@1",
+            ("SIGNAL", _, "TERM-SIG-1") => "TERM-SIG@1",
+            _ => return Err("TERMINAL_LOT_NOT_QUALIFIED"),
+        };
+        let tooling_qualification = match (segment, tooling) {
+            ("POWER", "TOOL-PWR-1") => "TOOL-PWR@1",
+            ("SIGNAL", "TOOL-SIG-1") => "TOOL-SIG@1",
+            ("POWER", "TOOL-PWR-EXPIRED") => return Err("TOOLING_CALIBRATION_EXPIRED"),
+            _ => return Err("TOOLING_NOT_QUALIFIED"),
+        };
+        Ok(
+            json!({"serial_number":serial,"segment_id":segment,"end":end,"cut_batch_id":batch.batch_id,
+            "terminal_lot":terminal,"tooling_id":tooling,"terminal_qualification":terminal_qualification,
+            "tooling_qualification":tooling_qualification,"process_revision":"HARNESS-CRIMP-1"}),
+        )
     }
 }

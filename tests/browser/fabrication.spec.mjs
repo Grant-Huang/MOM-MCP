@@ -194,3 +194,31 @@ test("P14-UI Cut wire batches and recover from short stock", async ({ page }) =>
   expect(batch.input_mm).toBe(batch.product_mm + batch.trim_mm);
   expect(Object.keys(batch.segments)).toEqual(["WIRE-01","WIRE-02"]);
 });
+
+test("P14-04 Check terminal and tooling qualification for a cut endpoint", async ({ page }) => {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption("wire-harness@3");
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  await button("搜索工具").click();
+  const invoke = async (name, args, evidence) => {
+    await page.getByLabel("匹配工具").selectOption(name);
+    await page.getByLabel("JSON 参数").fill(JSON.stringify(args));
+    await button("调用工具").click();
+    await expect(status).toContainText(evidence);
+    return JSON.parse(await status.textContent());
+  };
+  await invoke("cut_harness_batch", { batch_id: "CUT-Q", wire_lot: "WIRE-CU-1",
+    serial_numbers: ["WIRE-01"], idempotency_key: "cut" }, '"batch_id": "CUT-Q"');
+  const args = { serial_number: "WIRE-01", segment_id: "POWER", end: "B",
+    terminal_lot: "TERM-PWR-ALT", tooling_id: "TOOL-PWR-EXPIRED" };
+  const tool = "check_harness_crimp_qualification";
+  await invoke(tool, args, "TOOLING_CALIBRATION_EXPIRED");
+  const { qualification } = await invoke(tool, { ...args, tooling_id: "TOOL-PWR-1" }, '"qualified": true');
+  expect(qualification.cut_batch_id).toBe("CUT-Q");
+  expect(qualification.terminal_qualification).toBe("TERM-PWR-B-ALT@1");
+  expect(qualification.tooling_qualification).toBe("TOOL-PWR@1");
+});
