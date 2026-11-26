@@ -121,6 +121,8 @@ test("P13-04 Route a wide sheet to a compatible laser", async ({ page }) => {
 test("P13-06 Return and reuse a sheet remnant", ({ page }) => sheetRemnantFlow(page, 4));
 test("P13-08 Trace a reused sheet remnant in both directions", ({ page }) => sheetRemnantFlow(page, 5));
 
+test("P13-10 Validate sheet placement and remnant reuse", ({ page }) => sheetRemnantFlow(page, 6));
+
 async function sheetRemnantFlow(page, version) {
   await page.goto("/scenarios");
   const button = (name) => page.getByRole("button", { name, exact: true });
@@ -137,6 +139,10 @@ async function sheetRemnantFlow(page, version) {
     await expect(status).toContainText(evidence);
     return JSON.parse(await status.textContent());
   };
+  if (version === 6) {
+    await invoke("create_sheet_nest", { nest_id: "FIRST", stock: "SHEET-FULL",
+      work_orders: ["WO-SHEET-A", "WO-SHEET-C"], idempotency_key: "plan" }, "NEST_LAYOUT_UNAVAILABLE");
+  }
   await invoke("create_sheet_nest", { nest_id: "FIRST", stock: "SHEET-FULL",
     work_orders: ["WO-SHEET-A"], idempotency_key: "plan" }, '"status": "planned"');
   await invoke("cut_sheet_nest", { nest_id: "FIRST", machine: "LASER-B", idempotency_key: "cut" }, '"status": "cut"');
@@ -149,10 +155,15 @@ async function sheetRemnantFlow(page, version) {
   expect(nest.parent_stock).toBe("SHEET-FULL");
   expect(nest.lot).toBe("LOT-AL-1");
   expect(nest.input_mm2).toBe(900);
-  if (version === 5) {
+  if (version >= 5) {
     const forward = await invoke("trace_sheet_material", { subject_type: "stock", subject: "SHEET-FULL" }, '"subject_type": "stock"');
     expect(forward.cuts.map(cut => cut.nest_id)).toEqual(["FIRST", "SECOND"]);
     const backward = await invoke("trace_sheet_material", { subject_type: "work_order", subject: "WO-SHEET-B" }, '"subject_type": "work_order"');
+    if (version === 6) {
+      expect(forward.cuts[0].placements["WO-SHEET-A"]).toEqual({ x_mm: 0, y_mm: 0, length_mm: 30, width_mm: 20 });
+      expect(forward.cuts[0].remnant_dimensions).toEqual({ length_mm: 30, width_mm: 30 });
+      expect(forward.cuts[1].placements["WO-SHEET-B"]).toEqual({ x_mm: 0, y_mm: 0, length_mm: 30, width_mm: 20 });
+    }
     expect(backward.cuts).toEqual(forward.cuts);
   }
 }

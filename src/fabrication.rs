@@ -157,21 +157,26 @@ pub enum Setup {
     SheetNesting,
     SheetDimensionalNesting,
     SheetRemnantNesting,
+    SheetLayoutNesting,
     WireHarness,
 }
 
 impl Setup {
+    fn supports_remnants(self) -> bool {
+        matches!(self, Self::SheetRemnantNesting | Self::SheetLayoutNesting)
+    }
     pub fn valid(self, model: &str, action: Action) -> bool {
         self.model() == model
             && (!matches!(
                 action,
                 Action::ReturnSheetRemnant | Action::TraceSheetMaterial
-            ) || self == Self::SheetRemnantNesting)
+            ) || self.supports_remnants())
             && match self {
                 Self::SheetMetal => SHEET,
-                Self::SheetNesting | Self::SheetDimensionalNesting | Self::SheetRemnantNesting => {
-                    nesting::TOOLS
-                }
+                Self::SheetNesting
+                | Self::SheetDimensionalNesting
+                | Self::SheetRemnantNesting
+                | Self::SheetLayoutNesting => nesting::TOOLS,
                 Self::WireHarness => HARNESS,
             }
             .iter()
@@ -183,7 +188,8 @@ impl Setup {
             Self::SheetMetal
             | Self::SheetNesting
             | Self::SheetDimensionalNesting
-            | Self::SheetRemnantNesting => mom_model_fabrication::SHEET,
+            | Self::SheetRemnantNesting
+            | Self::SheetLayoutNesting => mom_model_fabrication::SHEET,
             Self::WireHarness => mom_model_fabrication::HARNESS,
         }
     }
@@ -606,9 +612,9 @@ pub fn invoke(
         None => match setup {
             Setup::SheetMetal => State::Sheet(Sheet::default()),
             Setup::SheetNesting => State::Nesting(nesting::Nesting::default()),
-            Setup::SheetDimensionalNesting | Setup::SheetRemnantNesting => {
-                State::Nesting(nesting::Nesting::dimensional())
-            }
+            Setup::SheetDimensionalNesting
+            | Setup::SheetRemnantNesting
+            | Setup::SheetLayoutNesting => State::Nesting(nesting::Nesting::dimensional()),
             Setup::WireHarness => State::Harness(Harness::default()),
         },
     };

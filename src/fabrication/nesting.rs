@@ -1,3 +1,5 @@
+mod layout;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
@@ -124,6 +126,8 @@ pub(super) fn spec(action: Action) -> Spec {
             "INSUFFICIENT_AREA",
             "STOCK_DIMENSIONS_INSUFFICIENT",
             "NEST_NOT_FOUND",
+            "NEST_LAYOUT_UNAVAILABLE",
+            "NEST_LAYOUT_INVALID",
             "NO_REUSABLE_REMNANT",
             "REMNANT_ALREADY_RETURNED",
             "STOCK_ID_EXISTS",
@@ -159,6 +163,9 @@ fn nest_schema() -> Value {
         json!({"nest_id":text(),"stock":text(),"lot":text(),"status":{"enum":["planned","cut","cancelled"]},
         "order_area_mm2":{"type":"object","additionalProperties":area},
         "input_mm2":area,"product_mm2":area,"scrap_mm2":area,"remnant_mm2":area,"machine":text(),"remnant_dimensions":dimensions,"returned_remnant":text(),"parent_stock":text(),
+        "placements":{"type":"object","additionalProperties":object(
+            &["x_mm","y_mm","length_mm","width_mm"],
+            json!({"x_mm":area,"y_mm":area,"length_mm":area,"width_mm":area}))},
         "dimensional_fit":object(&["stock_dimensions","size_grade","order_footprints","eligible_machines"], json!({
             "stock_dimensions":dimensions,"size_grade":{"enum":["standard","wide","strip"]},
             "order_footprints":{"type":"object","additionalProperties":dimensions},
@@ -268,6 +275,8 @@ struct Nest {
     returned_remnant: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     parent_stock: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placements: Option<BTreeMap<String, layout::Placement>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -501,23 +510,42 @@ impl Nesting {
         else {
             return error("INSUFFICIENT_AREA");
         };
+        let placements = if setup == Setup::SheetLayoutNesting {
+            let fit = dimensional_fit
+                .as_ref()
+                .expect("layout requires dimensional stock");
+            match layout::validated_plan(
+                &layout::RowLayout,
+                fit.stock_dimensions,
+                &fit.order_footprints,
+            ) {
+                Ok(plan) => Some(plan),
+                Err(code) => return error(code),
+            }
+        } else {
+            None
+        };
         // Preserve only a rectangular offcut outside the single row reserved for parts.
         let remnant_dimensions = dimensional_fit
             .as_ref()
-            .filter(|_| setup == Setup::SheetRemnantNesting)
+            .filter(|_| setup.supports_remnants())
             .and_then(|fit| {
                 let stock = fit.stock_dimensions;
-                let ordered_length = fit
-                    .order_footprints
-                    .values()
-                    .map(|part| part.length_mm)
-                    .sum::<u64>();
+                let ordered_length = placements.as_ref().map_or_else(
+                    || {
+                        fit.order_footprints
+                            .values()
+                            .map(|part| part.length_mm)
+                            .sum()
+                    },
+                    layout::occupied_length,
+                );
                 let length = stock.length_mm.saturating_sub(
                     ordered_length.max((product_mm2 + SCRAP_AREA).div_ceil(stock.width_mm)),
                 );
                 (length > 0).then(|| Dimensions::new(length, stock.width_mm))
             });
-        let remnant_mm2 = if setup == Setup::SheetRemnantNesting {
+        let remnant_mm2 = if setup.supports_remnants() {
             remnant_dimensions.map_or(0, |shape| shape.length_mm * shape.width_mm)
         } else {
             area_after_minimum_scrap
@@ -536,7 +564,8 @@ impl Nesting {
             dimensional_fit,
             remnant_dimensions,
             returned_remnant: None,
-            parent_stock: (setup == Setup::SheetRemnantNesting)
+            placements,
+            parent_stock: (setup.supports_remnants())
                 .then(|| stock.parent.clone())
                 .flatten(),
         };
