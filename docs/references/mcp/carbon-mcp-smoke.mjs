@@ -32,7 +32,13 @@ export async function checkCarbon({ url, token, visibleId, hiddenId, request = f
     if (!result.ok) {
       throw new Error(`Carbon ${method} returned HTTP ${result.status}`);
     }
-    if (notification) return;
+    if (result.headers.has("mcp-session-id")) {
+      throw new Error("Carbon returned an unsupported MCP session");
+    }
+    if (notification) {
+      if (result.status !== 202) throw new Error("Carbon did not accept the initialized notification");
+      return;
+    }
     if (!result.headers.get("content-type")?.includes("application/json")) {
       throw new Error("Carbon did not return the expected legacy JSON envelope");
     }
@@ -50,6 +56,10 @@ export async function checkCarbon({ url, token, visibleId, hiddenId, request = f
   });
   if (initialized.protocolVersion !== protocol) {
     throw new Error("Carbon did not negotiate the pinned legacy protocol");
+  }
+  const tools = initialized.capabilities?.tools;
+  if (!tools || typeof tools !== "object" || Array.isArray(tools)) {
+    throw new Error("Carbon did not advertise MCP tools");
   }
   headers["MCP-Protocol-Version"] = protocol;
   await rpc("notifications/initialized");
