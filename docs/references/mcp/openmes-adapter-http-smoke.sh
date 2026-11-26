@@ -159,7 +159,18 @@ if ($adapter !== false) {
         if ($after <= $before || $witnessAfter != $witnessBefore) {
             throw new RuntimeException('OpenMES acceptance did not advance only the accepted work order timestamp');
         }
+        // Separate the two requests at the database timestamp's whole-second precision.
+        sleep(1);
+        [$status] = request($visible, $fixture['accept_token'], accept: true);
+        if ($status !== 422) {
+            throw new RuntimeException("OpenMES repeat acceptance expected HTTP 422, received $status");
+        }
+        $afterRepeat = checkAdapter($adapter, $visible, $hidden, $fixture['token'], 'ACCEPTED');
+        if ($afterRepeat != $after) {
+            throw new RuntimeException('OpenMES rejected acceptance changed the work order timestamp');
+        }
         echo "OpenMES source time: accepted work order advanced, witness work order unchanged", PHP_EOL;
+        echo "OpenMES repeat acceptance: HTTP 422, accepted work order timestamp unchanged", PHP_EOL;
         echo "OpenMES lifecycle: PENDING -> ACCEPTED confirmed by the read-only adapter", PHP_EOL;
     }
 }
