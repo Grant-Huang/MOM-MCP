@@ -43,8 +43,10 @@ $line = Line::factory()->create();
 $otherLine = Line::factory()->create();
 $actor = createOperator($line);
 $witness = createOperator($otherLine);
-$visible = WorkOrder::factory()->create(['line_id' => $line->id]);
-$hidden = WorkOrder::factory()->create(['line_id' => $otherLine->id]);
+// Seed a prior update so the transition can advance even at whole-second precision.
+$initialUpdate = '2020-01-01 00:00:00';
+$visible = WorkOrder::factory()->create(['line_id' => $line->id, 'updated_at' => $initialUpdate]);
+$hidden = WorkOrder::factory()->create(['line_id' => $otherLine->id, 'updated_at' => $initialUpdate]);
 $fixture = [
     'visible' => $visible->id,
     'hidden' => $hidden->id,
@@ -113,10 +115,17 @@ foreach ([
     echo json_encode($evidence, JSON_THROW_ON_ERROR), PHP_EOL;
 }
 
-function checkAdapter(string $adapter, int $visible, int $hidden, string $token, string $expected): void {
+function checkAdapter(string $adapter, int $visible, int $hidden, string $token, string $expected): DateTimeImmutable {
+    [$status, $response] = request($visible, $token);
+    $updatedAt = $response['data']['updated_at'] ?? null;
+    if ($status !== 200 || !is_string($updatedAt) || $updatedAt === '') {
+        throw new RuntimeException('Expected a visible OpenMES work order with a source timestamp');
+    }
+
     $env = getenv();
     unset($env['MOM_ODOO_WITNESS_TOKEN']);
     $env['MOM_SAMPLE_TOKEN'] = $token;
+    $env['MOM_SAMPLE_SOURCE_UPDATED_AT'] = $updatedAt;
     $process = proc_open(
         [$adapter, 'openmes', 'http://127.0.0.1:18765', (string) $visible, (string) $hidden, $expected],
         [STDIN, STDOUT, STDERR],
@@ -127,6 +136,7 @@ function checkAdapter(string $adapter, int $visible, int $hidden, string $token,
     if (!is_resource($process) || proc_close($process) !== 0) {
         throw new RuntimeException("OpenMES Rust Adapter smoke check failed for $expected");
     }
+    return new DateTimeImmutable($updatedAt);
 }
 
 $adapter = getenv('MOM_OPENMES_ADAPTER_SMOKE');
@@ -136,16 +146,20 @@ if ($adapter !== false) {
     }
     $visible = $fixture['visible'];
     $hidden = $fixture['hidden'];
-    checkAdapter($adapter, $visible, $hidden, $fixture['token'], 'PENDING');
-    checkAdapter($adapter, $hidden, $visible, $fixture['witness_token'], 'PENDING');
+    $before = checkAdapter($adapter, $visible, $hidden, $fixture['token'], 'PENDING');
+    $witnessBefore = checkAdapter($adapter, $hidden, $visible, $fixture['witness_token'], 'PENDING');
 
     if (isset($fixture['accept_token'])) {
         [$status] = request($visible, $fixture['accept_token'], accept: true);
         if ($status !== 200) {
             throw new RuntimeException("OpenMES acceptance expected HTTP 200, received $status");
         }
-        checkAdapter($adapter, $visible, $hidden, $fixture['token'], 'ACCEPTED');
-        checkAdapter($adapter, $hidden, $visible, $fixture['witness_token'], 'PENDING');
+        $after = checkAdapter($adapter, $visible, $hidden, $fixture['token'], 'ACCEPTED');
+        $witnessAfter = checkAdapter($adapter, $hidden, $visible, $fixture['witness_token'], 'PENDING');
+        if ($after <= $before || $witnessAfter != $witnessBefore) {
+            throw new RuntimeException('OpenMES acceptance did not advance only the accepted work order timestamp');
+        }
+        echo "OpenMES source time: accepted work order advanced, witness work order unchanged", PHP_EOL;
         echo "OpenMES lifecycle: PENDING -> ACCEPTED confirmed by the read-only adapter", PHP_EOL;
     }
 }
