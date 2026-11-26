@@ -214,6 +214,8 @@ MOM-MCP 侧已用 `cargo test --locked --test external_observe one_observe_entry
 
 ### AgentNexus 整仓依赖复跑
 
-执行 `bash scripts/check-external-adapter-agentnexus.sh ADAPTER_SHA AGENTNEXUS_CHECKOUT HOST_SHA [ADAPTER_GIT_URL]`。两个 SHA 均为完整提交。脚本按宿主 SHA 导出干净源码，在临时项目的 `an-server` 测试依赖中固定 adapter 的 Git revision，并生成该临时项目的锁文件。用同一个宿主工作区执行正式 M3 桩合同及 adapter 的工单投影、HTTP／MCP 传输和逐请求绑定回归。移植测试只调整导入名。来源请求使用回环协议夹具，真实生产凭据及出站接线按宿主方案评审。
+执行 `bash scripts/check-external-adapter-agentnexus.sh ADAPTER_SHA AGENTNEXUS_CHECKOUT HOST_SHA [ADAPTER_GIT_URL]`。两个 SHA 均为完整提交。脚本按宿主 SHA 导出干净源码，在临时项目的 `an-server` 测试依赖中新增或替换 adapter 的 Git revision，并更新该临时项目的锁文件。用同一个宿主工作区执行正式 M3 桩合同及 adapter 的工单投影、HTTP／MCP 传输、逐请求绑定和 Odoo 关系回归。移植测试只调整导入名。来源请求使用回环协议夹具，真实生产凭据及出站接线按宿主方案评审。
 
 本地复跑使用 adapter 提交 `01e9318` 和 AgentNexus `ba9a7c7`。Cargo 在临时宿主锁文件中只新增 `mom-external-adapter 0.1.0`。同一宿主通过正式 M3 桩合同 6 项、工单投影 3 项、连接器传输 5 项和 Observe 绑定 4 项。复跑使用 Git 文件传输。远端发布复核需换用可访问的 Git URL。
+
+远端 Git 复跑使用 MOM-MCP `39f5d88bdd101702cf85549d88a763f58747e8c1` 与 AgentNexus `cf8d793e740eb1a0f946bfdc8653c3295d37a44b`。锁文件仅替换 Adapter Git 版本。9 项 M3 宿主合同及 23 项 Adapter 回归通过，依赖独立真实 Odoo 实例的关系用例按配置跳过。正式三源联调仍按验收台账执行。本次只操作临时宿主快照。
