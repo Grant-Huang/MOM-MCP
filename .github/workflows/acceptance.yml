@@ -30,6 +30,10 @@ jobs:
           node-version: '22'
       - name: Verify Rust adapter contracts
         run: cargo test --locked --test external_http --test external_observe --test external_order --test odoo_relation
+      - name: Verify standalone Adapter at the checked-out Git revision
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: bash scripts/check-external-adapter-consumer.sh "$(git rev-parse HEAD)"
       - name: Verify offline source probes
         run: >-
           node --test

@@ -210,7 +210,7 @@ MOM-MCP 侧已用 `cargo test --locked --test external_observe one_observe_entry
 
 独立包名为 `mom-external-adapter`，版本为 `0.1.0`。宿主可用 Git 仓库及完整提交 SHA 固定依赖。包包含工单本体投影、只读 HTTP／MCP 传输和逐请求授权的 `ExternalObserve`。MOM-MCP 继续通过原模块路径导出同一实现。
 
-执行 `bash scripts/check-external-adapter-consumer.sh FULL_COMMIT_SHA [GIT_URL]`。脚本在临时 Cargo 项目中从固定 Git 提交解析 adapter，并连接 AgentNexus 当前采用的 `rusqlite 0.43`。它检查 adapter 的依赖子树，从该 Git 版本投影一条已绑定的 OpenMES 工单，确认错配记录返回 `UnexpectedRecord`，并将投影的源 ID 传入宿主 SQLite 内存查询，核对返回值。省略 URL 时使用当前 Git 仓库的文件传输，正式宿主接线时提供可访问的远端 Git URL 并更新宿主锁文件。 远端 Git 复验固定于 MOM-MCP 提交 `f059dfc976c3297abbd33b4e5036e19577904c7b`，绑定投影、错配拒绝和宿主 SQLite 查询均通过。
+执行 `bash scripts/check-external-adapter-consumer.sh FULL_COMMIT_SHA [GIT_URL]`。脚本在临时 Cargo 项目中从固定 Git 提交解析 adapter，并连接 AgentNexus 当前采用的 `rusqlite 0.43`。它检查 adapter 的依赖子树，从该 Git 版本投影一条已绑定的 OpenMES 工单，确认错配记录返回 `UnexpectedRecord`，并将投影的源 ID 传入宿主 SQLite 内存查询，核对返回值。省略 URL 时使用当前 Git 仓库的文件传输。Acceptance 工作流的 `adapter-contracts` 任务以检出的完整 SHA 运行该检查。正式宿主接线时提供可访问的远端 Git URL 并更新宿主锁文件。 远端 Git 复验固定于 MOM-MCP 提交 `f059dfc976c3297abbd33b4e5036e19577904c7b`，绑定投影、错配拒绝和宿主 SQLite 查询均通过。
 
 ### AgentNexus 整仓依赖复跑
 
