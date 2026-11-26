@@ -9106,3 +9106,89 @@ async fn p14_05_harness_segment_crimp() {
         5
     );
 }
+
+#[tokio::test]
+async fn p14_07_harness_sample_endpoint_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) =
+        connect_options(&dir.path().join("sample.sqlite3"), "0", true, true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"wire-harness","version":5}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let write =
+        async |name: &str, key: &str, args| shop_action(&client, run, name, key, args).await;
+    let cut = write(
+        "cut_harness_batch",
+        "cut",
+        json!({"batch_id":"CUT-S","wire_lot":"WIRE-CU-1",
+        "serial_numbers":["WIRE-01","WIRE-02"]}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 1);
+    let power = |serial, end| {
+        json!({"serial_number":serial,"segment_id":"POWER","end":end,
+        "terminal_lot":"TERM-PWR-1","tooling_id":"TOOL-PWR-1"})
+    };
+    for serial in ["WIRE-01", "WIRE-02"] {
+        assert_eq!(
+            write("crimp_harness_endpoint", serial, power(serial, "A")).await["ok"],
+            true
+        );
+    }
+    let signal = json!({"serial_number":"WIRE-01","segment_id":"SIGNAL","end":"A",
+        "terminal_lot":"TERM-SIG-1","tooling_id":"TOOL-SIG-1"});
+    assert_eq!(
+        write("crimp_harness_endpoint", "signal-a", signal.clone()).await["ok"],
+        true
+    );
+    let sample = json!({"event_cursor":1});
+    let hold = "apply_harness_sample_hold";
+    assert_eq!(
+        write(hold, "hold", sample.clone()).await["code"],
+        "SAMPLE_NOT_DELIVERED"
+    );
+    assert_eq!(advance(&client, run, 1).await["ok"], true);
+    let applied = write(hold, "hold", sample.clone()).await;
+    assert_eq!(applied["cursor"], 5, "{applied}");
+    let expected = json!([
+        {"serial_number":"WIRE-01","segment_id":"POWER","end":"A","terminal_lot":"TERM-PWR-1"},
+        {"serial_number":"WIRE-02","segment_id":"POWER","end":"A","terminal_lot":"TERM-PWR-1"}
+    ]);
+    assert_eq!(applied["affected_endpoints"], expected);
+    assert_eq!(write(hold, "hold", sample.clone()).await, applied);
+    assert_eq!(
+        write(hold, "other", sample).await["code"],
+        "TERMINAL_LOT_ALREADY_HELD"
+    );
+    assert_eq!(
+        write("crimp_harness_endpoint", "power-b", power("WIRE-01", "B")).await["code"],
+        "TERMINAL_QUALITY_HOLD"
+    );
+    let mut alternate = power("WIRE-01", "B");
+    alternate["terminal_lot"] = json!("TERM-PWR-ALT");
+    assert_eq!(
+        write("crimp_harness_endpoint", "power-b", alternate).await["cursor"],
+        6
+    );
+    let mut signal = signal;
+    signal["end"] = json!("B");
+    assert_eq!(
+        write("crimp_harness_endpoint", "signal-b", signal).await["cursor"],
+        7
+    );
+    let status = business(
+        &client,
+        run,
+        "get_harness_crimp_status",
+        json!({"serial_number":"WIRE-01"}),
+    )
+    .await;
+    assert_eq!(status["complete"], true);
+    assert_eq!(status["held_endpoints"], json!([expected[0]]));
+    assert_eq!(status["crimps"].as_array().unwrap().len(), 4);
+}

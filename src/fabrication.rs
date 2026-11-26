@@ -636,7 +636,7 @@ pub fn invoke(
         State::Sheet(sheet) => sheet.apply(action, args, events),
         State::Nesting(nesting) => nesting.apply(action, args, events, orders, setup),
         State::Harness(harness) => harness.apply(action, args, events),
-        State::HarnessBatches(harness) => harness.apply(action, args, &orders[0]),
+        State::HarnessBatches(harness) => harness.apply(action, args, &orders[0], events),
     };
     if let Some(key) = key.filter(|_| response["ok"] == true) {
         response["cursor"] = (cursor + 1).into();

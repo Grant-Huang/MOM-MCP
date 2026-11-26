@@ -155,6 +155,7 @@ pub enum Action {
     CheckHarnessCrimpQualification,
     CrimpHarnessEndpoint,
     GetHarnessCrimpStatus,
+    ApplyHarnessSampleHold,
     HarnessCrimp,
     HarnessSample,
     HarnessTest,

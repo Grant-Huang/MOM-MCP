@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{Action, Map, Spec, Value, error, json, object, text};
+use super::{Action, Event, Map, Spec, Value, error, json, object, text};
 
 pub(super) const TOOLS: &[(Action, &str, &str, &str)] = &[
     (
@@ -35,6 +35,12 @@ pub(super) const TOOLS: &[(Action, &str, &str, &str)] = &[
         "查询线束已压接端点及工序进度",
         "production",
     ),
+    (
+        Action::ApplyHarnessSampleHold,
+        "apply_harness_sample_hold",
+        "按抽检结果隔离端子批次及实际受影响端点",
+        "quality",
+    ),
 ];
 
 const SEGMENTS: [(&str, u64); 2] = [("POWER", 400), ("SIGNAL", 250)];
@@ -43,6 +49,40 @@ const SERIALS: [&str; 3] = ["WIRE-01", "WIRE-02", "WIRE-03"];
 
 pub(super) fn spec(action: Action) -> Spec {
     let &(_, name, description, domain) = TOOLS.iter().find(|tool| tool.0 == action).unwrap();
+    if action == Action::ApplyHarnessSampleHold {
+        let cursor = json!({"type":"integer","minimum":1});
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: "write",
+            input: object(
+                &["event_cursor", "idempotency_key"],
+                json!({"event_cursor":cursor,"idempotency_key":text()}),
+            ),
+            output: object(
+                &[
+                    "ok",
+                    "event_cursor",
+                    "terminal_lot",
+                    "affected_endpoints",
+                    "cursor",
+                ],
+                json!({
+                    "ok":{"const":true},"event_cursor":cursor,"terminal_lot":text(),
+                    "affected_endpoints":{"type":"array","items":endpoint_schema()},"cursor":cursor
+                }),
+            ),
+            preconditions: &["run_open", "tool_enabled_in_scenario"],
+            side_effect: "isolate_terminal_lot_and_endpoints",
+            errors: &[
+                "SAMPLE_NOT_DELIVERED",
+                "TERMINAL_LOT_ALREADY_HELD",
+                "IDEMPOTENCY_CONFLICT",
+            ],
+            visibility: "run",
+        };
+    }
     if matches!(
         action,
         Action::CheckHarnessCrimpQualification
@@ -118,6 +158,15 @@ pub(super) fn spec(action: Action) -> Spec {
     }
 }
 
+fn endpoint_schema() -> Value {
+    object(
+        &["serial_number", "segment_id", "end", "terminal_lot"],
+        json!({
+            "serial_number":text(),"segment_id":text(),"end":{"type":"string","enum":["A","B"]},"terminal_lot":text()
+        }),
+    )
+}
+
 fn crimp_spec(
     action: Action,
     name: &'static str,
@@ -166,7 +215,8 @@ fn crimp_spec(
                     ],
                     json!({
                         "ok":{"const":true},"serial_number":text(),"complete":{"type":"boolean"},
-                        "required_endpoints":count,"crimps":{"type":"array","items":qualification}
+                        "required_endpoints":count,"crimps":{"type":"array","items":qualification},
+                        "held_endpoints":{"type":"array","items":endpoint_schema()}
                     }),
                 ),
                 &["SERIAL_NOT_FOUND", "SERIAL_NOT_CUT"],
@@ -191,6 +241,7 @@ fn crimp_spec(
                     "TOOLING_CALIBRATION_EXPIRED",
                     "ENDPOINT_ALREADY_CRIMPED",
                     "TERMINAL_STOCK_EXHAUSTED",
+                    "TERMINAL_QUALITY_HOLD",
                     "IDEMPOTENCY_CONFLICT",
                 ],
             )
@@ -209,6 +260,7 @@ fn crimp_spec(
                 "TERMINAL_LOT_NOT_QUALIFIED",
                 "TOOLING_NOT_QUALIFIED",
                 "TOOLING_CALIBRATION_EXPIRED",
+                "TERMINAL_QUALITY_HOLD",
             ],
         ),
     };
@@ -263,6 +315,8 @@ pub(super) struct HarnessBatches {
     crimps: BTreeMap<String, Vec<Value>>,
     #[serde(default = "terminal_stock")]
     terminals: BTreeMap<String, u64>,
+    #[serde(default)]
+    sample_holds: BTreeMap<String, usize>,
 }
 
 fn terminal_stock() -> BTreeMap<String, u64> {
@@ -295,6 +349,7 @@ impl Default for HarnessBatches {
             batches: BTreeMap::new(),
             crimps: BTreeMap::new(),
             terminals: terminal_stock(),
+            sample_holds: BTreeMap::new(),
         }
     }
 }
@@ -305,7 +360,11 @@ impl HarnessBatches {
         action: Action,
         args: &Map<String, Value>,
         work_order: &str,
+        events: &[Event],
     ) -> Value {
+        if action == Action::ApplyHarnessSampleHold {
+            return self.apply_sample_hold(args["event_cursor"].as_u64().unwrap(), events);
+        }
         if action == Action::CheckHarnessCrimpQualification {
             return match self.crimp_qualification(args) {
                 Ok(qualification) => {
@@ -392,6 +451,34 @@ impl HarnessBatches {
         self.batches.insert(id.into(), batch);
         result
     }
+    fn apply_sample_hold(&mut self, cursor: u64, events: &[Event]) -> Value {
+        let Some(event) = events.iter().find(|event| {
+            event.cursor as u64 == cursor && event.kind == "harness_terminal_sample_failed"
+        }) else {
+            return error("SAMPLE_NOT_DELIVERED");
+        };
+        let lot = event.payload["terminal_lot"]
+            .as_str()
+            .expect("terminal sample lot");
+        if self.sample_holds.contains_key(lot) {
+            return error("TERMINAL_LOT_ALREADY_HELD");
+        }
+        let affected: Vec<_> = self
+            .crimps
+            .values()
+            .flatten()
+            .filter(|crimp| crimp["terminal_lot"] == lot)
+            .map(Self::endpoint)
+            .collect();
+        self.sample_holds.insert(lot.into(), event.cursor);
+        json!({"ok":true,"event_cursor":cursor,"terminal_lot":lot,"affected_endpoints":affected})
+    }
+
+    fn endpoint(crimp: &Value) -> Value {
+        json!({"serial_number":crimp["serial_number"],"segment_id":crimp["segment_id"],
+            "end":crimp["end"],"terminal_lot":crimp["terminal_lot"]})
+    }
+
     fn crimp_status(&self, serial: &str) -> Value {
         if !SERIALS.contains(&serial) {
             return error("SERIAL_NOT_FOUND");
@@ -405,8 +492,20 @@ impl HarnessBatches {
         };
         let required_endpoints = segments.len() * 2;
         let crimps = self.crimps.get(serial).map_or(&[][..], Vec::as_slice);
-        json!({"ok":true,"serial_number":serial,"complete":crimps.len()==required_endpoints,
-            "required_endpoints":required_endpoints,"crimps":crimps})
+        let mut result = json!({"ok":true,"serial_number":serial,"complete":crimps.len()==required_endpoints,
+            "required_endpoints":required_endpoints,"crimps":crimps});
+        if !self.sample_holds.is_empty() {
+            result["held_endpoints"] = json!(
+                crimps
+                    .iter()
+                    .filter(|crimp| crimp["terminal_lot"]
+                        .as_str()
+                        .is_some_and(|lot| self.sample_holds.contains_key(lot)))
+                    .map(Self::endpoint)
+                    .collect::<Vec<_>>()
+            );
+        }
+        result
     }
 
     fn crimp_endpoint(&mut self, args: &Map<String, Value>) -> Value {
@@ -459,6 +558,9 @@ impl HarnessBatches {
             ("SIGNAL", _, "TERM-SIG-1") => "TERM-SIG@1",
             _ => return Err("TERMINAL_LOT_NOT_QUALIFIED"),
         };
+        if self.sample_holds.contains_key(terminal) {
+            return Err("TERMINAL_QUALITY_HOLD");
+        }
         let tooling_qualification = match (segment, tooling) {
             ("POWER", "TOOL-PWR-1") => "TOOL-PWR@1",
             ("SIGNAL", "TOOL-SIG-1") => "TOOL-SIG@1",

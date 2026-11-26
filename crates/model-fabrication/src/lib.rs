@@ -10,6 +10,8 @@ pub const VERSION: u32 = 1;
 #[serde(deny_unknown_fields)]
 pub struct Parameters {
     mean_minutes: f64,
+    #[serde(default)]
+    endpoint_sampling: bool,
 }
 
 pub struct Fabrication {
@@ -53,6 +55,11 @@ impl Model for Fabrication {
                 self.event("sheet_supply_shortage", json!({"stock":"SHEET-FULL"})),
                 self.event("sheet_machine_down", json!({"machine":"LASER-A"})),
             ]
+        } else if self.parameters.endpoint_sampling {
+            vec![self.event(
+                "harness_terminal_sample_failed",
+                json!({"terminal_lot":"TERM-PWR-1"}),
+            )]
         } else {
             vec![self.event(
                 "harness_sample_failed",
