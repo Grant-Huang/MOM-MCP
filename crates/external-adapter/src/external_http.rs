@@ -10,7 +10,9 @@ mod odoo_relation;
 
 pub use odoo_relation::OdooSalesRelation;
 
-use crate::external_order::{BoundOrder, OrderObservation, ProjectionError, Source, project_order};
+use crate::external_order::{
+    BoundOrder, OrderObservation, ProjectionError, Source, project_order, rfc3339_utc,
+};
 
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 
@@ -125,7 +127,13 @@ impl<'a> HttpOrderReader<'a> {
                 self.read_http(source_id).await?
             }
         };
-        project_order(
+        let is_carbon_rest = matches!(self.source.kind, HttpSourceKind::CarbonRest { .. });
+        let rest_updated_at = if is_carbon_rest {
+            payload.get("updatedAt").and_then(rfc3339_utc)
+        } else {
+            None
+        };
+        let mut observation = project_order(
             &BoundOrder {
                 source,
                 tenant: self.source.tenant,
@@ -140,7 +148,12 @@ impl<'a> HttpOrderReader<'a> {
             ProjectionError::InvalidResponse => InvalidResponse,
             ProjectionError::UnexpectedRecord => UnexpectedRecord,
             ProjectionError::NotVisible => NotVisible,
-        })
+        })?;
+        if is_carbon_rest {
+            observation.source_updated_at = rest_updated_at;
+            observation.mapping_version = "0.2";
+        }
+        Ok(observation)
     }
 
     async fn read_carbon_rest(
@@ -161,7 +174,7 @@ impl<'a> HttpOrderReader<'a> {
                     .map_err(|_| InvalidBinding)?,
             )
             .query(&[
-                ("select", "id,jobId,status,companyId"),
+                ("select", "id,jobId,status,companyId,updatedAt"),
                 ("id", &format!("eq.{source_id}")),
                 ("companyId", &format!("eq.{company}")),
                 ("limit", "2"),

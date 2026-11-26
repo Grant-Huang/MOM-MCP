@@ -277,14 +277,17 @@ async fn carbon_rest_enforces_exact_id_and_company_and_classifies_failures() {
         assert_eq!(headers["authorization"], "Bearer local-fixture");
         assert_eq!(headers["apikey"], "project-fixture");
         assert_eq!(query.len(), 4);
-        assert_eq!(query["select"], "id,jobId,status,companyId");
+        assert_eq!(query["select"], "id,jobId,status,companyId,updatedAt");
         assert_eq!(query["companyId"], "eq.company-a");
         assert_eq!(query["limit"], "2");
         let id = query["id"].strip_prefix("eq.").unwrap();
-        let row = json!({"id":id,"jobId":"WO-42","status":"Ready","companyId":"company-a"});
+        let row = json!({"id":id,"jobId":"WO-42","status":"Ready","companyId":"company-a",
+            "updatedAt":"2026-11-01T03:30:00-05:00"});
         match id {
             "visible" => Json(json!([row])).into_response(),
             "hidden" => Json(json!([])).into_response(),
+            "unset-time" => Json(json!([{"id":id,"jobId":"WO-42","status":"Ready","companyId":"company-a","updatedAt":null}])).into_response(),
+            "invalid-time" => Json(json!([{"id":id,"jobId":"WO-42","status":"Ready","companyId":"company-a","updatedAt":"2026-11-01 08:30:00"}])).into_response(),
             "wrong-company" => Json(json!([{"companyId":"company-b"}])).into_response(),
             "wrong-id" => Json(
                 json!([{"id":"other","jobId":"WO-42","status":"Ready","companyId":"company-a"}]),
@@ -313,6 +316,16 @@ async fn carbon_rest_enforces_exact_id_and_company_and_classifies_failures() {
     assert_eq!(visible.display_number, "WO-42");
     assert_eq!(visible.source_status.as_deref(), Some("Ready"));
     assert!(visible.normalized_status.is_none());
+    assert_eq!(visible.mapping_version, "0.2");
+    assert_eq!(
+        visible.source_updated_at.as_deref(),
+        Some("2026-11-01T08:30:00Z")
+    );
+    for id in ["unset-time", "invalid-time"] {
+        let order = reader.read_order(id).await.unwrap();
+        assert_eq!(order.mapping_version, "0.2");
+        assert_eq!(order.source_updated_at, None);
+    }
     for (id, expected) in [
         ("hidden", ReadError::NotVisible),
         ("wrong-company", ReadError::UnexpectedRecord),
@@ -365,7 +378,7 @@ async fn rereads_carbon_job_status_after_release() {
         for (observation, expected) in [(initial, before), (released, "Ready")] {
             assert_eq!(observation.source_status.as_deref(), Some(expected));
             assert_eq!(observation.normalized_status, None);
-            assert_eq!(observation.mapping_version, "0.1");
+            assert_eq!(observation.mapping_version, "0.2");
         }
     }
     server.abort();

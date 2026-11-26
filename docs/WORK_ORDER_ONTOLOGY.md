@@ -21,7 +21,7 @@ v0.1 是首期工单观测切片。中期按来源证据增补对象、关系、
 | 显示号 | `name` | `data.order_no` | `jobId` |
 | 源作用域 | 数据库与公司绑定 | 站点与产线绑定 | 来源实例与公司绑定 |
 | 源状态 | `state` | `data.status` | `status` |
-| 更新时间候选 | `write_date`，JSON-2 实测为不带偏移的 UTC | `data.updated_at` | `updatedAt`，实际 MCP 载荷和可空性待实测 |
+| 更新时间候选 | `write_date`，JSON-2 实测为不带偏移的 UTC | `data.updated_at` | 社区 REST 的 `jobs.updatedAt` 可空，原生 MCP 载荷待实测 |
 
 - 每个观测携带来源引用、观测时点、源状态及映射版本。仅在来源提供可验证版本时返回对象版本。时间统一用 RFC 3339 UTC，来源时间不明确时省略该字段。
 - 首轮 `draft`／`confirmed`、`PENDING`／`ACCEPTED`、`Draft`／`Ready` 保留各自源值。确认、接受、就绪对应的条件及副作用需要各自证据，当前 `normalized_status` 为空并给出 `unmapped`。Carbon 的状态样例来自迁移与夹具，待获授权实例读回。
@@ -38,6 +38,6 @@ v0.1 是首期工单观测切片。中期按来源证据增补对象、关系、
 
 ### 离线契约回归
 
-运行 `cargo test --locked --test external_order`。用例调用实际 Adapter 的投影器，覆盖三源字段、映射版本、同号及跨作用域身份、记录 ID 精确匹配、缺失或畸形状态及单对象响应形状。数值 ID 在 Rust 中按整数保存并与绑定中的字符串精确匹配。OpenMES 带偏移量的源时间统一为 UTC，Odoo 使用已验证的 UTC 规则，Carbon 的候选源时间字段暂省略。
+运行 `cargo test --locked --test external_order`。用例调用实际 Adapter 的投影器，覆盖三源字段、映射版本、同号及跨作用域身份、记录 ID 精确匹配、缺失或畸形状态及单对象响应形状。数值 ID 在 Rust 中按整数保存并与绑定中的字符串精确匹配。OpenMES 带偏移量的源时间统一为 UTC，Odoo 使用已验证的 UTC 规则，Carbon 社区 REST 将 `jobs.updatedAt` 中带时区的有效时间转为 UTC（映射 `0.2`），空值或无效时间省略。Carbon 原生 MCP 沿用映射 `0.1`。
 
 输入从宿主已解析的绑定及传输层已分类的响应开始。身份元组用于内部断言，产品 Observe 对外使用不透明引用。Carbon 投影用合成记录验证。来源权限、传输包络、故障隔离和宿主接线按[短期验收台账](acceptance/ADAPTER_READ.md)复跑。
