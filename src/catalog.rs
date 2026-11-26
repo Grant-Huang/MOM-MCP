@@ -147,6 +147,7 @@ pub enum Action {
     GetSheetNest,
     CutSheetNest,
     CancelSheetNest,
+    ReturnSheetRemnant,
     HarnessCut,
     HarnessCrimp,
     HarnessSample,
