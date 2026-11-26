@@ -45,6 +45,8 @@ GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传�
 
 两个方向均通过。主身份读到自己的工单并投影为源状态 `draft`，读取另一公司工单返回 `NotVisible`。第二身份在同一数据库按相同 ID 独立读取成功，确认工单存在。此记录是实际来源直连证据。正式 AgentNexus Observe 仍待首站获批后联调。
 
+Odoo 生命周期脚本还撤销主读取身份的临时 API 密钥。原密钥再次读取原本可见的制造单时，JSON-2 返回 401，Rust Adapter 报告来源不可用，未返回工单。另一公司的独立会话仍可经 Adapter 读取自己的工单。此项是来源凭据撤销证据，正式 AgentNexus 服务身份的撤权仍在 M3 验收范围。 [复跑脚本](../references/mcp/odoo-adapter-lifecycle-smoke.sh)
+
 ### Carbon 社区后端实测
 
 Carbon 固定提交为 `05bd067c0a72ca9f0983f6278d2a7c9bb48b716c`。用官方社区开发栈的隔离后端启动认证、网关、PostgREST 和 PostgreSQL，执行上游迁移。Docker VFS 的多层解包耗尽空间。本地复跑从原固定摘要重打包 PostgreSQL 17.6.1.166 为单层镜像，沿用文件系统、入口及运行环境，启动时使用该本地镜像。
