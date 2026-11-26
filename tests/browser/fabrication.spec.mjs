@@ -92,3 +92,28 @@ test("P13-UI Cut a shared sheet nest", async ({ page }) => {
   expect(nest.order_area_mm2).toEqual({ "WO-SHEET-A": 600, "WO-SHEET-B": 600 });
   expect(nest.input_mm2).toBe(nest.product_mm2 + nest.scrap_mm2 + nest.remnant_mm2);
 });
+
+test("P13-04 Route a wide sheet to a compatible laser", async ({ page }) => {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption("sheet-metal@3");
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  await button("搜索工具").click();
+  const invoke = async (name, args, evidence) => {
+    await page.getByLabel("匹配工具").selectOption(name);
+    await page.getByLabel("JSON 参数").fill(JSON.stringify({ nest_id: "N-WIDE", ...args }));
+    await button("调用工具").click();
+    await expect(status).toContainText(evidence);
+    return JSON.parse(await status.textContent());
+  };
+  const { nest } = await invoke("create_sheet_nest", {
+    stock: "SHEET-FULL", work_orders: ["WO-SHEET-A", "WO-SHEET-B"], idempotency_key: "plan",
+  }, '"size_grade": "wide"');
+  expect(nest.dimensional_fit.eligible_machines).toEqual(["LASER-B"]);
+  await invoke("cut_sheet_nest", { machine: "LASER-A", idempotency_key: "cut" }, "MACHINE_NOT_CAPABLE");
+  const cut = await invoke("cut_sheet_nest", { machine: "LASER-B", idempotency_key: "cut" }, '"status": "cut"');
+  expect(cut.nest.machine).toBe("LASER-B");
+});

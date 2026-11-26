@@ -8487,3 +8487,89 @@ async fn p13_01_sheet_multi_order_nesting() {
         "INVALID_STATE"
     );
 }
+
+#[tokio::test]
+async fn p13_03_sheet_dimensional_compatibility() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("dimensions.sqlite3"), "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"sheet-metal","version":3}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let create = |id, stock, orders| json!({"nest_id":id,"stock":stock,"work_orders":orders});
+    let write =
+        async |name: &str, key: &str, args| shop_action(&client, run, name, key, args).await;
+    assert_eq!(
+        write(
+            "create_sheet_nest",
+            "strip",
+            create("N-S", "REM-STRIP", vec!["WO-SHEET-C"])
+        )
+        .await["code"],
+        "STOCK_DIMENSIONS_INSUFFICIENT"
+    );
+    let wide = write(
+        "create_sheet_nest",
+        "wide",
+        create("N-W", "SHEET-FULL", vec!["WO-SHEET-A", "WO-SHEET-B"]),
+    )
+    .await;
+    assert_eq!(wide["cursor"], 1, "{wide}");
+    let fit = &wide["nest"]["dimensional_fit"];
+    assert_eq!(
+        fit["stock_dimensions"],
+        json!({"length_mm":60,"width_mm":30})
+    );
+    assert_eq!(fit["size_grade"], "wide");
+    assert_eq!(fit["eligible_machines"], json!(["LASER-B"]));
+    assert_eq!(
+        fit["order_footprints"]["WO-SHEET-A"],
+        json!({"length_mm":30,"width_mm":20})
+    );
+    let bad = write(
+        "cut_sheet_nest",
+        "cut-wide",
+        json!({"nest_id":"N-W","machine":"LASER-A"}),
+    )
+    .await;
+    assert_eq!(bad["code"], "MACHINE_NOT_CAPABLE");
+    assert_eq!(
+        business(&client, run, "get_sheet_nest", json!({"nest_id":"N-W"})).await["nest"],
+        wide["nest"]
+    );
+    let cut = write(
+        "cut_sheet_nest",
+        "cut-wide",
+        json!({"nest_id":"N-W","machine":"LASER-B"}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 2, "{cut}");
+    assert_eq!(cut["nest"]["dimensional_fit"], *fit);
+    let standard = write(
+        "create_sheet_nest",
+        "standard",
+        create("N-STD", "REM-OK", vec!["WO-SHEET-C"]),
+    )
+    .await;
+    assert_eq!(
+        standard["nest"]["dimensional_fit"]["size_grade"],
+        "standard"
+    );
+    assert_eq!(
+        standard["nest"]["dimensional_fit"]["eligible_machines"],
+        json!(["LASER-A", "LASER-B"])
+    );
+    assert_eq!(
+        write(
+            "cut_sheet_nest",
+            "cut-standard",
+            json!({"nest_id":"N-STD","machine":"LASER-A"})
+        )
+        .await["nest"]["status"],
+        "cut"
+    );
+}

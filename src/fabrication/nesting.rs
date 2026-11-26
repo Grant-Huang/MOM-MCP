@@ -52,6 +52,12 @@ pub(super) fn spec(action: Action) -> Spec {
         fields["machine"] = text();
     }
     let area = json!({"type":"integer","minimum":0});
+    let dimensions = object(
+        &["length_mm", "width_mm"],
+        json!({
+            "length_mm":{"type":"integer","minimum":1},"width_mm":{"type":"integer","minimum":1}
+        }),
+    );
     let nest = object(
         &[
             "nest_id",
@@ -65,8 +71,13 @@ pub(super) fn spec(action: Action) -> Spec {
             "remnant_mm2",
         ],
         json!({"nest_id":text(),"stock":text(),"lot":text(),"status":{"enum":["planned","cut","cancelled"]},
-            "order_area_mm2":{"type":"object","additionalProperties":area},
-            "input_mm2":area,"product_mm2":area,"scrap_mm2":area,"remnant_mm2":area,"machine":text()}),
+        "order_area_mm2":{"type":"object","additionalProperties":area},
+        "input_mm2":area,"product_mm2":area,"scrap_mm2":area,"remnant_mm2":area,"machine":text(),
+        "dimensional_fit":object(&["stock_dimensions","size_grade","order_footprints","eligible_machines"], json!({
+            "stock_dimensions":dimensions,"size_grade":{"enum":["standard","wide","strip"]},
+            "order_footprints":{"type":"object","additionalProperties":dimensions},
+            "eligible_machines":{"type":"array","items":text()}
+        }))}),
     );
     Spec {
         name,
@@ -99,6 +110,7 @@ pub(super) fn spec(action: Action) -> Spec {
             "STOCK_INELIGIBLE",
             "STOCK_RESERVED",
             "INSUFFICIENT_AREA",
+            "STOCK_DIMENSIONS_INSUFFICIENT",
             "NEST_NOT_FOUND",
             "INVALID_STATE",
             "MACHINE_NOT_CAPABLE",
@@ -117,6 +129,72 @@ enum Status {
     Cancelled,
 }
 
+#[derive(Clone, Copy, Serialize, Deserialize)]
+struct Dimensions {
+    length_mm: u64,
+    width_mm: u64,
+}
+
+impl Dimensions {
+    const fn new(length_mm: u64, width_mm: u64) -> Self {
+        Self {
+            length_mm,
+            width_mm,
+        }
+    }
+
+    fn contains(self, footprint: Self) -> bool {
+        self.length_mm >= footprint.length_mm && self.width_mm >= footprint.width_mm
+    }
+}
+
+const MACHINE_ENVELOPES: [(&str, Dimensions); 2] = [
+    ("LASER-A", Dimensions::new(50, 30)),
+    ("LASER-B", Dimensions::new(80, 40)),
+];
+
+#[derive(Serialize, Deserialize)]
+struct DimensionalFit {
+    stock_dimensions: Dimensions,
+    size_grade: String,
+    order_footprints: BTreeMap<String, Dimensions>,
+    eligible_machines: Vec<String>,
+}
+
+impl DimensionalFit {
+    fn for_stock(stock: &str, orders: &BTreeMap<String, u64>) -> Self {
+        let (stock_dimensions, size_grade) = match stock {
+            "SHEET-FULL" => (Dimensions::new(60, 30), "wide"),
+            "REM-OK" => (Dimensions::new(50, 20), "standard"),
+            "REM-SMALL" => (Dimensions::new(65, 10), "strip"),
+            "REM-STRIP" => (Dimensions::new(75, 12), "strip"),
+            _ => unreachable!("eligible stock has registered dimensions"),
+        };
+        let order_footprints = orders
+            .keys()
+            .map(|order| {
+                let footprint = if order == "WO-SHEET-C" {
+                    Dimensions::new(40, 15)
+                } else {
+                    Dimensions::new(30, 20)
+                };
+                (order.clone(), footprint)
+            })
+            .collect();
+        let eligible_machines = MACHINE_ENVELOPES
+            .iter()
+            .filter(|(_, envelope)| envelope.contains(stock_dimensions))
+            .map(|(machine, _)| (*machine).into())
+            .collect();
+        Self {
+            stock_dimensions,
+            size_grade: size_grade.into(),
+            order_footprints,
+            eligible_machines,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Nest {
     nest_id: String,
@@ -130,6 +208,8 @@ struct Nest {
     remnant_mm2: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     machine: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dimensional_fit: Option<DimensionalFit>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -148,16 +228,32 @@ impl Default for Nesting {
 }
 
 impl Nesting {
+    pub(super) fn dimensional() -> Self {
+        let mut nesting = Self::default();
+        nesting.inventory.insert(
+            "REM-STRIP".into(),
+            Stock {
+                lot: "LOT-AL-3".into(),
+                alloy: "AL-5052".into(),
+                area_mm2: 900,
+                eligible: true,
+                parent: Some("SHEET-AL-3".into()),
+            },
+        );
+        nesting
+    }
+
     pub(super) fn apply(
         &mut self,
         action: Action,
         args: &Map<String, Value>,
         events: &[Event],
         orders: &[String],
+        dimensional: bool,
     ) -> Value {
         let id = args["nest_id"].as_str().unwrap();
         if action == Action::CreateSheetNest {
-            return self.create(id, args, events, orders);
+            return self.create(id, args, events, orders, dimensional);
         }
         let Some(nest) = self.nests.get_mut(id) else {
             return error("NEST_NOT_FOUND");
@@ -172,7 +268,11 @@ impl Nesting {
             nest.status = Status::Cancelled;
         } else {
             let machine = args["machine"].as_str().unwrap();
-            if !matches!(machine, "LASER-A" | "LASER-B") {
+            let capable = nest.dimensional_fit.as_ref().map_or_else(
+                || MACHINE_ENVELOPES.iter().any(|(known, _)| *known == machine),
+                |fit| fit.eligible_machines.iter().any(|known| known == machine),
+            );
+            if !capable {
                 return error("MACHINE_NOT_CAPABLE");
             }
             if event_matching(events, "sheet_machine_down", "machine", machine) {
@@ -194,6 +294,7 @@ impl Nesting {
         args: &Map<String, Value>,
         events: &[Event],
         orders: &[String],
+        dimensional: bool,
     ) -> Value {
         if self.nests.contains_key(id) {
             return error("DUPLICATE_NEST");
@@ -234,6 +335,15 @@ impl Nesting {
         {
             return error("STOCK_RESERVED");
         }
+        let dimensional_fit =
+            dimensional.then(|| DimensionalFit::for_stock(stock_id, &order_area_mm2));
+        if dimensional_fit.as_ref().is_some_and(|fit| {
+            fit.order_footprints
+                .values()
+                .any(|footprint| !fit.stock_dimensions.contains(*footprint))
+        }) {
+            return error("STOCK_DIMENSIONS_INSUFFICIENT");
+        }
         let product_mm2 = order_area_mm2.values().sum::<u64>();
         let Some(remnant_mm2) = stock.area_mm2.checked_sub(product_mm2 + SCRAP_AREA) else {
             return error("INSUFFICIENT_AREA");
@@ -249,6 +359,7 @@ impl Nesting {
             scrap_mm2: SCRAP_AREA,
             remnant_mm2,
             machine: None,
+            dimensional_fit,
         };
         let response = json!({"ok":true,"nest":nest});
         self.nests.insert(id.into(), nest);

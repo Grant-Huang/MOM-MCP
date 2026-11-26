@@ -1321,3 +1321,19 @@ spec = "acceptance/P13.md"
 features = ["F08", "F09", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P13-UI Cut a shared sheet nest" }
+
+[[case]]
+id = "P13-03"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F10", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p13_03_sheet_dimensional_compatibility" }
+
+[[case]]
+id = "P13-04"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P13-04 Route a wide sheet to a compatible laser" }

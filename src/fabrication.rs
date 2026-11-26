@@ -155,6 +155,7 @@ pub fn spec(action: Action) -> Spec {
 pub enum Setup {
     SheetMetal,
     SheetNesting,
+    SheetDimensionalNesting,
     WireHarness,
 }
 
@@ -163,7 +164,7 @@ impl Setup {
         self.model() == model
             && match self {
                 Self::SheetMetal => SHEET,
-                Self::SheetNesting => nesting::TOOLS,
+                Self::SheetNesting | Self::SheetDimensionalNesting => nesting::TOOLS,
                 Self::WireHarness => HARNESS,
             }
             .iter()
@@ -172,7 +173,9 @@ impl Setup {
 
     pub fn model(self) -> &'static str {
         match self {
-            Self::SheetMetal | Self::SheetNesting => mom_model_fabrication::SHEET,
+            Self::SheetMetal | Self::SheetNesting | Self::SheetDimensionalNesting => {
+                mom_model_fabrication::SHEET
+            }
             Self::WireHarness => mom_model_fabrication::HARNESS,
         }
     }
@@ -595,12 +598,19 @@ pub fn invoke(
         None => match setup {
             Setup::SheetMetal => State::Sheet(Sheet::default()),
             Setup::SheetNesting => State::Nesting(nesting::Nesting::default()),
+            Setup::SheetDimensionalNesting => State::Nesting(nesting::Nesting::dimensional()),
             Setup::WireHarness => State::Harness(Harness::default()),
         },
     };
     let mut response = match &mut state {
         State::Sheet(sheet) => sheet.apply(action, args, events),
-        State::Nesting(nesting) => nesting.apply(action, args, events, orders),
+        State::Nesting(nesting) => nesting.apply(
+            action,
+            args,
+            events,
+            orders,
+            setup == Setup::SheetDimensionalNesting,
+        ),
         State::Harness(harness) => harness.apply(action, args, events),
     };
     if let Some(key) = key.filter(|_| response["ok"] == true) {
