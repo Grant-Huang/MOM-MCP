@@ -914,6 +914,7 @@ impl Scenarios {
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-closed-loop.json"),
+            include_str!("../fixtures/assembly-configuration-bom.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
@@ -1351,10 +1352,21 @@ impl Scenarios {
                     });
                 }
             }
-            let selection = match crate::snapshots::selection(&parameters["definition_selection"]) {
-                Ok(selection) => selection,
-                Err(error) => return Ok(Err(error)),
-            };
+            let mut selection =
+                match crate::snapshots::selection(&parameters["definition_selection"]) {
+                    Ok(selection) => selection,
+                    Err(error) => return Ok(Err(error)),
+                };
+            if let Some(setup) = definition
+                .assembly
+                .as_ref()
+                .filter(|setup| setup.configuration_bom)
+            {
+                let Some(configuration) = setup.configuration(order) else {
+                    return Ok(Err(reject("WORK_ORDER_NOT_FOUND", "work_order")));
+                };
+                selection.configuration = Some(configuration.to_owned());
+            }
             let resolved = crate::snapshots::resolve(&tx, run, order, &selection)?;
             match (action, resolved) {
                 (Action::ReleaseWorkOrder, Ok(snapshot))
