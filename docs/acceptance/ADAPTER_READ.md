@@ -35,6 +35,8 @@
 
 运行 `cargo test --locked --test external_observe carbon_native_rejections_do_not_read_community_rest -- --exact` 复跑 Carbon 原生 MCP 失败隔离。初始化返回 402 时只调用一次初始化。工具返回 `isError: true` 时完成初始化并调用一次固定读取工具。两条路径在候选 Observe 均返回来源不可用，已配置的 Carbon 社区 REST 零调用。上游错误正文不进入 Observe 结果。回环覆盖协议响应和隔离，授权实例的真实工具拒绝语义仍待核对。
 
+运行 `cargo test --locked --test external_observe reads_again_after_source_recovery_but_stops_after_revocation -- --exact`。同一工单第一次读取遇到来源故障。来源恢复后，再次请求读取原绑定并返回当前源状态。撤销宿主授权后，再次请求被拒绝，来源调用数保持不变。全过程备用站点零调用。该项是候选入口回环证据。
+
 ### PR 自动回归
 
 GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传输、Observe、本体投影及 Odoo 关联测试，同时复跑 Carbon REST、Carbon MCP 和 Odoo 关联的离线探针用例。默认使用本地回环和合成数据。真实来源和正式 Observe 验收使用各自的获批环境，继续按本台账登记。

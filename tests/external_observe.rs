@@ -130,6 +130,57 @@ async fn unavailable_or_unconfigured_binding_never_reads_another_source() {
 }
 
 #[tokio::test]
+async fn reads_again_after_source_recovery_but_stops_after_revocation() {
+    async fn order(State(calls): State<Arc<AtomicUsize>>) -> impl IntoResponse {
+        match calls.fetch_add(1, Ordering::Relaxed) {
+            0 => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            1 => Json(json!({"data":{"id":4242,"order_no":"WO-42","status":"ACCEPTED"}}))
+                .into_response(),
+            _ => panic!("unexpected request to the bound source"),
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new()
+        .route("/api/v1/work-orders/4242", get(order))
+        .with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (alternate, alternate_calls, alternate_server) = run_source(StatusCode::OK).await;
+    let service = ExternalObserve::new([
+        source(&origin, "site-a", "primary"),
+        source(&alternate, "site-b", "alternate"),
+    ])
+    .unwrap();
+    let selection = WorkOrderSelection {
+        world_id: "world-a",
+        object_ref: "opaque-42",
+    };
+
+    let failed = service
+        .observe(selection, |_| async { Some(granted("site-a", "4242")) })
+        .await;
+    assert_eq!(failed.unwrap_err(), ObserveError::SourceUnavailable);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    let recovered = service
+        .observe(selection, |_| async { Some(granted("site-a", "4242")) })
+        .await
+        .unwrap();
+    assert_eq!(recovered.object_ref, selection.object_ref);
+    assert_eq!(recovered.source_status.as_deref(), Some("ACCEPTED"));
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+
+    let revoked = service.observe(selection, |_| async { None }).await;
+    assert_eq!(revoked.unwrap_err(), ObserveError::AccessDenied);
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    assert_eq!(alternate_calls.load(Ordering::Relaxed), 0);
+    server.abort();
+    alternate_server.abort();
+}
+
+#[tokio::test]
 async fn interrupted_source_response_is_unavailable_without_fallback() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
