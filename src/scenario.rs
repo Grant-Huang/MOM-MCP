@@ -212,11 +212,14 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                         .contains(&Action::IssueMaterialToOperation)
                     && !definition.capabilities.iter().any(|action| matches!(
                         action,
-                        Action::SmtRelease
-                            | Action::SmtRework
-                            | Action::ReturnUnusedMaterial
-                            | Action::ReverseInventoryMovement
-                    ))),
+                        Action::SmtRelease | Action::SmtRework | Action::ReturnUnusedMaterial
+                    ))
+                    && (!definition
+                        .capabilities
+                        .contains(&Action::ReverseInventoryMovement)
+                        || (definition.partial_lot_transfers
+                            && !definition.receipt_reversals
+                            && !definition.operation_material_reversals))),
             "shared SMT inventory requires frozen order release and placement-only consumption"
         );
         setup.validate(
@@ -471,6 +474,20 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             })
         }),
         "equipment recovery requires a primary machining center and a qualified alternate"
+    );
+    anyhow::ensure!(
+        !definition
+            .manufacturing
+            .as_ref()
+            .is_some_and(|setup| setup.operation_genealogy)
+            || [
+                Action::CompleteCoating,
+                Action::TraceSerialBackward,
+                Action::TraceLotForward
+            ]
+            .iter()
+            .all(|action| definition.capabilities.contains(action)),
+        "operation genealogy requires coating and bilateral trace"
     );
     anyhow::ensure!(
         !definition.capabilities.contains(&Action::CompleteCoating)
@@ -868,6 +885,7 @@ impl Scenarios {
             include_str!("../fixtures/cnc-tool-setup.json"),
             include_str!("../fixtures/cnc-machining-inspections.json"),
             include_str!("../fixtures/cnc-device-recovery.json"),
+            include_str!("../fixtures/cnc-operation-genealogy.json"),
             include_str!("../fixtures/assembly-operation-issues.json"),
             include_str!("../fixtures/assembly-materials.json"),
             include_str!("../fixtures/assembly-closed-loop.json"),
@@ -890,6 +908,7 @@ impl Scenarios {
             include_str!("../fixtures/smt-production.json"),
             include_str!("../fixtures/smt-shared-ledger.json"),
             include_str!("../fixtures/smt-lot-holds.json"),
+            include_str!("../fixtures/smt-split-reels.json"),
             include_str!("../fixtures/assembly.json"),
             include_str!("../fixtures/assembly-production.json"),
             include_str!("../fixtures/assembly-public-orders.json"),

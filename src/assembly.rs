@@ -323,7 +323,14 @@ pub(crate) fn genealogy(
         .into_values()
         .flat_map(|order| order.build_reports)
         .collect();
-    crate::genealogy::read(tx, run, action, &reports, args)
+    crate::genealogy::read(
+        tx,
+        run,
+        action,
+        &reports,
+        args,
+        crate::genealogy::Detail::Standard,
+    )
 }
 
 fn has_build(order: &Order) -> bool {
