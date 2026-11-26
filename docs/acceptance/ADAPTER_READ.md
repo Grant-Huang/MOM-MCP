@@ -59,6 +59,8 @@ Carbon 固定提交为 `05bd067c0a72ca9f0983f6278d2a7c9bb48b716c`。用官方社
 
 Carbon 社区版补充 [双会话隔离探针](../references/mcp/README.md#carbon-社区版公司隔离取证)。两个会话先分别读到自己的工单，再交叉读取。查询省略公司过滤，用源端响应验证双向隔离。已在 PostgreSQL 16／PostgREST 12.2.12 中复跑双会话。夹具沿用 Carbon 的视图与工单读取规则，用本地签发的测试 JWT 验证两次范围内读取和两次跨公司空结果。候选宿主仍返回范围内 200 和范围外 404。
 
+Carbon 社区 REST 的双身份探针可额外接收 `MOM_CARBON_EXPIRED_A_TOKEN`。使用公司 A 工单已通过有效会话确认可见后，探针用其过期会话读取同一 ID，要求返回 HTTP 401。复验在回环隔离后端完成，测试凭据保留原会话身份，用隔离实例的签名配置将过期时间置为过去。Rust `external_order_smoke` 用同一绑定分别传入有效、过期和有效令牌，结果依次为成功、脱敏的来源不可用、成功。双向跨公司查询仍返回空结果。正式宿主服务身份撤权另行验收。[探针](../references/mcp/carbon-community-smoke.mjs)
+
 ## AgentNexus 正式接口联审输入
 
 AgentNexus `175e07b` 已包含 PR #228 的 M3 桩路径准出。正式接入需要从可访问的 Git 提交解析独立 adapter crate。先完成 [宿主 Git 依赖复跑](../EXTERNAL_ADAPTER_DESIGN.md#宿主依赖复跑)，再评审真实身份、凭据及出站配置，并经正式 Observe 运行三源验收。另备 [AgentNexus 整仓依赖复跑](../EXTERNAL_ADAPTER_DESIGN.md#agentnexus-整仓依赖复跑)，从干净的宿主提交读取正式 M3 合同和 adapter 夹具测试。 [M3-5 准出证据](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/175e07b/docs/testing/evidence/wa-m3-5.md)

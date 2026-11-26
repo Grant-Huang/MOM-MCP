@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 
 class ProbeError extends Error {}
 
-export async function checkCommunityIsolation({ origin, projectKey, a, b, request = fetch }) {
+export async function checkCommunityIsolation({ origin, projectKey, a, b, expiredToken, request = fetch }) {
   if (!URL.canParse(origin)) throw new ProbeError("Invalid Supabase origin");
   const endpoint = new URL(origin);
   const loopback = ["127.0.0.1", "[::1]"].includes(endpoint.hostname);
@@ -18,15 +18,23 @@ export async function checkCommunityIsolation({ origin, projectKey, a, b, reques
     throw new ProbeError("Provide distinct company sessions and job IDs");
   }
 
-  async function read(session, job, label) {
+  if (expiredToken !== undefined && (!present(expiredToken) || [a.token, b.token].includes(expiredToken))) {
+    throw new ProbeError("Provide a distinct expired test session");
+  }
+
+  function readResponse(session, job) {
     const url = new URL("/rest/v1/jobs", endpoint);
     url.search = new URLSearchParams({ select: "id,companyId,jobId,status", id: `eq.${job}`, limit: "2" });
-    const response = await request(url, {
+    return request(url, {
       method: "GET",
       redirect: "error",
       headers: { apikey: projectKey, Authorization: `Bearer ${session}`, Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     });
+  }
+
+  async function read(session, job, label) {
+    const response = await readResponse(session, job);
     if (response.status !== 200) throw new ProbeError(`${label} returned HTTP ${response.status}`);
     const rows = await response.json();
     if (!Array.isArray(rows) || rows.length > 1) throw new ProbeError(`${label} returned invalid cardinality`);
@@ -44,7 +52,15 @@ export async function checkCommunityIsolation({ origin, projectKey, a, b, reques
   const fromA = await read(a.token, b.job, "Company A cross-company read");
   const fromB = await read(b.token, a.job, "Company B cross-company read");
   if (fromA.length || fromB.length) throw new ProbeError("A cross-company job was visible");
-  return { ownCompany: { a: "record", b: "record" }, otherCompany: { a: "empty", b: "empty" } };
+  const report = { ownCompany: { a: "record", b: "record" }, otherCompany: { a: "empty", b: "empty" } };
+  if (expiredToken !== undefined) {
+    const expired = await readResponse(expiredToken, a.job);
+    if (expired.status !== 401) {
+      throw new ProbeError(`Expired own-job read expected HTTP 401, received ${expired.status}`);
+    }
+    return { ...report, expiredOwnJob: "unauthorized" };
+  }
+  return report;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -53,6 +69,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.log(JSON.stringify(await checkCommunityIsolation({
       origin: env.MOM_CARBON_REST_ORIGIN,
       projectKey: env.MOM_CARBON_PROJECT_KEY,
+      expiredToken: env.MOM_CARBON_EXPIRED_A_TOKEN,
       a: { token: env.MOM_CARBON_A_TOKEN, job: env.MOM_CARBON_A_JOB_ID },
       b: { token: env.MOM_CARBON_B_TOKEN, job: env.MOM_CARBON_B_JOB_ID },
     })));

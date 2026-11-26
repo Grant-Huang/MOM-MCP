@@ -61,3 +61,16 @@ test("rejects unsafe endpoints and invalid filters before any request", async ()
   await assert.rejects(checkCommunityIsolation({ ...config, b: { ...config.b, job: "bad,id" } }), /distinct company sessions/);
   assert.equal(config.calls.length, 0);
 });
+
+test("requires HTTP 401 when an expired session reads its own known-visible job", async () => {
+  const config = fixture((rows, user) => user === "x"
+    ? new Response(null, { status: 401 }) : Response.json(rows));
+  config.expiredToken = "fixture-user-x";
+  const report = await checkCommunityIsolation(config);
+  assert.deepEqual(config.calls.at(-1), ["x", "a"]);
+  assert.equal(report.expiredOwnJob, "unauthorized");
+
+  const accepted = fixture();
+  accepted.expiredToken = config.expiredToken;
+  await assert.rejects(checkCommunityIsolation(accepted), /expected HTTP 401, received 200/);
+});
