@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup, machiningInspections, deviceRecovery, operationGenealogy, smtSplitReel, smtSplice, smtAoiReview } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup, machiningInspections, deviceRecovery, operationGenealogy, smtSplitReel, smtSplice, smtAoiReview, smtRecallImpact } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -170,6 +170,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9D-19 Replenish after a quality reinspection", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", replenish: true },
   { title: "P9D-21 Hold WIP across workshops", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, crossShopHold: true },
   { title: "P9D-23 Trace SMT placement through the common stock ledger", scenario: "smt@3", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true },
+  { title: "P11-07 Preview and isolate SMT recall across orders", scenario: "smt@8", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplice: true, smtRecallImpact: true },
   { title: "P11-05 Review failed SMT AOI by board", scenario: "smt@7", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplice: true, smtAoiReview: true },
   { title: "P11-03 Trace both sides of an SMT reel splice", scenario: "smt@6", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplice: true },
   { title: "P11-UI Split a reel and trace SMT placement", scenario: "smt@5", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplitReel: true },
@@ -239,7 +240,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
     await write("release_work_order", { ...order, snapshot_fingerprint: ready.definition_snapshot.fingerprint });
     const receipt = { receipt_id: "RC-1" };
     const lot = { lot_id: sharedSmt ? "REEL-C" : "LOT-1" };
-    await write("create_receipt", { ...receipt, item_id: "WIRE", revision: 1, quantity: smtSplitReel ? "3" : "2", requires_inspection: false });
+    await write("create_receipt", { ...receipt, item_id: "WIRE", revision: 1, quantity: smtSplitReel || smtRecallImpact ? "3" : "2", requires_inspection: false });
     await write("assign_receipt_tracking", { ...receipt, ...lot, supplier_lot: "SUP-42", location: "RAW-02" });
     await write("post_receipt", receipt);
     if (sharedSmt) {
@@ -275,6 +276,35 @@ for (const { title, scenario, work_order, operation, work_center, report, return
           cursor = JSON.parse(await status.textContent()).cursor;
         }
         await write("smt_split", { panel: "P-A" });
+        if (smtRecallImpact) {
+          const second = { ...order, work_order: "WO-B" };
+          const ready = await invoke("get_release_readiness", second);
+          await write("release_work_order", { ...second, snapshot_fingerprint: ready.definition_snapshot.fingerprint });
+          await write("create_stock_transfer", { lot_id: "REEL-C", transfer_id: "TR-C", child_lot_id: "REEL-C-B", quantity: "2",
+            source_location: "RAW-02", destination_location: "RAW-01", reason: "second feeder" });
+          await write("post_stock_transfer", { transfer_id: "TR-C" });
+          await write("reserve_material", { work_order: "WO-B", lot_id: "REEL-C-B", reservation_id: "RS-B", quantity: "2" });
+          await write("pick_material", { reservation_id: "RS-B" });
+          await write("issue_material_to_operation", { reservation_id: "RS-B", operation });
+          await write("smt_load", { reel: "REEL-C-B", slot: "F2" });
+          await write("smt_place", { panel: "P-B", slot: "F2", reservation_id: "RS-B" });
+          const control = async (name, arguments_) => (await page.request.post("/api/scenarios", { data: { name, arguments: { run_id, ...arguments_ } } })).json();
+          expect((await control("advance_run", { max_events: 2 })).ok).toBe(true);
+          const events = await control("read_events", {});
+          const event_cursor = events.events.find(event => event.kind === "supplier_recall").cursor;
+          await page.getByLabel("匹配工具").selectOption("smt_get_recall_impact");
+          await page.getByLabel("JSON 参数").fill(JSON.stringify({ event_cursor }));
+          await button("调用工具").click();
+          await expect(status).toContainText('"targets"');
+          const impact = JSON.parse(await status.textContent());
+          expect(impact.targets.map(({ work_order, serial, split }) => [work_order, serial, split])).toEqual([
+            ["WO-A", "A-01", true], ["WO-B", "B-01", false], ["WO-B", "B-02", false],
+          ]);
+          const isolated = await invoke("smt_isolate", { event_cursor, idempotency_key: "isolate-ui" });
+          expect(isolated).toMatchObject({ affected: ["A-01"], pending_serials: ["B-01", "B-02"] });
+          expect((await invoke("smt_finish", { serial: "A-02", idempotency_key: "finish-ui" })).finished).toBe(true);
+          return;
+        }
         if (smtAoiReview) {
           const fail = await invoke("smt_finish", { serial: "A-01", idempotency_key: "held-a" });
           expect(fail.code).toBe("QUALITY_HOLD");

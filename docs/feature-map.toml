@@ -1193,3 +1193,19 @@ spec = "acceptance/P11.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P11-05 Review failed SMT AOI by board" }
+
+[[case]]
+id = "P11-06"
+phase = "P11"
+spec = "acceptance/P11.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p11_06_smt_recall_impact_across_orders" }
+
+[[case]]
+id = "P11-07"
+phase = "P11"
+spec = "acceptance/P11.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P11-07 Preview and isolate SMT recall across orders" }

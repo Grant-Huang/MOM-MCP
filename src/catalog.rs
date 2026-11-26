@@ -121,6 +121,7 @@ pub enum Action {
     SmtStatus,
     SmtTrace,
     SmtIsolate,
+    SmtGetRecallImpact,
     SmtRework,
     SmtRetest,
     SmtScrap,

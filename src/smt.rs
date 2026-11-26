@@ -59,6 +59,12 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "inventory",
     ),
     (
+        Action::SmtGetRecallImpact,
+        "smt_get_recall_impact",
+        "预检召回涉及的工单、拼板和单板",
+        "quality",
+    ),
+    (
         Action::SmtIsolate,
         "smt_isolate",
         "按召回通知隔离受影响板卡",
@@ -93,13 +99,16 @@ pub fn spec(action: Action) -> Spec {
         Action::SmtSplit => vec!["panel"],
         Action::SmtFinish => vec!["serial"],
         Action::SmtTrace => vec!["subject"],
-        Action::SmtIsolate => vec!["event_cursor"],
+        Action::SmtIsolate | Action::SmtGetRecallImpact => vec!["event_cursor"],
         Action::SmtRework => vec!["serial", "replacement_reel", "reason"],
         Action::SmtRetest => vec!["serial", "result"],
         Action::SmtScrap => vec!["serial", "reason"],
         _ => unreachable!(),
     };
-    let read = matches!(action, Action::SmtStatus | Action::SmtTrace);
+    let read = matches!(
+        action,
+        Action::SmtStatus | Action::SmtTrace | Action::SmtGetRecallImpact
+    );
     if !read {
         required.push("idempotency_key");
     }
@@ -129,6 +138,24 @@ pub fn spec(action: Action) -> Spec {
             object(&["ok","panel","aoi_review","cursor"],json!({"ok":{"const":true},"panel":text(),"aoi_review":review,"cursor":cursor})),
             object(&["ok","code"],json!({"ok":{"const":false},"code":text()}))
         ]})
+    } else if action == Action::SmtGetRecallImpact {
+        let target = object(
+            &[
+                "work_order",
+                "panel",
+                "serial",
+                "actual_reel",
+                "split",
+                "previously_finished",
+            ],
+            json!({"work_order":text(),"panel":text(),"serial":text(),"actual_reel":text(),
+                "split":{"type":"boolean"},"previously_finished":{"type":"boolean"}}),
+        );
+        json!({"oneOf":[
+            object(&["ok","reel","event_cursor","targets"],json!({"ok":{"const":true},"reel":text(),
+                "event_cursor":fields["event_cursor"],"targets":{"type":"array","items":target}})),
+            object(&["ok","code"],json!({"ok":{"const":false},"code":text()}))
+        ]})
     } else {
         json!({"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"},"code":{"type":"string"}}})
     };
@@ -144,6 +171,8 @@ pub fn spec(action: Action) -> Spec {
         errors: &[
             "INVALID_STATE",
             "REEL_RECALLED",
+            "RECALL_NOT_DELIVERED",
+            "RECALL_ALREADY_ISOLATED",
             "QUALITY_HOLD",
             "MATERIAL_HELD",
             "REEL_NOT_FOUND",
@@ -172,6 +201,8 @@ pub struct Setup {
     pub(crate) spliced_placement: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) aoi_review: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) recall_impact: bool,
     reels: BTreeMap<String, usize>,
     panels: BTreeMap<String, PanelDefinition>,
 }
@@ -356,6 +387,63 @@ fn current_reel<'a>(board: &'a Board, panel: &'a Panel, serial: &str) -> &'a str
         .unwrap_or_else(|| panel.reel_for(serial))
 }
 
+fn affected_reel(parents: &BTreeMap<String, Option<String>>, reel: &str, recalled: &str) -> bool {
+    reel == recalled || parents.get(reel).and_then(Option::as_deref) == Some(recalled)
+}
+
+fn reel_parents(
+    tx: &Transaction<'_>,
+    run: &str,
+) -> rusqlite::Result<BTreeMap<String, Option<String>>> {
+    let mut query = tx.prepare("SELECT lot,parent_lot FROM stock_available_lots WHERE run=?1 AND posted_cursor IS NOT NULL AND unit='each'")?;
+    query
+        .query_map([run], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect()
+}
+
+#[derive(Serialize)]
+struct RecallTarget<'a> {
+    work_order: &'a str,
+    panel: &'a str,
+    serial: &'a str,
+    actual_reel: &'a str,
+    split: bool,
+    previously_finished: bool,
+}
+
+fn recall_targets<'a>(
+    state: &'a State,
+    setup: &'a Setup,
+    parents: &BTreeMap<String, Option<String>>,
+    reel: &str,
+) -> Vec<RecallTarget<'a>> {
+    let mut targets = Vec::new();
+    for (id, panel) in &state.panels {
+        let definition = &setup.panels[id];
+        for serial in &definition.serials {
+            let board = state.boards.get(serial);
+            let actual = board.map_or_else(
+                || panel.reel_for(serial),
+                |board| current_reel(board, panel, serial),
+            );
+            if board.is_some_and(|board| board.quality == Quality::Scrapped)
+                || !affected_reel(parents, actual, reel)
+            {
+                continue;
+            }
+            targets.push(RecallTarget {
+                work_order: &definition.order,
+                panel: id,
+                serial,
+                actual_reel: actual,
+                split: board.is_some(),
+                previously_finished: board.is_some_and(|board| board.finished),
+            });
+        }
+    }
+    targets
+}
+
 pub fn work_order_status(
     tx: &Transaction<'_>,
     run: &str,
@@ -524,6 +612,22 @@ pub fn invoke(
             .collect();
         return Ok((json!({"ok":true,"links":links,"panels":panels}), false));
     }
+    if action == Action::SmtGetRecallImpact {
+        let event_cursor = args["event_cursor"].as_u64().unwrap() as usize;
+        let Some(reel) = events.get(event_cursor - 1).and_then(recall) else {
+            return Ok((failure("RECALL_NOT_DELIVERED"), false));
+        };
+        let parents = if setup.split_reels {
+            reel_parents(tx, run)?
+        } else {
+            BTreeMap::new()
+        };
+        let targets = recall_targets(&state, setup, &parents, reel);
+        return Ok((
+            json!({"ok":true,"reel":reel,"event_cursor":event_cursor,"targets":targets}),
+            false,
+        ));
+    }
     let key = args["idempotency_key"].as_str().unwrap();
     let request = json!({"action":action,"arguments":args}).to_string();
     let saved: Option<(String, String)> = tx
@@ -594,12 +698,7 @@ pub fn invoke(
     }
     let mut reel_parents = BTreeMap::new();
     if setup.split_reels {
-        let mut query = tx.prepare("SELECT lot,parent_lot FROM stock_available_lots WHERE run=?1 AND posted_cursor IS NOT NULL AND unit='each'")?;
-        reel_parents = query
-            .query_map([run], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
+        reel_parents = self::reel_parents(tx, run)?;
         if matches!(action, Action::SmtLoad | Action::SmtSpliceReel) {
             let reel = args["reel"].as_str().unwrap();
             if !reel_parents.contains_key(reel) {
@@ -774,14 +873,12 @@ fn apply(
     reel_parents: &BTreeMap<String, Option<String>>,
 ) -> Value {
     let string = |field: &str| args[field].as_str().unwrap();
-    let affected_reel = |reel: &str, recalled: &str| {
-        reel == recalled || reel_parents.get(reel).and_then(Option::as_deref) == Some(recalled)
-    };
+    let matches_recall = |reel: &str, recalled: &str| affected_reel(reel_parents, reel, recalled);
     let recalled = |reel: &str| {
         events
             .iter()
             .filter_map(recall)
-            .any(|root| affected_reel(reel, root))
+            .any(|root| matches_recall(reel, root))
     };
     match action {
         Action::SmtRelease | Action::ReleaseWorkOrder => {
@@ -955,9 +1052,34 @@ fn apply(
             if !state.isolated.insert(cursor) {
                 return failure("RECALL_ALREADY_ISOLATED");
             }
+            if setup.recall_impact {
+                let targets = recall_targets(state, setup, reel_parents, reel);
+                let affected: Vec<_> = targets
+                    .iter()
+                    .filter(|target| target.split)
+                    .map(|target| target.serial.to_owned())
+                    .collect();
+                let pending: Vec<_> = targets
+                    .iter()
+                    .filter(|target| !target.split)
+                    .map(|target| target.serial)
+                    .collect();
+                let panels: BTreeSet<_> = targets.iter().map(|target| target.panel).collect();
+                let result = json!({"ok":true,"affected":affected,"affected_panels":panels,
+                    "pending_serials":pending,"reel":reel,"event_cursor":cursor});
+                for serial in affected {
+                    let board = state.boards.get_mut(&serial).unwrap();
+                    board.quality = Quality::Held;
+                    board.finished = false;
+                    board
+                        .history
+                        .push(json!({"action":"isolate","event_cursor":cursor}));
+                }
+                return result;
+            }
             let mut affected = Vec::new();
             for (serial, board) in &mut state.boards {
-                if affected_reel(
+                if matches_recall(
                     current_reel(board, &state.panels[&board.panel], serial),
                     reel,
                 ) && board.quality != Quality::Scrapped
@@ -975,12 +1097,12 @@ fn apply(
                 .iter()
                 .filter(|(_, panel)| {
                     if panel.placement_sources.is_empty() {
-                        affected_reel(&panel.reel, reel)
+                        matches_recall(&panel.reel, reel)
                     } else {
                         panel
                             .placement_sources
                             .values()
-                            .any(|source| affected_reel(&source.reel, reel))
+                            .any(|source| matches_recall(&source.reel, reel))
                     }
                 })
                 .map(|(id, _)| id)

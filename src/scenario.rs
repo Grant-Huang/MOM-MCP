@@ -205,6 +205,14 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     .map_err(|reason| anyhow::anyhow!("model configuration: {reason}"))?;
     if let Some(setup) = &definition.smt {
         anyhow::ensure!(
+            definition
+                .capabilities
+                .contains(&Action::SmtGetRecallImpact)
+                == setup.recall_impact
+                && (!setup.recall_impact || definition.capabilities.contains(&Action::SmtIsolate)),
+            "SMT recall impact requires isolation"
+        );
+        anyhow::ensure!(
             definition.capabilities.contains(&Action::SmtReviewAoi) == setup.aoi_review
                 && (!setup.aoi_review
                     || [Action::SmtAoi, Action::SmtSplit, Action::SmtFinish]
@@ -923,6 +931,7 @@ impl Scenarios {
             include_str!("../fixtures/smt-split-reels.json"),
             include_str!("../fixtures/smt-spliced-placement.json"),
             include_str!("../fixtures/smt-aoi-review.json"),
+            include_str!("../fixtures/smt-recall-impact.json"),
             include_str!("../fixtures/assembly.json"),
             include_str!("../fixtures/assembly-production.json"),
             include_str!("../fixtures/assembly-public-orders.json"),
