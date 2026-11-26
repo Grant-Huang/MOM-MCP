@@ -130,6 +130,61 @@ async fn unavailable_or_unconfigured_binding_never_reads_another_source() {
 }
 
 #[tokio::test]
+async fn interrupted_source_response_is_unavailable_without_fallback() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let primary = format!("http://{}", listener.local_addr().unwrap());
+    let primary_task = tokio::spawn(async move {
+        let (connection, _) = listener.accept().await.unwrap();
+        let mut connection = BufReader::new(connection);
+        let mut line = String::new();
+        connection.read_line(&mut line).await.unwrap();
+        assert_eq!(line, "GET /api/v1/work-orders/4242 HTTP/1.1\r\n");
+        loop {
+            line.clear();
+            assert_ne!(connection.read_line(&mut line).await.unwrap(), 0);
+            if line == "\r\n" {
+                break;
+            }
+        }
+
+        // The body looks complete as JSON but ends before the advertised byte count.
+        let body = r#"{"data":{"id":4242,"order_no":"WO-42","status":"PENDING"}}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len() + 1,
+        );
+        let mut connection = connection.into_inner();
+        connection.write_all(response.as_bytes()).await.unwrap();
+        connection.shutdown().await.unwrap();
+    });
+    let (alternate, alternate_calls, alternate_task) = run_source(StatusCode::OK).await;
+    let service = ExternalObserve::new([
+        source(&primary, "site-a", "primary"),
+        source(&alternate, "site-b", "alternate"),
+    ])
+    .unwrap();
+
+    let result = service
+        .observe(
+            WorkOrderSelection {
+                world_id: "world-a",
+                object_ref: "opaque-42",
+            },
+            |_| async { Some(granted("site-a", "4242")) },
+        )
+        .await;
+    assert_eq!(result.unwrap_err(), ObserveError::SourceUnavailable);
+    assert_eq!(alternate_calls.load(Ordering::Relaxed), 0);
+    tokio::time::timeout(std::time::Duration::from_secs(2), primary_task)
+        .await
+        .expect("the bound source must receive the request")
+        .unwrap();
+    alternate_task.abort();
+}
+
+#[tokio::test]
 async fn source_failures_keep_their_classification_without_fallback() {
     use axum::routing::post;
 
