@@ -126,6 +126,7 @@ it.each(["status guard", "release workflow"] as const)(
 					stdio: "inherit",
 				},
 			);
+			return updatedAt;
 		};
 
 		const update = () =>
@@ -144,11 +145,12 @@ it.each(["status guard", "release workflow"] as const)(
 				const applied = await update();
 				expect(applied.error).toBeNull();
 				expect(applied.updated).toBe(true);
-				await read("Ready", true);
+				const appliedAt = await read("Ready", true);
 
 				const repeated = await update();
 				expect(repeated.error).toBeNull();
 				expect(repeated.updated).toBe(false);
+				expect(await read("Ready", true)).toBe(appliedAt);
 			} else {
 				const location = await admin
 					.from("location")
@@ -410,12 +412,14 @@ it.each(["status guard", "release workflow"] as const)(
 						.single();
 					expect(released.error).toBeNull();
 					expect(released.data?.releasedDate).toBeTruthy();
+					const releasedAt = await read("Ready", true);
 					const repeated = await releaseJobs(ctx, { jobIds: [id] });
 					expect(repeated.error).toBeNull();
 					expect(repeated.data?.released).toEqual([]);
 					expect(
 						repeated.data?.skipped.map((job) => [job.jobId, job.status]),
 					).toEqual([[id, "Ready"]]);
+					expect(await read("Ready", true)).toBe(releasedAt);
 					expect(await readPickingLines()).toEqual(picking);
 					const line = picking![0];
 					expect(line.toStorageUnitId).not.toBe(bin.data!.id);

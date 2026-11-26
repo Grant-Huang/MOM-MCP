@@ -24,13 +24,13 @@
 
 ### 真实 Carbon 状态守卫与读回
 
-固定 Carbon 提交与隔离社区后端上，`updateJobStatus` 使用真实认证会话和 PostgREST，按公司、Job ID 和前置状态更新一张新建的合成 Job。Rust Adapter 在更新前读到 `Draft`，更新后按同一 ID 读到 `Ready`。重复请求未命中前置状态。每次读回也核对另一公司已知 Job 不可见。测试替身记录到一次放行事件调用，实际事件投递待另验。
+固定 Carbon 提交与隔离社区后端上，`updateJobStatus` 使用真实认证会话和 PostgREST，按公司、Job ID 和前置状态更新一张新建的合成 Job。Rust Adapter 在更新前读到 `Draft`，更新后按同一 ID 读到 `Ready`。重复请求未命中前置状态，Adapter 再次读到 `Ready`，源更新时间与首次成功更新后的值相同。每次读回也核对另一公司已知 Job 不可见。测试替身记录到一次放行事件调用，实际事件投递待另验。
 
 复跑时，先构建 MOM-MCP 的 `external_order_smoke`，把 [真实来源测试](../references/mcp/carbon-status-guard-live.test.ts) 复制到固定 Carbon 检出的 `apps/erp/test`，在 `apps/erp` 执行 `node_modules/.bin/vitest run test/carbon-status-guard-live.test.ts`。环境提供回环网关 `MOM_CARBON_REST_ORIGIN`、公开项目键 `MOM_CARBON_PROJECT_KEY`、具备测试公司 Job 更新权限的用户会话 `MOM_SAMPLE_TOKEN`、由另一身份确认存在的 `MOM_CARBON_OTHER_JOB_ID`，以及 Rust 示例的绝对路径 `MOM_CARBON_ADAPTER_SMOKE`。隔离服务凭据 `MOM_CARBON_TEST_SERVICE_KEY` 用于夹具设置、清理和 Carbon 内部服务调用。Rust 示例只接收用户会话和公开项目键。CLI 类型生成未启动成功，数据库、认证和 PostgREST 已独立运行并通过此测试。
 
 ### 真实 Carbon 最小放行流程
 
-同一测试文件还运行上游 `releaseJobs`。测试额外需要指向隔离 PostgreSQL 的 `SUPABASE_DB_URL`。Carbon 默认的 Vitest 配置使用占位服务凭据，测试只在回环环境为该 worker 设置实际测试栈绑定。用例创建独立库位、Job 和内部工序，运行真实 PostgREST、PostgreSQL 和放行函数。检查该 Job 在成功列表中、返回已调度且无警告，放行日期已写入，Rust 按同一 ID 从 `Draft` 读回 `Ready`。再次放行按 `Ready` 跳过。两个用例均在固定社区后端通过。
+同一测试文件还运行上游 `releaseJobs`。测试额外需要指向隔离 PostgreSQL 的 `SUPABASE_DB_URL`。Carbon 默认的 Vitest 配置使用占位服务凭据，测试只在回环环境为该 worker 设置实际测试栈绑定。用例创建独立库位、Job 和内部工序，运行真实 PostgREST、PostgreSQL 和放行函数。检查该 Job 在成功列表中、返回已调度且无警告，放行日期已写入，Rust 按同一 ID 从 `Draft` 读回 `Ready`。再次放行按 `Ready` 跳过，跳过前后 Adapter 读到同一源更新时间。两个用例均在固定社区后端通过。
 
 最小放行用例还在同一 Job 上验证两次拒绝和恢复。没有工序时拒绝；补上内部工序后，把生产数量改为零，再次拒绝。两次均保留 `Draft`，放行日期为空，事件替身调用数为零，并用 Rust Adapter 读回当前状态。恢复正数量后，原 Job 放行到 `Ready`。测试只修改合成 Job 及其独立库位，公司级备料设置维持原值。
 
