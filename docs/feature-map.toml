@@ -1337,3 +1337,19 @@ spec = "acceptance/P13.md"
 features = ["F08", "F09", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P13-04 Route a wide sheet to a compatible laser" }
+
+[[case]]
+id = "P13-05"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p13_05_sheet_remnant_return_and_reuse" }
+
+[[case]]
+id = "P13-06"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P13-06 Return and reuse a sheet remnant" }

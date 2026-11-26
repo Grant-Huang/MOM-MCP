@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    Action, Event, Map, PART_AREA, SCRAP_AREA, Sheet, Spec, Stock, Value, error, event_matching,
-    json, object, text,
+    Action, Event, Map, PART_AREA, SCRAP_AREA, Setup, Sheet, Spec, Stock, Value, error,
+    event_matching, json, object, text,
 };
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +31,12 @@ pub(super) const TOOLS: &[(Action, &str, &str, &str)] = &[
         "取消待切套料并释放板材",
         "production",
     ),
+    (
+        Action::ReturnSheetRemnant,
+        "return_sheet_remnant",
+        "返库并登记可复用余料",
+        "inventory",
+    ),
 ];
 
 pub(super) fn spec(action: Action) -> Spec {
@@ -46,6 +52,10 @@ pub(super) fn spec(action: Action) -> Spec {
         fields["stock"] = text();
         fields["work_orders"] =
             json!({"type":"array","minItems":1,"maxItems":20,"items":text(),"uniqueItems":true});
+    }
+    if action == Action::ReturnSheetRemnant {
+        required.push("remnant_id");
+        fields["remnant_id"] = text();
     }
     if action == Action::CutSheetNest {
         required.push("machine");
@@ -72,7 +82,7 @@ pub(super) fn spec(action: Action) -> Spec {
         ],
         json!({"nest_id":text(),"stock":text(),"lot":text(),"status":{"enum":["planned","cut","cancelled"]},
         "order_area_mm2":{"type":"object","additionalProperties":area},
-        "input_mm2":area,"product_mm2":area,"scrap_mm2":area,"remnant_mm2":area,"machine":text(),
+        "input_mm2":area,"product_mm2":area,"scrap_mm2":area,"remnant_mm2":area,"machine":text(),"remnant_dimensions":dimensions,"returned_remnant":text(),"parent_stock":text(),
         "dimensional_fit":object(&["stock_dimensions","size_grade","order_footprints","eligible_machines"], json!({
             "stock_dimensions":dimensions,"size_grade":{"enum":["standard","wide","strip"]},
             "order_footprints":{"type":"object","additionalProperties":dimensions},
@@ -112,6 +122,9 @@ pub(super) fn spec(action: Action) -> Spec {
             "INSUFFICIENT_AREA",
             "STOCK_DIMENSIONS_INSUFFICIENT",
             "NEST_NOT_FOUND",
+            "NO_REUSABLE_REMNANT",
+            "REMNANT_ALREADY_RETURNED",
+            "STOCK_ID_EXISTS",
             "INVALID_STATE",
             "MACHINE_NOT_CAPABLE",
             "MACHINE_UNAVAILABLE",
@@ -162,14 +175,20 @@ struct DimensionalFit {
 }
 
 impl DimensionalFit {
-    fn for_stock(stock: &str, orders: &BTreeMap<String, u64>) -> Self {
-        let (stock_dimensions, size_grade) = match stock {
-            "SHEET-FULL" => (Dimensions::new(60, 30), "wide"),
-            "REM-OK" => (Dimensions::new(50, 20), "standard"),
-            "REM-SMALL" => (Dimensions::new(65, 10), "strip"),
-            "REM-STRIP" => (Dimensions::new(75, 12), "strip"),
-            _ => unreachable!("eligible stock has registered dimensions"),
-        };
+    fn for_stock(
+        stock: &str,
+        orders: &BTreeMap<String, u64>,
+        returned: Option<Dimensions>,
+    ) -> Self {
+        let (stock_dimensions, size_grade) = returned
+            .map(|dimensions| (dimensions, "standard"))
+            .unwrap_or_else(|| match stock {
+                "SHEET-FULL" => (Dimensions::new(60, 30), "wide"),
+                "REM-OK" => (Dimensions::new(50, 20), "standard"),
+                "REM-SMALL" => (Dimensions::new(65, 10), "strip"),
+                "REM-STRIP" => (Dimensions::new(75, 12), "strip"),
+                _ => unreachable!("eligible stock has registered dimensions"),
+            });
         let order_footprints = orders
             .keys()
             .map(|order| {
@@ -210,6 +229,12 @@ struct Nest {
     machine: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dimensional_fit: Option<DimensionalFit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    remnant_dimensions: Option<Dimensions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    returned_remnant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_stock: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -249,16 +274,44 @@ impl Nesting {
         args: &Map<String, Value>,
         events: &[Event],
         orders: &[String],
-        dimensional: bool,
+        setup: Setup,
     ) -> Value {
         let id = args["nest_id"].as_str().unwrap();
         if action == Action::CreateSheetNest {
-            return self.create(id, args, events, orders, dimensional);
+            return self.create(id, args, events, orders, setup);
         }
         let Some(nest) = self.nests.get_mut(id) else {
             return error("NEST_NOT_FOUND");
         };
         if action == Action::GetSheetNest {
+            return json!({"ok":true,"nest":nest});
+        }
+        if action == Action::ReturnSheetRemnant {
+            if nest.status != Status::Cut {
+                return error("INVALID_STATE");
+            }
+            if nest.returned_remnant.is_some() {
+                return error("REMNANT_ALREADY_RETURNED");
+            }
+            if nest.remnant_dimensions.is_none() {
+                return error("NO_REUSABLE_REMNANT");
+            }
+            let remnant = args["remnant_id"].as_str().unwrap();
+            if self.inventory.contains_key(remnant) {
+                return error("STOCK_ID_EXISTS");
+            }
+            let source = &self.inventory[&nest.stock];
+            self.inventory.insert(
+                remnant.into(),
+                Stock {
+                    lot: source.lot.clone(),
+                    alloy: source.alloy.clone(),
+                    area_mm2: nest.remnant_mm2,
+                    eligible: true,
+                    parent: Some(nest.stock.clone()),
+                },
+            );
+            nest.returned_remnant = Some(remnant.into());
             return json!({"ok":true,"nest":nest});
         }
         if nest.status != Status::Planned {
@@ -294,7 +347,7 @@ impl Nesting {
         args: &Map<String, Value>,
         events: &[Event],
         orders: &[String],
-        dimensional: bool,
+        setup: Setup,
     ) -> Value {
         if self.nests.contains_key(id) {
             return error("DUPLICATE_NEST");
@@ -335,8 +388,13 @@ impl Nesting {
         {
             return error("STOCK_RESERVED");
         }
-        let dimensional_fit =
-            dimensional.then(|| DimensionalFit::for_stock(stock_id, &order_area_mm2));
+        let returned = self
+            .nests
+            .values()
+            .find(|nest| nest.returned_remnant.as_deref() == Some(stock_id))
+            .and_then(|nest| nest.remnant_dimensions);
+        let dimensional_fit = (setup != Setup::SheetNesting)
+            .then(|| DimensionalFit::for_stock(stock_id, &order_area_mm2, returned));
         if dimensional_fit.as_ref().is_some_and(|fit| {
             fit.order_footprints
                 .values()
@@ -345,8 +403,30 @@ impl Nesting {
             return error("STOCK_DIMENSIONS_INSUFFICIENT");
         }
         let product_mm2 = order_area_mm2.values().sum::<u64>();
-        let Some(remnant_mm2) = stock.area_mm2.checked_sub(product_mm2 + SCRAP_AREA) else {
+        let Some(area_after_minimum_scrap) = stock.area_mm2.checked_sub(product_mm2 + SCRAP_AREA)
+        else {
             return error("INSUFFICIENT_AREA");
+        };
+        // Preserve only a rectangular offcut outside the single row reserved for parts.
+        let remnant_dimensions = dimensional_fit
+            .as_ref()
+            .filter(|_| setup == Setup::SheetRemnantNesting)
+            .and_then(|fit| {
+                let stock = fit.stock_dimensions;
+                let ordered_length = fit
+                    .order_footprints
+                    .values()
+                    .map(|part| part.length_mm)
+                    .sum::<u64>();
+                let length = stock.length_mm.saturating_sub(
+                    ordered_length.max((product_mm2 + SCRAP_AREA).div_ceil(stock.width_mm)),
+                );
+                (length > 0).then(|| Dimensions::new(length, stock.width_mm))
+            });
+        let remnant_mm2 = if setup == Setup::SheetRemnantNesting {
+            remnant_dimensions.map_or(0, |shape| shape.length_mm * shape.width_mm)
+        } else {
+            area_after_minimum_scrap
         };
         let nest = Nest {
             nest_id: id.into(),
@@ -356,10 +436,15 @@ impl Nesting {
             order_area_mm2,
             input_mm2: stock.area_mm2,
             product_mm2,
-            scrap_mm2: SCRAP_AREA,
+            scrap_mm2: stock.area_mm2 - product_mm2 - remnant_mm2,
             remnant_mm2,
             machine: None,
             dimensional_fit,
+            remnant_dimensions,
+            returned_remnant: None,
+            parent_stock: (setup == Setup::SheetRemnantNesting)
+                .then(|| stock.parent.clone())
+                .flatten(),
         };
         let response = json!({"ok":true,"nest":nest});
         self.nests.insert(id.into(), nest);
