@@ -205,6 +205,11 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     .map_err(|reason| anyhow::anyhow!("model configuration: {reason}"))?;
     if let Some(setup) = &definition.smt {
         anyhow::ensure!(
+            !setup.shared_material
+                || definition.capabilities.contains(&Action::SmtRework) == setup.shared_rework,
+            "shared SMT rework requires issued replacement material"
+        );
+        anyhow::ensure!(
             definition
                 .capabilities
                 .contains(&Action::SmtGetRecallImpact)
@@ -232,7 +237,7 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
                         .contains(&Action::IssueMaterialToOperation)
                     && !definition.capabilities.iter().any(|action| matches!(
                         action,
-                        Action::SmtRelease | Action::SmtRework | Action::ReturnUnusedMaterial
+                        Action::SmtRelease | Action::ReturnUnusedMaterial
                     ))
                     && (!definition
                         .capabilities
@@ -932,6 +937,7 @@ impl Scenarios {
             include_str!("../fixtures/smt-spliced-placement.json"),
             include_str!("../fixtures/smt-aoi-review.json"),
             include_str!("../fixtures/smt-recall-impact.json"),
+            include_str!("../fixtures/smt-shared-rework.json"),
             include_str!("../fixtures/assembly.json"),
             include_str!("../fixtures/assembly-production.json"),
             include_str!("../fixtures/assembly-public-orders.json"),
@@ -1290,6 +1296,9 @@ impl Scenarios {
             .smt
             .as_ref()
             .filter(|setup| setup.shared_material);
+        if action == Action::SmtRework && shared_smt.is_some_and(|setup| setup.shared_rework) {
+            spec = crate::smt::shared_rework_spec(spec);
+        }
         if action == Action::SmtPlace
             && let Some(setup) = shared_smt
         {
@@ -1379,6 +1388,7 @@ impl Scenarios {
             };
             let quantity = if let (Some(setup), Some(order)) = (shared_smt, order.as_deref()) {
                 crate::smt::planned_units(setup, order)
+                    + crate::smt::rework_units(&tx, run, setup, order)?
             } else if definition.manufacturing.is_some() {
                 crate::mes::QUANTITY as i64
             } else {
@@ -1472,6 +1482,7 @@ impl Scenarios {
             let order = parameters["work_order"].as_str().unwrap();
             let quantity = if let Some(setup) = shared_smt {
                 crate::smt::planned_units(setup, order)
+                    + crate::smt::rework_units(&tx, run, setup, order)?
             } else if definition.manufacturing.is_some() {
                 crate::mes::QUANTITY as i64
             } else {

@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup, machiningInspections, deviceRecovery, operationGenealogy, smtSplitReel, smtSplice, smtAoiReview, smtRecallImpact } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup, machiningInspections, deviceRecovery, operationGenealogy, smtSplitReel, smtSplice, smtAoiReview, smtRecallImpact, smtRework } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -170,6 +170,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9D-19 Replenish after a quality reinspection", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", replenish: true },
   { title: "P9D-21 Hold WIP across workshops", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, crossShopHold: true },
   { title: "P9D-23 Trace SMT placement through the common stock ledger", scenario: "smt@3", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true },
+  { title: "P11-09 Rework a recalled SMT board using issued stock", scenario: "smt@9", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplice: true, smtRecallImpact: true, smtRework: true },
   { title: "P11-07 Preview and isolate SMT recall across orders", scenario: "smt@8", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplice: true, smtRecallImpact: true },
   { title: "P11-05 Review failed SMT AOI by board", scenario: "smt@7", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplice: true, smtAoiReview: true },
   { title: "P11-03 Trace both sides of an SMT reel splice", scenario: "smt@6", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplice: true },
@@ -302,7 +303,30 @@ for (const { title, scenario, work_order, operation, work_center, report, return
           ]);
           const isolated = await invoke("smt_isolate", { event_cursor, idempotency_key: "isolate-ui" });
           expect(isolated).toMatchObject({ affected: ["A-01"], pending_serials: ["B-01", "B-02"] });
-          expect((await invoke("smt_finish", { serial: "A-02", idempotency_key: "finish-ui" })).finished).toBe(true);
+          const unaffected = await invoke("smt_finish", { serial: "A-02", idempotency_key: "finish-ui" });
+          expect(unaffected.finished).toBe(true);
+          if (smtRework) {
+            cursor = unaffected.cursor;
+            await write("create_receipt", { receipt_id: "RC-F", item_id: "WIRE", revision: 1, quantity: "1", requires_inspection: false });
+            await write("assign_receipt_tracking", { receipt_id: "RC-F", lot_id: "REEL-F", supplier_lot: "SUP-F", location: "RAW-02" });
+            await write("post_receipt", { receipt_id: "RC-F" });
+            await write("reserve_material", { work_order, lot_id: "REEL-F", reservation_id: "RS-F", quantity: "1" });
+            await write("pick_material", { reservation_id: "RS-F" });
+            await write("issue_material_to_operation", { reservation_id: "RS-F", operation });
+            await page.getByLabel("匹配工具").selectOption("smt_rework");
+            await page.getByLabel("JSON 参数").fill(JSON.stringify({
+              serial: "A-01", replacement_reel: "REEL-F", reservation_id: "RS-F", reason: "supplier recall",
+              expected_cursor: cursor, idempotency_key: "rework-ui",
+            }));
+            await button("调用工具").click();
+            await expect(status).toContainText('"quality": "awaiting_retest"');
+            expect((await invoke("smt_retest", { serial: "A-01", result: "pass", idempotency_key: "retest-ui" })).quality).toBe("clear");
+            expect((await invoke("smt_finish", { serial: "A-01", idempotency_key: "finish-reworked-ui" })).finished).toBe(true);
+            const trace = await invoke("trace_serial_backward", { serial_number: "A-01" });
+            const materials = trace.edges.filter(edge => edge.kind === "material_input");
+            expect(materials).toHaveLength(2);
+            expect(materials).toContainEqual(expect.objectContaining({ operation: "rework", source: { kind: "material_lot", id: "REEL-F" } }));
+          }
           return;
         }
         if (smtAoiReview) {

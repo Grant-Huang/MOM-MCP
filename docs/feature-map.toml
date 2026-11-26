@@ -1209,3 +1209,19 @@ spec = "acceptance/P11.md"
 features = ["F08", "F09", "F10", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P11-07 Preview and isolate SMT recall across orders" }
+
+[[case]]
+id = "P11-08"
+phase = "P11"
+spec = "acceptance/P11.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p11_08_smt_rework_issued_replacement" }
+
+[[case]]
+id = "P11-09"
+phase = "P11"
+spec = "acceptance/P11.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P11-09 Rework a recalled SMT board using issued stock" }
