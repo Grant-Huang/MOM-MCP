@@ -22,6 +22,7 @@ git -C "$host" archive "$host_revision" | tar -x -C "$sandbox"
 python3 - "$sandbox/crates/server/Cargo.toml" "$repository" "$adapter" <<'PY'
 from pathlib import Path
 import json
+import re
 import sys
 
 manifest, repository, revision = sys.argv[1:]
@@ -31,11 +32,22 @@ section = "[dev-dependencies]\n"
 if text.count(section) != 1:
     raise SystemExit("Expected one an-server dev-dependencies section")
 dependency = f"mom-external-adapter = {{ git = {json.dumps(repository)}, rev = {json.dumps(revision)} }}\n"
-path.write_text(text.replace(section, section + dependency, 1))
+before, dev = text.split(section, 1)
+entries, separator, after = dev.partition("\n[")
+pattern = r"(?m)^[ \t]*mom-external-adapter[ \t]*=.*$"
+matches = list(re.finditer(pattern, entries))
+if len(matches) > 1:
+    raise SystemExit("Expected at most one adapter entry in an-server dev-dependencies")
+if matches:
+    match = matches[0]
+    entries = entries[:match.start()] + dependency.rstrip("\n") + entries[match.end():]
+else:
+    entries = dependency + entries
+path.write_text(before + section + entries + separator + after)
 PY
 
 selectors=(--test mom_world_prod)
-for suite in external_order external_http external_observe; do
+for suite in external_order external_http external_observe odoo_relation; do
     git -C "$root" show "$adapter:tests/$suite.rs" |
         sed 's/mom_mcp::/mom_external_adapter::/g' > "$sandbox/crates/server/tests/adapter_$suite.rs"
     selectors+=(--test "adapter_$suite")
