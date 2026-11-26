@@ -1401,3 +1401,19 @@ spec = "acceptance/P14.md"
 features = ["F08", "F09", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P14-UI Cut wire batches and recover from short stock" }
+
+[[case]]
+id = "P14-03"
+phase = "P14"
+spec = "acceptance/P14.md"
+features = ["F08", "F09", "F10", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p14_03_harness_crimp_qualification" }
+
+[[case]]
+id = "P14-04"
+phase = "P14"
+spec = "acceptance/P14.md"
+features = ["F08", "F09", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P14-04 Check terminal and tooling qualification for a cut endpoint" }

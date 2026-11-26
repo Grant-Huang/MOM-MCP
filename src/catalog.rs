@@ -152,6 +152,7 @@ pub enum Action {
     HarnessCut,
     CutHarnessBatch,
     GetHarnessCutBatch,
+    CheckHarnessCrimpQualification,
     HarnessCrimp,
     HarnessSample,
     HarnessTest,

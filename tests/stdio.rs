@@ -8924,3 +8924,89 @@ async fn p14_01_harness_cut_batch_length_and_retry() {
         2
     );
 }
+
+#[tokio::test]
+async fn p14_03_harness_crimp_qualification() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("qualification.sqlite3"), "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"wire-harness","version":3}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let tool = "check_harness_crimp_qualification";
+    let description = call(&client, "describe_tool", json!({"run_id":run,"name":tool})).await;
+    assert_eq!(description["tool"]["effect"], "read");
+    let check = async |segment, end, terminal, tooling| {
+        business(&client,run,tool,json!({
+        "serial_number":"WIRE-01","segment_id":segment,"end":end,"terminal_lot":terminal,"tooling_id":tooling
+    })).await
+    };
+    assert_eq!(
+        check("POWER", "B", "TERM-PWR-ALT", "TOOL-PWR-1").await["code"],
+        "SERIAL_NOT_CUT"
+    );
+    let batch = shop_action(
+        &client,
+        run,
+        "cut_harness_batch",
+        "cut",
+        json!({
+            "batch_id":"CUT-Q","wire_lot":"WIRE-CU-1","serial_numbers":["WIRE-01"]
+        }),
+    )
+    .await;
+    assert_eq!(batch["cursor"], 1, "{batch}");
+    for (segment, end, terminal, tooling, code) in [
+        (
+            "POWER",
+            "A",
+            "TERM-PWR-ALT",
+            "TOOL-PWR-1",
+            "TERMINAL_LOT_NOT_QUALIFIED",
+        ),
+        (
+            "POWER",
+            "B",
+            "TERM-PWR-ALT",
+            "TOOL-SIG-1",
+            "TOOLING_NOT_QUALIFIED",
+        ),
+        (
+            "POWER",
+            "B",
+            "TERM-PWR-ALT",
+            "TOOL-PWR-EXPIRED",
+            "TOOLING_CALIBRATION_EXPIRED",
+        ),
+        (
+            "UNKNOWN",
+            "B",
+            "TERM-PWR-ALT",
+            "TOOL-PWR-1",
+            "ENDPOINT_NOT_FOUND",
+        ),
+    ] {
+        assert_eq!(check(segment, end, terminal, tooling).await["code"], code);
+    }
+    let accepted = check("POWER", "B", "TERM-PWR-ALT", "TOOL-PWR-1").await;
+    assert_eq!(
+        accepted["qualification"],
+        json!({
+            "serial_number":"WIRE-01","segment_id":"POWER","end":"B","cut_batch_id":"CUT-Q",
+            "terminal_lot":"TERM-PWR-ALT","tooling_id":"TOOL-PWR-1","terminal_qualification":"TERM-PWR-B-ALT@1",
+            "tooling_qualification":"TOOL-PWR@1","process_revision":"HARNESS-CRIMP-1"
+        })
+    );
+    assert_eq!(
+        check("SIGNAL", "A", "TERM-SIG-1", "TOOL-SIG-1").await["qualified"],
+        true
+    );
+    assert_eq!(
+        call(&client, "get_run", json!({"run_id":run})).await["cursor"],
+        1
+    );
+}
