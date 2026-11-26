@@ -8345,3 +8345,145 @@ async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
         }
     }
 }
+
+#[tokio::test]
+async fn p13_01_sheet_multi_order_nesting() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("nesting.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    let (peer, _peer_child) = connect_mode(&db, "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"sheet-metal","version":2}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let search = call(
+        &client,
+        "search_tools",
+        json!({"run_id":run,"query":"create_sheet_nest"}),
+    )
+    .await;
+    assert!(
+        search["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "create_sheet_nest")
+    );
+    let create = |id, stock, orders| json!({"nest_id":id,"stock":stock,"work_orders":orders});
+    let orders = ["WO-SHEET-A", "WO-SHEET-B"];
+    let (a, b) = tokio::join!(
+        shop_action(
+            &client,
+            run,
+            "create_sheet_nest",
+            "a",
+            create("N-A", "SHEET-FULL", orders)
+        ),
+        shop_action(
+            &peer,
+            run,
+            "create_sheet_nest",
+            "b",
+            json!({"nest_id":"N-B","stock":"SHEET-FULL","work_orders":["WO-SHEET-C"]})
+        )
+    );
+    let (owner, loser) = if a["ok"] == true {
+        ("N-A", b)
+    } else {
+        ("N-B", a)
+    };
+    assert_eq!(loser["code"], "STOCK_RESERVED", "{loser}");
+    assert_eq!(
+        shop_action(
+            &client,
+            run,
+            "cancel_sheet_nest",
+            "cancel-owner",
+            json!({"nest_id":owner})
+        )
+        .await["nest"]["status"],
+        "cancelled"
+    );
+    let too_small = shop_action(
+        &client,
+        run,
+        "create_sheet_nest",
+        "small",
+        create("N-S", "REM-OK", orders),
+    )
+    .await;
+    assert_eq!(too_small["code"], "INSUFFICIENT_AREA");
+    let duplicate = shop_action(
+        &client,
+        run,
+        "create_sheet_nest",
+        "duplicate",
+        create("N-S", "SHEET-FULL", ["WO-SHEET-A", "WO-SHEET-A"]),
+    )
+    .await;
+    assert_eq!(duplicate["code"], "DUPLICATE_WORK_ORDER");
+    let request = create("N-FINAL", "SHEET-FULL", orders);
+    let planned = shop_action(&client, run, "create_sheet_nest", "plan", request.clone()).await;
+    assert_eq!(planned["cursor"], 3, "{planned}");
+    assert_eq!(
+        shop_action(&peer, run, "create_sheet_nest", "plan", request).await,
+        planned
+    );
+    let conflict = shop_action(
+        &peer,
+        run,
+        "create_sheet_nest",
+        "conflict",
+        create("N-X", "REM-OK", orders),
+    )
+    .await;
+    assert_eq!(conflict["code"], "WORK_ORDER_ALLOCATED");
+    let invalid = shop_action(
+        &client,
+        run,
+        "cut_sheet_nest",
+        "cut",
+        json!({"nest_id":"N-FINAL","machine":"OTHER"}),
+    )
+    .await;
+    assert_eq!(invalid["code"], "MACHINE_NOT_CAPABLE");
+    let cut = shop_action(
+        &client,
+        run,
+        "cut_sheet_nest",
+        "cut",
+        json!({"nest_id":"N-FINAL","machine":"LASER-B"}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 4, "{cut}");
+    let nest = &cut["nest"];
+    assert_eq!(nest["status"], "cut");
+    assert_eq!(
+        nest["order_area_mm2"],
+        json!({"WO-SHEET-A":600,"WO-SHEET-B":600})
+    );
+    assert_eq!(nest["lot"], "LOT-AL-1");
+    assert_eq!(nest["input_mm2"], 1800);
+    assert_eq!(nest["product_mm2"], 1200);
+    assert_eq!(nest["scrap_mm2"], 100);
+    assert_eq!(nest["remnant_mm2"], 500);
+    assert_eq!(
+        business(&peer, run, "get_sheet_nest", json!({"nest_id":"N-FINAL"})).await["nest"],
+        *nest
+    );
+    assert_eq!(
+        shop_action(
+            &peer,
+            run,
+            "cut_sheet_nest",
+            "repeat",
+            json!({"nest_id":"N-FINAL","machine":"LASER-A"})
+        )
+        .await["code"],
+        "INVALID_STATE"
+    );
+}

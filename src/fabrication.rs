@@ -1,3 +1,5 @@
+mod nesting;
+
 use std::collections::BTreeMap;
 
 use mom_des::Event;
@@ -84,10 +86,13 @@ pub const HARNESS: &[(Action, &str, &str, &str)] = &[
 
 pub fn tools() -> impl Iterator<Item = &'static (Action, &'static str, &'static str, &'static str)>
 {
-    SHEET.iter().chain(HARNESS)
+    SHEET.iter().chain(HARNESS).chain(nesting::TOOLS)
 }
 
 pub fn spec(action: Action) -> Spec {
+    if nesting::TOOLS.iter().any(|tool| tool.0 == action) {
+        return nesting::spec(action);
+    }
     let &(_, name, description, domain) = tools().find(|item| item.0 == action).unwrap();
     let mut required = match action {
         Action::SheetIssue => vec!["stock"],
@@ -149,6 +154,7 @@ pub fn spec(action: Action) -> Spec {
 #[serde(rename_all = "snake_case")]
 pub enum Setup {
     SheetMetal,
+    SheetNesting,
     WireHarness,
 }
 
@@ -157,6 +163,7 @@ impl Setup {
         self.model() == model
             && match self {
                 Self::SheetMetal => SHEET,
+                Self::SheetNesting => nesting::TOOLS,
                 Self::WireHarness => HARNESS,
             }
             .iter()
@@ -165,7 +172,7 @@ impl Setup {
 
     pub fn model(self) -> &'static str {
         match self {
-            Self::SheetMetal => mom_model_fabrication::SHEET,
+            Self::SheetMetal | Self::SheetNesting => mom_model_fabrication::SHEET,
             Self::WireHarness => mom_model_fabrication::HARNESS,
         }
     }
@@ -541,6 +548,7 @@ impl Harness {
 #[serde(tag = "industry", content = "state", rename_all = "snake_case")]
 enum State {
     Sheet(Sheet),
+    Nesting(nesting::Nesting),
     Harness(Harness),
 }
 
@@ -548,6 +556,7 @@ pub fn invoke(
     tx: &Transaction<'_>,
     run: &str,
     setup: Setup,
+    orders: &[String],
     action: Action,
     args: &Map<String, Value>,
     cursor: i64,
@@ -585,11 +594,13 @@ pub fn invoke(
         Some(value) => serde_json::from_str(&value)?,
         None => match setup {
             Setup::SheetMetal => State::Sheet(Sheet::default()),
+            Setup::SheetNesting => State::Nesting(nesting::Nesting::default()),
             Setup::WireHarness => State::Harness(Harness::default()),
         },
     };
     let mut response = match &mut state {
         State::Sheet(sheet) => sheet.apply(action, args, events),
+        State::Nesting(nesting) => nesting.apply(action, args, events, orders),
         State::Harness(harness) => harness.apply(action, args, events),
     };
     if let Some(key) = key.filter(|_| response["ok"] == true) {
