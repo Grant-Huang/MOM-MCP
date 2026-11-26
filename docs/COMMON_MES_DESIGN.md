@@ -24,6 +24,8 @@ P8A 是已验收的 CNC 部分报工、幂等和冲销。P8 整体要交付工�
 | P8C | 工序、资源与实绩 | `list_operations`、`get_operation`、`list_dispatch_queue`、`set_dispatch_priority`、`get_resource_capability`、`dispatch_operation`、`reassign_operation`、`start_operation`、`pause_operation`、`resume_operation`、`post_operation_report`、`list_operation_reports`、`reverse_operation_report`、`complete_operation`、`get_command_result` | 工序依赖阻断越序，设备能力和占用竞争可验，报工与工序完工分开，冲销有下游依赖保护。 |
 | P8D | 通用检验及放行 | `create_inspection`、`list_inspections`、`get_inspection`、`record_measurement`、`complete_inspection`、`open_nonconformance`、`place_quality_hold`、`disposition_nonconformance`、`release_quality_hold` | 质量冻结阻止完工或放行，处置记录包含责任、证据和处置理由，历史处置可查。 |
 
+配置装配的工位筛选队列会列出与该工位兼容的待派工序。候选行的 `work_center` 表示本次查询的目标工位，实际派工归属由 `get_operation` 和 `get_resource_capability` 查询。已有业务阻塞优先展示，无其他阻塞时，独占工位的候选行显示 `RESOURCE_BUSY`。派工、改派和重开工序仍需在写事务内校验独占占用。 [P12 验收](acceptance/P12.md#共享装配工位)
+
 P8D 提供外部检验规格引用与质量门禁。规格版本与收货检验的库存联动随 P9 落地。检验、库存和工序状态均有自身的生命周期；由门禁和显式业务关系决定彼此影响。
 
 ## P9 公共主数据、物料及追溯

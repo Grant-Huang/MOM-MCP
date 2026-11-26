@@ -177,7 +177,9 @@ test("P12-UI Freeze configuration-specific assembly requirements", ({ page }) =>
 
 test("P12-03 Trace a qualified assembly substitute", ({ page }) => assemblyConfiguration(page, true));
 
-async function assemblyConfiguration(page, qualified) {
+test("P12-05 Observe contested assembly capacity", ({ page }) => assemblyConfiguration(page, true, true));
+
+async function assemblyConfiguration(page, qualified, sharedResources = false) {
   await page.goto("/scenarios");
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
@@ -257,6 +259,20 @@ async function assemblyConfiguration(page, qualified) {
     expect(report.material_inputs).toContainEqual(expect.objectContaining({
       lot_id: "LOT-ALT", substitute: { required_item_id: "STD", qualification_id: "QA-ALT-1" },
     }));
+    if (sharedResources) {
+      await page.getByLabel("搜索词").fill("list_dispatch_queue");
+      await button("搜索工具").click();
+      await page.getByLabel("匹配工具").selectOption("list_dispatch_queue");
+      await page.getByLabel("JSON 参数").fill(JSON.stringify({ work_center: "CELL-A" }));
+      await button("调用工具").click();
+      await expect(status).toContainText('"blocking": "RESOURCE_BUSY"');
+      await write("complete_operation", operation);
+      await button("调用工具").click();
+      await expect(status).toContainText('"blocking": null');
+      expect(JSON.parse(await status.textContent()).operations[0].work_order).toBe("WO-L");
+      await write("dispatch_operation", { ...operation, work_order: "WO-L", work_center: "CELL-A" });
+      return;
+    }
     await page.getByLabel("匹配工具").selectOption("trace_serial_backward");
     await page.getByLabel("JSON 参数").fill(JSON.stringify({ serial_number: "UNIT-E-01" }));
     await button("调用工具").click();

@@ -7908,15 +7908,20 @@ async fn smt_cross_order_recall(
 
 #[tokio::test]
 async fn p12_01_assembly_configuration_bom_effectivity() {
-    assembly_configuration_bom(30).await;
+    assembly_configuration_bom(30, false).await;
 }
 
 #[tokio::test]
 async fn p12_02_assembly_frozen_substitute() {
-    assembly_configuration_bom(31).await;
+    assembly_configuration_bom(31, false).await;
 }
 
-async fn assembly_configuration_bom(version: u64) {
+#[tokio::test]
+async fn p12_04_assembly_shared_resources() {
+    assembly_configuration_bom(31, true).await;
+}
+
+async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
     let dir = tempfile::tempdir().unwrap();
     let (client, _child) = connect_mode(&dir.path().join("configuration.sqlite3"), "0", true).await;
     let opened = call(
@@ -8084,6 +8089,15 @@ async fn assembly_configuration_bom(version: u64) {
             json!({"work_order":"WO-E","operation":"build","work_center":"CELL-A"}),
         )
         .await;
+        let list = async |center| {
+            invoke("list_dispatch_queue", json!({"work_center":center})).await["operations"].clone()
+        };
+        let late_dispatch = json!({"work_order":"WO-L","operation":"build","work_center":"CELL-A"});
+        if shared_resources {
+            assert_eq!(list("CELL-A").await[0]["blocking"], "RESOURCE_BUSY");
+            assert_eq!(list("CELL-B").await[0]["work_order"], "WO-L");
+            assert!(list("CELL-B").await[0]["blocking"].is_null());
+        }
         for reservation in ["RS-ALT", "RS-BASE"] {
             apply("pick_material", json!({"reservation_id":reservation})).await;
             apply(
@@ -8093,6 +8107,23 @@ async fn assembly_configuration_bom(version: u64) {
             .await;
         }
         apply("start_operation", scope.clone()).await;
+        if shared_resources {
+            apply(
+                "pause_operation",
+                json!({"work_order":"WO-E","operation":"build","reason":"inspect fixture"}),
+            )
+            .await;
+            let before = call(&client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+            let busy = write("dispatch_operation", late_dispatch.clone()).await;
+            assert_eq!(busy["code"], "RESOURCE_BUSY");
+            assert_eq!(busy["occupied_by"], "WO-E");
+            assert_eq!(
+                call(&client, "get_run", json!({"run_id":run})).await["cursor"],
+                before
+            );
+            assert_eq!(list("CELL-A").await[0]["blocking"], "RESOURCE_BUSY");
+            apply("resume_operation", scope.clone()).await;
+        }
         let report = apply(
             "post_operation_report",
             json!({"work_order":"WO-E","operation":"build","quantity":1,
@@ -8121,6 +8152,32 @@ async fn assembly_configuration_bom(version: u64) {
                 .iter()
                 .any(|edge| edge["source"]["id"] == "LOT-ALT")
         );
+        if shared_resources {
+            assert_eq!(list("CELL-A").await[0]["blocking"], "RESOURCE_BUSY");
+        }
         apply("complete_operation", scope).await;
+        if shared_resources {
+            assert!(list("CELL-A").await[0]["blocking"].is_null());
+            apply("dispatch_operation", late_dispatch).await;
+            let reverse = json!({"work_order":"WO-E","report_id":report["report"]["id"],"reason":"correct the report"});
+            assert_eq!(
+                write("reverse_operation_report", reverse.clone()).await["code"],
+                "RESOURCE_BUSY"
+            );
+            let current = invoke(
+                "list_operation_reports",
+                json!({"work_order":"WO-E","operation":"build"}),
+            )
+            .await;
+            assert_eq!(current["reports"][0]["reversed"], false);
+            apply(
+                "reassign_operation",
+                json!({"work_order":"WO-L","operation":"build","work_center":"CELL-C"}),
+            )
+            .await;
+            apply("reverse_operation_report", reverse).await;
+            let cell = invoke("get_resource_capability", json!({"work_center":"CELL-A"})).await;
+            assert_eq!(cell["resource"]["occupied_by"], "WO-E");
+        }
     }
 }
