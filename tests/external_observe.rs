@@ -130,22 +130,63 @@ async fn unavailable_or_unconfigured_binding_never_reads_another_source() {
 }
 
 #[tokio::test]
-async fn invalid_source_responses_never_read_another_source() {
-    async fn invalid_order(
+async fn source_failures_keep_their_classification_without_fallback() {
+    use axum::routing::post;
+
+    async fn openmes(
         State(calls): State<Arc<AtomicUsize>>,
         Path(id): Path<u64>,
-    ) -> &'static str {
+    ) -> impl IntoResponse {
         calls.fetch_add(1, Ordering::Relaxed);
         match id {
-            4242 => "invalid JSON with upstream-private-detail",
-            4243 => r#"{"data":{"id":4244,"order_no":"OTHER-WO","status":"PENDING"}}"#,
-            _ => panic!("unexpected fixture request"),
+            4242 => (StatusCode::OK, "invalid JSON with upstream-private-detail"),
+            4243 => (
+                StatusCode::OK,
+                r#"{"data":{"id":4244,"order_no":"OTHER-WO","status":"PENDING"}}"#,
+            ),
+            4244 => (StatusCode::FORBIDDEN, "upstream-private-detail"),
+            _ => panic!("unexpected OpenMES fixture request"),
+        }
+    }
+
+    async fn odoo(
+        State(calls): State<Arc<AtomicUsize>>,
+        Json(query): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        calls.fetch_add(1, Ordering::Relaxed);
+        match query["domain"][0][2].as_u64().unwrap() {
+            4242 => Json(json!([])).into_response(),
+            4243 => (StatusCode::UNAUTHORIZED, "upstream-private-detail").into_response(),
+            _ => panic!("unexpected Odoo fixture request"),
+        }
+    }
+
+    async fn carbon(
+        State(calls): State<Arc<AtomicUsize>>,
+        axum::extract::Query(query): axum::extract::Query<
+            std::collections::HashMap<String, String>,
+        >,
+    ) -> impl IntoResponse {
+        calls.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(query["companyId"], "eq.company-a");
+        match query["id"].as_str() {
+            "eq.job-hidden" => Json(json!([])).into_response(),
+            "eq.job-mismatch" => Json(json!([{
+                "id":"job-mismatch","companyId":"company-b","jobId":"OTHER-WO","status":"Ready"
+            }]))
+            .into_response(),
+            "eq.job-unavailable" => {
+                (StatusCode::SERVICE_UNAVAILABLE, "upstream-private-detail").into_response()
+            }
+            _ => panic!("unexpected Carbon fixture request"),
         }
     }
 
     let primary_calls = Arc::new(AtomicUsize::new(0));
     let router = Router::new()
-        .route("/api/v1/work-orders/{id}", get(invalid_order))
+        .route("/api/v1/work-orders/{id}", get(openmes))
+        .route("/json/2/mrp.production/search_read", post(odoo))
+        .route("/rest/v1/jobs", get(carbon))
         .with_state(primary_calls.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let primary = format!("http://{}", listener.local_addr().unwrap());
@@ -153,19 +194,58 @@ async fn invalid_source_responses_never_read_another_source() {
     let (alternate, alternate_calls, alternate_task) = run_source(StatusCode::OK).await;
     let service = ExternalObserve::new([
         source(&primary, "site-a", "primary"),
+        HttpSource {
+            kind: HttpSourceKind::Odoo {
+                database: "fixture",
+            },
+            instance: "odoo",
+            ..source(&primary, "site-a", "primary")
+        },
+        HttpSource {
+            kind: HttpSourceKind::CarbonRest {
+                company: "company-a",
+                project_key: "fixture",
+            },
+            instance: "carbon-rest",
+            ..source(&primary, "site-a", "primary")
+        },
         source(&alternate, "site-b", "alternate"),
     ])
     .unwrap();
-    let selection = WorkOrderSelection {
-        world_id: "world-a",
-        object_ref: "opaque-ref",
-    };
 
-    for (index, source_id) in ["4242", "4243"].into_iter().enumerate() {
+    use ObserveError::{InvalidSourceResponse, NotVisible, SourceUnavailable};
+    for (index, (instance, source_id, expected)) in [
+        ("openmes", "4242", InvalidSourceResponse),
+        ("openmes", "4243", InvalidSourceResponse),
+        ("openmes", "4244", NotVisible),
+        ("odoo", "4242", NotVisible),
+        ("odoo", "4243", SourceUnavailable),
+        ("carbon-rest", "job-hidden", NotVisible),
+        ("carbon-rest", "job-mismatch", InvalidSourceResponse),
+        ("carbon-rest", "job-unavailable", SourceUnavailable),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let result = service
-            .observe(selection, |_| async { Some(granted("site-a", source_id)) })
+            .observe(
+                WorkOrderSelection {
+                    world_id: instance,
+                    object_ref: "opaque-ref",
+                },
+                |_| async {
+                    Some(AuthorizedWorkOrder {
+                        scope: SourceScope {
+                            tenant: "tenant-a",
+                            site: "site-a",
+                            instance,
+                        },
+                        source_id,
+                    })
+                },
+            )
             .await;
-        assert_eq!(result.unwrap_err(), ObserveError::InvalidSourceResponse);
+        assert_eq!(result.unwrap_err(), expected, "{instance} {source_id}");
         assert_eq!(primary_calls.load(Ordering::Relaxed), index + 1);
         assert_eq!(alternate_calls.load(Ordering::Relaxed), 0);
     }

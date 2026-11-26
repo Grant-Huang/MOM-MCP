@@ -27,6 +27,8 @@
 
 适配器回环共用入口可执行 `cargo test --locked --test external_observe one_observe_entry_preserves_source_time_across_authorized_worlds -- --exact`。另执行 `cargo test --locked --test external_observe` 验证逐请求授权、配置与故障隔离。 共用入口的序列化验收覆盖 Odoo、OpenMES 和 Carbon 社区 REST，核对 `source_updated_at` 统一为 UTC、与读取时点 `observed_at` 独立，并按来源发布映射版本。无源时间的响应及 Carbon 原生 MCP 路径省略该字段。此证据来自 MOM-MCP 回环测试。工作区候选证据使用 `/api/world/production/observe`，依赖适配器提交 `ea1fcd8` 和宿主提交 `7a680bf`。用 `scripts/accept-m3-observe.py` 复跑，覆盖 Odoo、OpenMES、Carbon 原生 MCP、Carbon REST 四条回环传输及拒绝、撤权和故障隔离。Carbon 社区版数据路径作为短期取证候选，原生 MCP 兼容性证据单列。MOM-MCP `fbd798a` 的三个适配器 Rust 集成套件共 11 项通过，Carbon 原生探针与本体离线用例共 11 项通过。
 
+执行 `cargo test --locked --test external_observe source_failures_keep_their_classification_without_fallback -- --exact` 复跑三源失败矩阵。Odoo 空结果、OpenMES 对象级 403 和 Carbon REST 空结果均返回不可见。OpenMES 无效正文或记录错配、Carbon REST 跨公司记录错配均返回响应无效。Odoo 上游 401 和 Carbon REST 上游 503 均返回来源不可用。八种失败各触发一次已绑定来源请求，备用站点请求数为零。此为 MOM-MCP 候选 Observe 回环证据。
+
 ### PR 自动回归
 
 GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传输、Observe、本体投影及 Odoo 关联测试，同时复跑 Carbon REST、Carbon MCP 和 Odoo 关联的离线探针用例。默认使用本地回环和合成数据。真实来源和正式 Observe 验收使用各自的获批环境，继续按本台账登记。
