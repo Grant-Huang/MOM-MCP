@@ -454,16 +454,24 @@ async fn publishes_only_host_authorized_odoo_relation_references() {
     async fn relation(
         State(calls): State<Arc<AtomicUsize>>,
         Json(query): Json<Value>,
-    ) -> Json<Value> {
+    ) -> impl IntoResponse {
         calls.fetch_add(1, Ordering::Relaxed);
         let id = query["ids"][0].as_i64().unwrap();
         let link = match id {
             4242 => json!({"id":6363,"company_id":7474,"order_id":{"id":8585,"company_id":7474}}),
             4243 => json!(false),
             4244 => json!({"id":6363,"company_id":7474,"order_id":{"id":8585,"company_id":9696}}),
+            4245 => {
+                return (StatusCode::SERVICE_UNAVAILABLE, "upstream-private-detail")
+                    .into_response();
+            }
+            4246 => {
+                return Json(json!([{"id":4242,"company_id":7474,"sale_line_id":false}]))
+                    .into_response();
+            }
             _ => panic!("unexpected fixture request"),
         };
-        Json(json!([{"id":id,"company_id":7474,"sale_line_id":link}]))
+        Json(json!([{"id":id,"company_id":7474,"sale_line_id":link}])).into_response()
     }
 
     let calls = Arc::new(AtomicUsize::new(0));
@@ -473,13 +481,33 @@ async fn publishes_only_host_authorized_odoo_relation_references() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let service = ExternalObserve::new([HttpSource {
-        kind: HttpSourceKind::Odoo {
-            database: "private-db",
+    let alternate_calls = Arc::new(AtomicUsize::new(0));
+    let alternate_router = Router::new()
+        .route("/json/2/mrp.production/web_read", post(relation))
+        .with_state(alternate_calls.clone());
+    let alternate_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let alternate = format!("http://{}", alternate_listener.local_addr().unwrap());
+    let alternate_task = tokio::spawn(async move {
+        axum::serve(alternate_listener, alternate_router)
+            .await
+            .unwrap()
+    });
+    let service = ExternalObserve::new([
+        HttpSource {
+            kind: HttpSourceKind::Odoo {
+                database: "private-db",
+            },
+            instance: "instance-a",
+            ..source(&origin, "site-a", "local-fixture")
         },
-        instance: "instance-a",
-        ..source(&origin, "site-a", "local-fixture")
-    }])
+        HttpSource {
+            kind: HttpSourceKind::Odoo {
+                database: "alternate-db",
+            },
+            instance: "instance-a",
+            ..source(&alternate, "site-b", "alternate-fixture")
+        },
+    ])
     .unwrap();
     let selection = WorkOrderSelection {
         world_id: "world-a",
@@ -554,5 +582,25 @@ async fn publishes_only_host_authorized_odoo_relation_references() {
         .await;
     assert_eq!(wrong_company, Err(ObserveError::NotVisible));
     assert_eq!(calls.load(Ordering::Relaxed), 5);
+
+    for (index, (id, expected)) in [
+        (4245, ObserveError::SourceUnavailable),
+        (4246, ObserveError::InvalidSourceResponse),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let result = service
+            .observe_odoo_sales_relation(
+                selection,
+                |_| grant(id),
+                |_, _| async { panic!("target resolver called after a failed source read") },
+            )
+            .await;
+        assert_eq!(result, Err(expected));
+        assert_eq!(calls.load(Ordering::Relaxed), 6 + index);
+        assert_eq!(alternate_calls.load(Ordering::Relaxed), 0);
+    }
     server.abort();
+    alternate_task.abort();
 }
