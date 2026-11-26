@@ -8768,3 +8768,66 @@ async fn sheet_remnant_workflow(version: u64) {
         );
     }
 }
+
+#[tokio::test]
+async fn p13_09_sheet_geometric_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("layout.sqlite3"), "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"sheet-metal","version":6}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let plan = |orders| json!({"nest_id":"LAYOUT","stock":"SHEET-FULL","work_orders":orders});
+    let incompatible = shop_action(
+        &client,
+        run,
+        "create_sheet_nest",
+        "plan",
+        plan(["WO-SHEET-A", "WO-SHEET-C"]),
+    )
+    .await;
+    assert_eq!(incompatible["code"], "NEST_LAYOUT_UNAVAILABLE");
+    assert_eq!(
+        call(&client, "get_run", json!({"run_id":run})).await["cursor"],
+        0
+    );
+    let planned = shop_action(
+        &client,
+        run,
+        "create_sheet_nest",
+        "plan",
+        plan(["WO-SHEET-B", "WO-SHEET-A"]),
+    )
+    .await;
+    assert_eq!(planned["cursor"], 1, "{planned}");
+    let placements = json!({
+        "WO-SHEET-A":{"x_mm":0,"y_mm":0,"length_mm":30,"width_mm":20},
+        "WO-SHEET-B":{"x_mm":30,"y_mm":0,"length_mm":30,"width_mm":20}
+    });
+    assert_eq!(planned["nest"]["placements"], placements);
+    let cut = shop_action(
+        &client,
+        run,
+        "cut_sheet_nest",
+        "cut",
+        json!({"nest_id":"LAYOUT","machine":"LASER-B"}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 2, "{cut}");
+    assert_eq!(cut["nest"]["placements"], placements);
+    assert_eq!(cut["nest"]["product_mm2"], 1200);
+    assert_eq!(cut["nest"]["scrap_mm2"], 600);
+    assert_eq!(cut["nest"]["remnant_mm2"], 0);
+    let trace = business(
+        &client,
+        run,
+        "trace_sheet_material",
+        json!({"subject_type":"lot","subject":"LOT-AL-1"}),
+    )
+    .await;
+    assert_eq!(trace["cuts"], json!([cut["nest"]]));
+}

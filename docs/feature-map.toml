@@ -1369,3 +1369,19 @@ spec = "acceptance/P13.md"
 features = ["F08", "F09", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P13-08 Trace a reused sheet remnant in both directions" }
+
+[[case]]
+id = "P13-09"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p13_09_sheet_geometric_layout" }
+
+[[case]]
+id = "P13-10"
+phase = "P13"
+spec = "acceptance/P13.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P13-10 Validate sheet placement and remnant reuse" }
