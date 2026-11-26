@@ -7908,12 +7908,21 @@ async fn smt_cross_order_recall(
 
 #[tokio::test]
 async fn p12_01_assembly_configuration_bom_effectivity() {
+    assembly_configuration_bom(30).await;
+}
+
+#[tokio::test]
+async fn p12_02_assembly_frozen_substitute() {
+    assembly_configuration_bom(31).await;
+}
+
+async fn assembly_configuration_bom(version: u64) {
     let dir = tempfile::tempdir().unwrap();
     let (client, _child) = connect_mode(&dir.path().join("configuration.sqlite3"), "0", true).await;
     let opened = call(
         &client,
         "open_scenario",
-        json!({"scenario_id":"assembly","version":30}),
+        json!({"scenario_id":"assembly","version":version}),
     )
     .await;
     assert_eq!(opened["ok"], true, "{opened}");
@@ -7930,7 +7939,7 @@ async fn p12_01_assembly_configuration_bom_effectivity() {
         assert_eq!(result["ok"], true, "{name}: {result}");
         result
     };
-    for item in ["FRAME", "BASE", "STANDARD", "RUGGED"] {
+    for item in ["FRAME", "BASE", "STANDARD", "RUGGED", "ALT"] {
         apply("create_item", json!({"item_id":item,"base_unit":"each"})).await;
         if item != "FRAME" {
             apply(
@@ -7967,11 +7976,16 @@ async fn p12_01_assembly_configuration_bom_effectivity() {
             json!({"item_id":"FRAME","revision":revision}),
         )
         .await;
-        apply("set_bom_components",json!({"item_id":"FRAME","revision":revision,"components":{
+        let mut components = json!({"item_id":"FRAME","revision":revision,"components":{
             "BASE":{"revision":1,"quantity":1,"unit":"each"},
             "STANDARD":{"revision":1,"quantity":1,"unit":"each","configurations":["standard"]},
             "RUGGED":{"revision":1,"quantity":rugged_quantity,"unit":"each","configurations":["rugged"]}
-        }})).await;
+        }});
+        if version == 31 && revision == 1 {
+            components["components"]["STANDARD"]["alternate"] =
+                json!({"item_id":"ALT","revision":1,"qualification_id":"QA-ALT-1"});
+        }
+        apply("set_bom_components", components).await;
         apply(
             "activate_revision",
             json!({"item_id":"FRAME","revision":revision,"revision_type":"bom"}),
@@ -8041,4 +8055,72 @@ async fn p12_01_assembly_configuration_bom_effectivity() {
         "standard"
     );
     assert!(impact["current"]["bom"]["components"]["RUGGED"].is_null());
+    if version == 31 {
+        assert_eq!(
+            early["definition_snapshot"]["bom"]["components"]["STANDARD"]["alternate"]["qualification_id"],
+            "QA-ALT-1"
+        );
+        assert!(impact["current"]["bom"]["components"]["STANDARD"]["alternate"].is_null());
+        for item in ["BASE", "STANDARD", "ALT"] {
+            let receipt = format!("RC-{item}");
+            let lot = format!("LOT-{item}");
+            apply("create_receipt",json!({"receipt_id":receipt,"item_id":item,"revision":1,"quantity":"1","requires_inspection":false})).await;
+            apply("assign_receipt_tracking",json!({"receipt_id":receipt,"lot_id":lot,"supplier_lot":format!("SUP-{item}"),"location":"RAW-02"})).await;
+            apply("post_receipt", json!({"receipt_id":receipt})).await;
+        }
+        let alt = json!({"reservation_id":"RS-ALT","work_order":"WO-E","lot_id":"LOT-ALT","quantity":"1"});
+        let mut unqualified = alt.clone();
+        unqualified["work_order"] = json!("WO-L");
+        assert_eq!(
+            write("reserve_material", unqualified).await["code"],
+            "MATERIAL_NOT_REQUIRED"
+        );
+        apply("reserve_material", alt).await;
+        assert_eq!(write("reserve_material",json!({"reservation_id":"RS-STD","work_order":"WO-E","lot_id":"LOT-STANDARD","quantity":"1"})).await["code"],"ORDER_REQUIREMENT_EXCEEDED");
+        apply("reserve_material",json!({"reservation_id":"RS-BASE","work_order":"WO-E","lot_id":"LOT-BASE","quantity":"1"})).await;
+        let scope = json!({"work_order":"WO-E","operation":"build"});
+        apply(
+            "dispatch_operation",
+            json!({"work_order":"WO-E","operation":"build","work_center":"CELL-A"}),
+        )
+        .await;
+        for reservation in ["RS-ALT", "RS-BASE"] {
+            apply("pick_material", json!({"reservation_id":reservation})).await;
+            apply(
+                "issue_material_to_operation",
+                json!({"reservation_id":reservation,"operation":"build"}),
+            )
+            .await;
+        }
+        apply("start_operation", scope.clone()).await;
+        let report = apply(
+            "post_operation_report",
+            json!({"work_order":"WO-E","operation":"build","quantity":1,
+            "material_inputs":{"RS-ALT":"1","RS-BASE":"1"}}),
+        )
+        .await;
+        let inputs = report["report"]["material_inputs"].as_array().unwrap();
+        let usage = inputs
+            .iter()
+            .find(|input| input["reservation_id"] == "RS-ALT")
+            .unwrap();
+        assert_eq!(usage["lot_id"], "LOT-ALT");
+        assert_eq!(
+            usage["substitute"],
+            json!({"required_item_id":"STANDARD","qualification_id":"QA-ALT-1"})
+        );
+        let trace = invoke(
+            "trace_serial_backward",
+            json!({"serial_number":"UNIT-E-01"}),
+        )
+        .await;
+        assert!(
+            trace["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|edge| edge["source"]["id"] == "LOT-ALT")
+        );
+        apply("complete_operation", scope).await;
+    }
 }

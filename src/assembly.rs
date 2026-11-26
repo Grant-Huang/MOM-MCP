@@ -772,11 +772,11 @@ pub fn invoke(
             }
         } else {
             let reports = &mut state.orders.get_mut(id).unwrap().build_reports;
-            let inputs = match crate::mes::report_material_inputs(tx, run, reports, id, args)? {
+            let mut inputs = match crate::mes::report_material_inputs(tx, run, reports, id, args)? {
                 Ok(inputs) => inputs,
                 Err(code) => return Ok((failure(code), false)),
             };
-            if !crate::inventory::matches_build_requirements(tx, run, id, &inputs)? {
+            if !crate::inventory::matches_build_requirements(tx, run, id, &mut inputs)? {
                 return Ok((failure("MATERIAL_INPUTS_INCOMPLETE"), false));
             }
             let report = reports.last_mut().unwrap();

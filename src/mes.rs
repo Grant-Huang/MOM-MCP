@@ -510,7 +510,8 @@ pub fn spec(action: Action) -> Spec {
                 "wip_partitions":{"type":"array","items":crate::wip::partition_schema()},
                 "material_inputs":{"type":"array","items":object(
                     &["reservation_id","lot_id","quantity","unit"],
-                    json!({"reservation_id":text(),"lot_id":text(),"quantity":crate::inventory::quantity_schema(),"unit":text()})
+                    json!({"reservation_id":text(),"lot_id":text(),"quantity":crate::inventory::quantity_schema(),"unit":text(),
+                        "substitute":object(&["required_item_id","qualification_id"],json!({"required_item_id":text(),"qualification_id":text()}))})
                 )}
             }),
         );
@@ -764,6 +765,8 @@ pub(crate) struct MaterialInput {
     pub(crate) lot_id: String,
     pub(crate) quantity: String,
     pub(crate) unit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) substitute: Option<crate::inventory::QualifiedSubstitute>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1225,6 +1228,7 @@ pub(crate) fn report_material_inputs(
             lot_id,
             quantity: quantity(requested),
             unit,
+            substitute: None,
         });
     }
     Ok(Ok(result))

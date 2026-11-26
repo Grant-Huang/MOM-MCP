@@ -475,7 +475,7 @@ pub(crate) fn invoke(
         else {
             return Ok(Err(Rejection::invalid("quantity")));
         };
-        let required = match crate::inventory::required_quantity(
+        let demand = match crate::inventory::material_demand(
             &tx,
             run,
             order,
@@ -487,12 +487,12 @@ pub(crate) fn invoke(
             Ok(quantity) => quantity,
             Err(error) => return Ok(Err(error)),
         };
-        if required == 0 {
+        if demand.required == 0 {
             return Ok(Err(reject("MATERIAL_NOT_REQUIRED", "lot_id")));
         }
-        let reserved = order_quantity_by_state(&tx, run, order, &item, revision, false)?;
-        let issued = order_quantity_by_state(&tx, run, order, &item, revision, true)?;
-        if amount > required - reserved - issued {
+        let reserved = demand.committed(&tx, run, order, false)?;
+        let issued = demand.committed(&tx, run, order, true)?;
+        if amount > demand.required - reserved - issued {
             return Ok(Err(reject("ORDER_REQUIREMENT_EXCEEDED", "quantity")));
         }
         let held = lot_committed_quantity(&tx, run, lot)?;

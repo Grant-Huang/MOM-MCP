@@ -1241,3 +1241,19 @@ spec = "acceptance/P12.md"
 features = ["F08", "F09", "F10", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P12-UI Freeze configuration-specific assembly requirements" }
+
+[[case]]
+id = "P12-02"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p12_02_assembly_frozen_substitute" }
+
+[[case]]
+id = "P12-03"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P12-03 Trace a qualified assembly substitute" }
