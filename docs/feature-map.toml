@@ -1433,3 +1433,19 @@ spec = "acceptance/P14.md"
 features = ["F08", "F09", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P14-06 Crimp and verify four harness endpoints" }
+
+[[case]]
+id = "P14-07"
+phase = "P14"
+spec = "acceptance/P14.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p14_07_harness_sample_endpoint_scope" }
+
+[[case]]
+id = "P14-08"
+phase = "P14"
+spec = "acceptance/P14.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P14-08 Isolate only the sampled terminal endpoints" }

@@ -260,3 +260,36 @@ test("P14-06 Crimp and verify four harness endpoints", async ({ page }) => {
   expect(result.crimps).toHaveLength(4);
   expect(result.crimps[0]).toMatchObject({ cut_batch_id:"CUT-Q", terminal_qualification:"TERM-PWR-B-ALT@1" });
 });
+
+test("P14-08 Isolate only the sampled terminal endpoints", async ({ page }) => {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption("wire-harness@5");
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  await button("搜索工具").click();
+  const invoke = async (name, args, evidence) => {
+    await page.getByLabel("匹配工具").selectOption(name);
+    await page.getByLabel("JSON 参数").fill(JSON.stringify(args));
+    await button("调用工具").click();
+    await expect(status).toContainText(evidence);
+    return JSON.parse(await status.textContent());
+  };
+  const serial_number = "WIRE-01";
+  await invoke("cut_harness_batch", { batch_id:"CUT-S", wire_lot:"WIRE-CU-1",
+    serial_numbers:[serial_number], idempotency_key:"cut" }, '"batch_id": "CUT-S"');
+  const args = { serial_number, segment_id:"POWER", end:"A", terminal_lot:"TERM-PWR-1",
+    tooling_id:"TOOL-PWR-1", idempotency_key:"power-a" };
+  await invoke("crimp_harness_endpoint", args, '"cursor": 2');
+  await button("推进一个事件").click();
+  await expect(status).toContainText('"event_cursor": 1');
+  const hold = await invoke("apply_harness_sample_hold", { event_cursor:1, idempotency_key:"hold" }, '"affected_endpoints"');
+  expect(hold.affected_endpoints).toEqual([{ serial_number, segment_id:"POWER", end:"A", terminal_lot:"TERM-PWR-1" }]);
+  await invoke("crimp_harness_endpoint", { ...args, end:"B", idempotency_key:"power-b" }, "TERMINAL_QUALITY_HOLD");
+  await invoke("crimp_harness_endpoint", { ...args, end:"B", terminal_lot:"TERM-PWR-ALT", idempotency_key:"power-b" }, '"cursor": 4');
+  const result = await invoke("get_harness_crimp_status", { serial_number }, '"held_endpoints"');
+  expect(result.held_endpoints).toEqual(hold.affected_endpoints);
+  expect(result.crimps).toHaveLength(2);
+});
