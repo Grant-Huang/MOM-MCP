@@ -963,6 +963,8 @@ impl Scenarios {
             include_str!("../fixtures/assembly-shortage-readiness.json"),
             include_str!("../fixtures/sheet-metal.json"),
             include_str!("../fixtures/sheet-metal-nesting.json"),
+            include_str!("../fixtures/sheet-metal-dimensional.json"),
+            include_str!("../fixtures/sheet-metal-remnant.json"),
             include_str!("../fixtures/wire-harness.json"),
         ] {
             let definition = parse_definition(source)?;

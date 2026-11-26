@@ -32,6 +32,10 @@ jobs:
         run: cargo test --locked --test external_http --test external_observe --test external_order --test odoo_relation
       - name: Verify Adapter and Mock work order read intent
         run: cargo test --locked --test stdio adapter_and_mock_read_the_same_work_order_intent -- --exact
+      - name: Verify standalone Adapter at the checked-out Git revision
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: bash scripts/check-external-adapter-consumer.sh "$(git rev-parse HEAD)"
       - name: Verify offline source probes
         run: >-
           node --test

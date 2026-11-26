@@ -8487,3 +8487,202 @@ async fn p13_01_sheet_multi_order_nesting() {
         "INVALID_STATE"
     );
 }
+
+#[tokio::test]
+async fn p13_03_sheet_dimensional_compatibility() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("dimensions.sqlite3"), "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"sheet-metal","version":3}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let create = |id, stock, orders| json!({"nest_id":id,"stock":stock,"work_orders":orders});
+    let write =
+        async |name: &str, key: &str, args| shop_action(&client, run, name, key, args).await;
+    assert_eq!(
+        write(
+            "create_sheet_nest",
+            "strip",
+            create("N-S", "REM-STRIP", vec!["WO-SHEET-C"])
+        )
+        .await["code"],
+        "STOCK_DIMENSIONS_INSUFFICIENT"
+    );
+    let wide = write(
+        "create_sheet_nest",
+        "wide",
+        create("N-W", "SHEET-FULL", vec!["WO-SHEET-A", "WO-SHEET-B"]),
+    )
+    .await;
+    assert_eq!(wide["cursor"], 1, "{wide}");
+    let fit = &wide["nest"]["dimensional_fit"];
+    assert_eq!(
+        fit["stock_dimensions"],
+        json!({"length_mm":60,"width_mm":30})
+    );
+    assert_eq!(fit["size_grade"], "wide");
+    assert_eq!(fit["eligible_machines"], json!(["LASER-B"]));
+    assert_eq!(
+        fit["order_footprints"]["WO-SHEET-A"],
+        json!({"length_mm":30,"width_mm":20})
+    );
+    let bad = write(
+        "cut_sheet_nest",
+        "cut-wide",
+        json!({"nest_id":"N-W","machine":"LASER-A"}),
+    )
+    .await;
+    assert_eq!(bad["code"], "MACHINE_NOT_CAPABLE");
+    assert_eq!(
+        business(&client, run, "get_sheet_nest", json!({"nest_id":"N-W"})).await["nest"],
+        wide["nest"]
+    );
+    let cut = write(
+        "cut_sheet_nest",
+        "cut-wide",
+        json!({"nest_id":"N-W","machine":"LASER-B"}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 2, "{cut}");
+    assert_eq!(cut["nest"]["dimensional_fit"], *fit);
+    let standard = write(
+        "create_sheet_nest",
+        "standard",
+        create("N-STD", "REM-OK", vec!["WO-SHEET-C"]),
+    )
+    .await;
+    assert_eq!(
+        standard["nest"]["dimensional_fit"]["size_grade"],
+        "standard"
+    );
+    assert_eq!(
+        standard["nest"]["dimensional_fit"]["eligible_machines"],
+        json!(["LASER-A", "LASER-B"])
+    );
+    assert_eq!(
+        write(
+            "cut_sheet_nest",
+            "cut-standard",
+            json!({"nest_id":"N-STD","machine":"LASER-A"})
+        )
+        .await["nest"]["status"],
+        "cut"
+    );
+}
+
+#[tokio::test]
+async fn p13_05_sheet_remnant_return_and_reuse() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("remnants.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    let (peer, _peer_child) = connect_mode(&db, "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"sheet-metal","version":4}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let write =
+        async |name: &str, key: &str, args| shop_action(&client, run, name, key, args).await;
+    let plan = |nest, stock, order| json!({"nest_id":nest,"stock":stock,"work_orders":[order]});
+    let request = json!({"nest_id":"FIRST","remnant_id":"REM-NEW"});
+    assert_eq!(
+        write(
+            "create_sheet_nest",
+            "plan",
+            plan("FIRST", "SHEET-FULL", "WO-SHEET-A")
+        )
+        .await["cursor"],
+        1
+    );
+    assert_eq!(
+        write("return_sheet_remnant", "return", request.clone()).await["code"],
+        "INVALID_STATE"
+    );
+    assert_eq!(
+        write(
+            "create_sheet_nest",
+            "early",
+            plan("SECOND", "REM-NEW", "WO-SHEET-B")
+        )
+        .await["code"],
+        "STOCK_NOT_FOUND"
+    );
+    let cut = write(
+        "cut_sheet_nest",
+        "cut",
+        json!({"nest_id":"FIRST","machine":"LASER-B"}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 2);
+    assert_eq!(cut["nest"]["remnant_mm2"], 900);
+    assert_eq!(cut["nest"]["scrap_mm2"], 300);
+    assert_eq!(
+        cut["nest"]["remnant_dimensions"],
+        json!({"length_mm":30,"width_mm":30})
+    );
+    let returned = write("return_sheet_remnant", "return", request.clone()).await;
+    assert_eq!(returned["cursor"], 3, "{returned}");
+    assert_eq!(returned["nest"]["returned_remnant"], "REM-NEW");
+    assert_eq!(
+        shop_action(
+            &peer,
+            run,
+            "return_sheet_remnant",
+            "return",
+            request.clone()
+        )
+        .await,
+        returned
+    );
+    assert_eq!(
+        write("return_sheet_remnant", "duplicate", request).await["code"],
+        "REMNANT_ALREADY_RETURNED"
+    );
+    let (a, b) = tokio::join!(
+        write(
+            "create_sheet_nest",
+            "left",
+            plan("LEFT", "REM-NEW", "WO-SHEET-B")
+        ),
+        shop_action(
+            &peer,
+            run,
+            "create_sheet_nest",
+            "right",
+            plan("RIGHT", "REM-NEW", "WO-SHEET-D")
+        )
+    );
+    let (winner, loser) = if a["ok"] == true { (a, b) } else { (b, a) };
+    assert_eq!(winner["cursor"], 4, "{winner}");
+    assert_eq!(loser["code"], "STOCK_RESERVED");
+    assert_eq!(winner["nest"]["lot"], "LOT-AL-1");
+    assert_eq!(winner["nest"]["parent_stock"], "SHEET-FULL");
+    assert_eq!(winner["nest"]["input_mm2"], 900);
+    let id = &winner["nest"]["nest_id"];
+    let cut = write(
+        "cut_sheet_nest",
+        "reuse",
+        json!({"nest_id":id,"machine":"LASER-A"}),
+    )
+    .await;
+    assert_eq!(cut["cursor"], 5, "{cut}");
+    assert_eq!(cut["nest"]["product_mm2"], 600);
+    assert_eq!(cut["nest"]["scrap_mm2"], 300);
+    assert_eq!(cut["nest"]["remnant_mm2"], 0);
+    assert_eq!(
+        write(
+            "return_sheet_remnant",
+            "empty",
+            json!({"nest_id":id,"remnant_id":"EMPTY"})
+        )
+        .await["code"],
+        "NO_REUSABLE_REMNANT"
+    );
+}
