@@ -50,7 +50,7 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
     (
         Action::AssemblyFinishTest,
         "assembly_finish_test",
-        "收集模拟终测结果",
+        "收集终测结果",
         "quality",
     ),
     (
@@ -171,6 +171,7 @@ pub fn spec(action: Action) -> Spec {
             "TEST_BENCH_BUSY",
             "TEST_PRIORITY_BLOCKED",
             "TEST_NOT_READY",
+            "TEST_DEFINITION_REQUIRED",
             "TEST_PASS_REQUIRED",
         ],
         visibility: "run",
@@ -186,6 +187,8 @@ pub struct Setup {
     pub issued_report_inputs: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) configuration_bom: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    versioned_test: bool,
     stock: BTreeMap<String, usize>,
     orders: BTreeMap<String, OrderDefinition>,
     cells: BTreeMap<String, Vec<String>>,
@@ -238,6 +241,10 @@ impl Setup {
         anyhow::ensure!(
             model == mom_model_assembly::ID,
             "assembly requires configure_to_order"
+        );
+        anyhow::ensure!(
+            !self.versioned_test || (self.configuration_bom && self.issued_report_inputs),
+            "versioned final test requires a frozen definition and recorded build"
         );
         anyhow::ensure!(
             self.orders.len() == orders.len()
@@ -336,6 +343,23 @@ struct Test {
     start_minute: u64,
     end_minute: Option<u64>,
     result: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    basis: Option<TestBasis>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TestBasis {
+    specification_version: String,
+    snapshot_fingerprint: String,
+    build_report_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repair: Option<RetestRepair>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RetestRepair {
+    failed_test_ticket: i64,
+    reason: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -856,6 +880,39 @@ pub fn invoke(
     {
         return Ok((failure("INVALID_STATE"), false));
     }
+    let basis = if setup.versioned_test
+        && action == Action::AssemblyStartTest
+        && order.phase == Phase::Queued
+    {
+        let Some(snapshot) = crate::snapshots::load(tx, run, id)? else {
+            return Ok((failure("TEST_DEFINITION_REQUIRED"), false));
+        };
+        let Some(report) = order.build_reports.iter().find(|report| !report.reversed) else {
+            return Ok((failure("TEST_DEFINITION_REQUIRED"), false));
+        };
+        Some(TestBasis {
+            specification_version: snapshot["inspection_plan"]["specification_version"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid frozen inspection specification"))?
+                .into(),
+            snapshot_fingerprint: snapshot["fingerprint"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid frozen definition fingerprint"))?
+                .into(),
+            build_report_id: report.id.clone(),
+            repair: order
+                .tests
+                .last()
+                .filter(|test| test.result.as_deref() == Some("fail"))
+                .zip(order.repairs.last())
+                .map(|(test, reason)| RetestRepair {
+                    failed_test_ticket: test.ticket,
+                    reason: reason.clone(),
+                }),
+        })
+    } else {
+        None
+    };
     let mut response = apply(
         &mut state,
         setup,
@@ -869,6 +926,11 @@ pub fn invoke(
     );
     if response["ok"] != true {
         return Ok((response, false));
+    }
+    if let Some(basis) = basis {
+        let order = state.orders.get_mut(id).unwrap();
+        order.tests.last_mut().unwrap().basis = Some(basis);
+        response["state"] = serde_json::to_value(order)?;
     }
     if setup.issued_report_inputs
         && action == Action::CancelWorkOrder
@@ -1222,6 +1284,7 @@ fn apply(
                 start_minute: simulation.timeline.clock,
                 end_minute: None,
                 result: None,
+                basis: None,
             });
         }
         Action::AssemblyFinishTest if order.phase == Phase::Testing => {

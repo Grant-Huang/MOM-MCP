@@ -181,6 +181,8 @@ test("P12-05 Observe contested assembly capacity", ({ page }) => assemblyConfigu
 
 test("P12-07 Read assembly as-built correction history", ({ page }) => assemblyConfiguration(page, 32, "as-built"));
 
+test("P12-09 Deliver assembly after versioned retest", ({ page }) => assemblyConfiguration(page, 33, "retest"));
+
 async function assemblyConfiguration(page, version, flow) {
   const qualified = version >= 31;
   await page.goto("/scenarios");
@@ -202,7 +204,8 @@ async function assemblyConfiguration(page, version, flow) {
   };
   let cursor = 0;
   const write = async (name, args) => {
-    const result = await invoke(name, { ...args, expected_cursor: cursor, idempotency_key: name + cursor });
+    const version = name.startsWith("assembly_") ? {} : { expected_cursor: cursor };
+    const result = await invoke(name, { ...args, ...version, idempotency_key: name + cursor });
     cursor = result.cursor;
     return result;
   };
@@ -262,6 +265,37 @@ async function assemblyConfiguration(page, version, flow) {
     expect(report.material_inputs).toContainEqual(expect.objectContaining({
       lot_id: "LOT-ALT", substitute: { required_item_id: "STD", qualification_id: "QA-ALT-1" },
     }));
+    if (flow === "retest") {
+      await write("complete_operation", operation);
+      await write("create_inspection_plan_revision", { ...plan, revision: 2, characteristics: { width: { unit: "mm", lower_limit: 1, upper_limit: 3 } } });
+      await write("activate_inspection_plan_revision", { ...plan, revision: 2 });
+      const order = { work_order: "WO-E" };
+      const advance = async (max_events) => {
+        const response = await page.request.post("/api/scenarios", {
+          data: { name: "advance_run", arguments: { run_id, max_events } },
+        });
+        expect((await response.json()).ok).toBe(true);
+      };
+      await write("assembly_start_test", order);
+      await advance(2);
+      const failed = await write("assembly_finish_test", order);
+      expect(failed.state.tests[0].result).toBe("fail");
+      await write("assembly_repair", { ...order, reason: "adjust fixture alignment" });
+      await write("assembly_start_test", order);
+      await advance(1);
+      await write("assembly_finish_test", order);
+      await write("assembly_deliver", order);
+      await page.getByLabel("搜索词").fill("assembly_trace");
+      await button("搜索工具").click();
+      await page.getByLabel("匹配工具").selectOption("assembly_trace");
+      await page.getByLabel("JSON 参数").fill(JSON.stringify({ subject: "UNIT-E-01" }));
+      await button("调用工具").click();
+      await expect(status).toContainText('"status": "delivered"');
+      const [link] = JSON.parse(await status.textContent()).links;
+      expect(link.tests.map(test => [test.result, test.basis.specification_version])).toEqual([["fail", "QA@1"], ["pass", "QA@1"]]);
+      expect(link.tests[1].basis.repair.failed_test_ticket).toBe(link.tests[0].ticket);
+      return;
+    }
     if (flow === "as-built") {
       await page.getByLabel("搜索词").fill("get_assembly_as_built");
       await button("搜索工具").click();

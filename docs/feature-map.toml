@@ -1289,3 +1289,19 @@ spec = "acceptance/P12.md"
 features = ["F08", "F09", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P12-07 Read assembly as-built correction history" }
+
+[[case]]
+id = "P12-08"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p12_08_assembly_versioned_retest" }
+
+[[case]]
+id = "P12-09"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P12-09 Deliver assembly after versioned retest" }
