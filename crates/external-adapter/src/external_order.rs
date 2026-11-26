@@ -121,15 +121,7 @@ pub fn project_order<'a>(
             ("name", "state", "0.2", timestamp)
         }
         Source::OpenMes => {
-            let timestamp = fields
-                .get("updated_at")
-                .and_then(Value::as_str)
-                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-                .map(|value| {
-                    value
-                        .with_timezone(&Utc)
-                        .to_rfc3339_opts(SecondsFormat::AutoSi, true)
-                });
+            let timestamp = fields.get("updated_at").and_then(rfc3339_utc);
             ("order_no", "status", "0.1", timestamp)
         }
         Source::Carbon => ("jobId", "status", "0.1", None),
@@ -171,4 +163,13 @@ pub fn project_order<'a>(
         mapping_version,
         source_updated_at,
     })
+}
+
+pub(crate) fn rfc3339_utc(value: &Value) -> Option<String> {
+    let timestamp = DateTime::parse_from_rfc3339(value.as_str()?).ok()?;
+    Some(
+        timestamp
+            .with_timezone(&Utc)
+            .to_rfc3339_opts(SecondsFormat::AutoSi, true),
+    )
 }

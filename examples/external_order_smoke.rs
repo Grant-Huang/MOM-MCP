@@ -58,6 +58,21 @@ async fn check() -> Result<(), &'static str> {
     {
         return Err("Visible record did not match the expected observation");
     }
+    if let Ok(expected) = env::var("MOM_SAMPLE_SOURCE_UPDATED_AT") {
+        let timestamp = order.source_updated_at.as_deref();
+        let matches = if expected.is_empty() {
+            timestamp.is_none()
+        } else {
+            let expected = chrono::DateTime::parse_from_rfc3339(&expected)
+                .map_err(|_| "Expected source update time must be RFC3339")?;
+            timestamp.is_some_and(|value| {
+                value.ends_with('Z') && chrono::DateTime::parse_from_rfc3339(value) == Ok(expected)
+            })
+        };
+        if !matches {
+            return Err("Visible record did not match the expected source update time");
+        }
+    }
     if source.read_order(hidden).await != Err(ReadError::NotVisible) {
         return Err("Out-of-scope fixture did not return NotVisible");
     }

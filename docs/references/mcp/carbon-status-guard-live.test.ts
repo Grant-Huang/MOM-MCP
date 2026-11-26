@@ -101,13 +101,25 @@ it.each(["status guard", "release workflow"] as const)(
 			.single();
 		expect(fixture.error).toBeNull();
 		const id = fixture.data!.id;
-		const read = (status: string) => {
+		const read = async (status: string, expectTimestamp?: boolean) => {
+			const source = await caller
+				.from("jobs")
+				.select("updatedAt")
+				.eq("id", id)
+				.eq("companyId", company)
+				.single();
+			expect(source.error).toBeNull();
+			const updatedAt = source.data!.updatedAt;
+			if (expectTimestamp === true) expect(updatedAt).toEqual(expect.any(String));
+			if (expectTimestamp === false) expect(updatedAt).toBeNull();
+
 			execFileSync(
 				required("MOM_CARBON_ADAPTER_SMOKE"),
 				["carbon-rest", origin.origin, id, hidden, status],
 				{
 					env: {
 						MOM_SAMPLE_TOKEN: token,
+						MOM_SAMPLE_SOURCE_UPDATED_AT: updatedAt ?? "",
 						MOM_CARBON_COMPANY: company,
 						MOM_CARBON_PROJECT_KEY: projectKey,
 					},
@@ -126,13 +138,13 @@ it.each(["status guard", "release workflow"] as const)(
 			});
 		let releaseLocationId: string | undefined;
 		try {
-			read("Draft");
+			await read("Draft", false);
 
 			if (mode === "status guard") {
 				const applied = await update();
 				expect(applied.error).toBeNull();
 				expect(applied.updated).toBe(true);
-				read("Ready");
+				await read("Ready", true);
 
 				const repeated = await update();
 				expect(repeated.error).toBeNull();
@@ -218,7 +230,7 @@ it.each(["status guard", "release workflow"] as const)(
 						.single();
 					expect(row.error).toBeNull();
 					expect(row.data?.releasedDate).toBeNull();
-					read("Draft");
+					await read("Draft");
 				};
 				let stockItemId: string | undefined;
 				try {
@@ -373,7 +385,7 @@ it.each(["status guard", "release workflow"] as const)(
 						expect(ready.data?.warnings).toEqual([]);
 						expect(ready.data?.scheduled).toBe(true);
 						expect(ready.data?.released.map((job) => job.jobId)).toEqual([id]);
-						read("Ready");
+						await read("Ready");
 					} finally {
 						await setReleaseSettings(originalSettings);
 					}
@@ -516,7 +528,7 @@ it.each(["status guard", "release workflow"] as const)(
 				}
 			}
 			expect(raiseMoment).toHaveBeenCalledTimes(1);
-			read("Ready");
+			await read("Ready");
 		} finally {
 			const removed = await admin
 				.from("job")
