@@ -34,7 +34,7 @@ v0.1 是首期工单观测切片。中期按来源证据增补对象、关系、
 
 ### Odoo 源更新时间
 
-固定 Odoo Community 19 与 PostgreSQL 16 的隔离复验将同一合成制造单的 `write_date` 设为已知 UTC 值。在默认上下文、`America/Vancouver` 和 `Asia/Tokyo` 下，用同一身份按同一 ID 查询 JSON-2 `search_read`，三次均返回相同的无偏移时间字符串，并与数据库基准吻合。可用 [Odoo 生命周期脚本](references/mcp/odoo-adapter-lifecycle-smoke.sh) 复跑。Odoo 映射 v0.2 将固定格式 `YYYY-MM-DD HH:MM:SS` 转成 RFC 3339 UTC 并输出为 `source_updated_at`。缺失或不符合格式时省略该字段，仍使用 v0.2。Observe 的 `observed_at` 记录 Adapter 读取时刻。 [Odoo ORM 时间存储约定](https://www.odoo.com/documentation/19.0/developer/reference/backend/orm.html#date-time-fields)
+固定 Odoo Community 19 与 PostgreSQL 16 的隔离复验将同一合成制造单的 `write_date` 设为已知 UTC 值。在默认上下文、`America/Vancouver` 和 `Asia/Tokyo` 下，用同一身份按同一 ID 查询 JSON-2 `search_read`，三次均返回相同的无偏移时间字符串，并与数据库基准吻合。可用 [Odoo 生命周期脚本](references/mcp/odoo-adapter-lifecycle-smoke.sh) 复跑。Odoo 映射 v0.2 将固定格式 `YYYY-MM-DD HH:MM:SS` 转成 RFC 3339 UTC 并输出为 `source_updated_at`。缺失或不符合格式时省略该字段，仍使用 v0.2。Observe 的 `observed_at` 记录 Adapter 读取时刻。 同一脚本将确认前后两次 JSON-2 源时间交给 Rust Adapter 示例，断言 `source_updated_at` 为 UTC 且表示相同时刻。确认后源时间推进。交换公司身份后，另一张仍为草稿的工单也核对其自身源时间。 [Odoo ORM 时间存储约定](https://www.odoo.com/documentation/19.0/developer/reference/backend/orm.html#date-time-fields)
 
 ### 快照时间与事件续读
 
