@@ -222,7 +222,7 @@ impl<'a> HttpOrderReader<'a> {
     async fn read_http(&self, source_id: &str) -> Result<(Source, Value), ReadError> {
         use ReadError::*;
         let numeric_id = source_id
-            .parse::<i64>()
+            .parse::<u64>()
             .ok()
             .filter(|id| *id > 0 && id.to_string() == source_id)
             .ok_or(InvalidBinding)?;
@@ -232,7 +232,7 @@ impl<'a> HttpOrderReader<'a> {
                 self.odoo_query(
                     database,
                     "/json/2/mrp.production/search_read",
-                    numeric_id,
+                    i64::try_from(numeric_id).map_err(|_| InvalidBinding)?,
                     &["id", "name", "state", "write_date"],
                 )?,
             ),
