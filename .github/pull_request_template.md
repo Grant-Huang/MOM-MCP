@@ -1,11 +1,23 @@
-## Scope
+<!-- 标题：[第N线][L0–L3] 一句话说明结果（Closes #编号）。仅在确认关闭的 Issue 时加编号，并在正文末尾写 Closes #编号。结果约 30 字以内，避免分支名、内部编号和缩写。 -->
 
-- Feature or authorization reference
-- Behavior and contracts affected
-- Suggested risk, confirmed risk and rationale
+## 给审查人
 
-## Evidence
+- **做了什么**　用一句话写使用者可见的结果或系统行为。
+- **为什么**　用一句话写这次解决的问题。
+- **需要你做什么**　批准、拍板某个选择或无。
 
-- Commands, outcomes, skipped or unverified checks
-- Independent review or pending reviewer
-- Relevant findings, exceptions or recovery plan
+## 需要你决定
+
+无。需要拍板时，列出选项、推荐及理由。
+
+## 怎么看效果
+
+涉及界面时附图，或给出三步以内的复现操作。
+
+## 技术细节
+
+- 需求依据、设计一致性、影响范围与非目标。
+- 风险等级、判定理由、回滚方法及所需评审。
+- 验证命令、结果、跳过或未验证的项目。
+
+术语与编号首次出现时加简短说明或链接。 [术语表](https://github.com/Grant-Huang/MOM-MCP/blob/master/docs/GLOSSARY.md)
