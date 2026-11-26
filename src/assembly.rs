@@ -71,10 +71,57 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "查询测试台、实装与交付追溯",
         "production",
     ),
+    (
+        Action::GetAssemblyAsBuilt,
+        "get_assembly_as_built",
+        "按成品序列号查询实装物料及报工更正历史",
+        "production",
+    ),
 ];
 
 pub fn spec(action: Action) -> Spec {
     let &(_, name, description, domain) = TOOLS.iter().find(|entry| entry.0 == action).unwrap();
+    if action == Action::GetAssemblyAsBuilt {
+        let material = object(
+            &[
+                "item_id",
+                "revision",
+                "reservation_id",
+                "lot_id",
+                "quantity",
+                "unit",
+            ],
+            json!({"item_id":text(),"revision":{"type":"integer","minimum":1},
+                "reservation_id":text(),"lot_id":text(),"quantity":crate::inventory::quantity_schema(),"unit":text(),
+                "substitute":object(&["required_item_id","qualification_id"],json!({"required_item_id":text(),"qualification_id":text()}))}),
+        );
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: "read",
+            input: object(&["serial_number"], json!({"serial_number":text()})),
+            output: object(
+                &[
+                    "ok",
+                    "serial_number",
+                    "work_order",
+                    "configuration",
+                    "builds",
+                ],
+                json!({"ok":{"const":true},"serial_number":text(),"work_order":text(),"configuration":text(),
+                    "bom_revision":{"type":"integer","minimum":1},"snapshot_fingerprint":text(),
+                    "builds":{"type":"array","items":object(
+                        &["report_id","status","material_inputs"],
+                        json!({"report_id":text(),"status":{"enum":["active","reversed"]},
+                            "material_inputs":{"type":"array","items":material}}))}}),
+            ),
+            preconditions: &["run_open", "tool_enabled_in_scenario"],
+            side_effect: "none",
+            errors: &["SERIAL_NOT_FOUND"],
+            visibility: "run",
+        };
+    }
     let read = matches!(action, Action::AssemblyKit | Action::AssemblyTrace);
     let mut required = vec![if action == Action::AssemblyTrace {
         "subject"
@@ -653,6 +700,47 @@ fn dispatch_blocker(
     } else {
         None
     }
+}
+
+pub(crate) fn as_built(
+    tx: &Transaction<'_>,
+    run: &str,
+    setup: &Setup,
+    serial: &str,
+) -> anyhow::Result<Result<Value, crate::scenario::Rejection>> {
+    let Some((id, spec)) = setup.orders.iter().find(|(_, spec)| spec.serial == serial) else {
+        return Ok(Err(crate::scenario::reject(
+            "SERIAL_NOT_FOUND",
+            "serial_number",
+        )));
+    };
+    let state = load(tx, run, setup)?;
+    let mut builds = Vec::new();
+    for report in &state.orders[id].build_reports {
+        let mut materials = Vec::new();
+        for input in &report.material_inputs {
+            let (item, revision): (String, u32) = tx.query_row(
+                "SELECT item,revision FROM stock_lot_origins WHERE run=?1 AND lot=?2",
+                params![run, input.lot_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let mut material = serde_json::to_value(input)?;
+            material["item_id"] = json!(item);
+            material["revision"] = json!(revision);
+            materials.push(material);
+        }
+        builds.push(
+            json!({"report_id":report.id,"status":if report.reversed {"reversed"} else {"active"},
+            "material_inputs":materials}),
+        );
+    }
+    let mut result = json!({"ok":true,"serial_number":serial,"work_order":id,
+        "configuration":spec.configuration,"builds":builds});
+    if let Some(snapshot) = crate::snapshots::load(tx, run, id)? {
+        result["bom_revision"] = snapshot["bom"]["revision"].clone();
+        result["snapshot_fingerprint"] = snapshot["fingerprint"].clone();
+    }
+    Ok(Ok(result))
 }
 
 pub fn invoke(

@@ -379,6 +379,19 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     anyhow::ensure!(
         !definition
             .capabilities
+            .contains(&Action::GetAssemblyAsBuilt)
+            || (definition
+                .assembly
+                .as_ref()
+                .is_some_and(|setup| setup.configuration_bom && setup.issued_report_inputs)
+                && definition
+                    .capabilities
+                    .contains(&Action::PostOperationReport)),
+        "assembly as-built history requires frozen definitions and recorded material inputs"
+    );
+    anyhow::ensure!(
+        !definition
+            .capabilities
             .contains(&Action::ReturnUnusedMaterial)
             || (definition.issued_report_inputs()
                 && definition
@@ -916,6 +929,7 @@ impl Scenarios {
             include_str!("../fixtures/assembly-closed-loop.json"),
             include_str!("../fixtures/assembly-configuration-bom.json"),
             include_str!("../fixtures/assembly-qualified-substitute.json"),
+            include_str!("../fixtures/assembly-as-built.json"),
             include_str!("../fixtures/assembly-partial-lot-transfers.json"),
             include_str!("../fixtures/assembly-operation-reports.json"),
             include_str!("../fixtures/assembly-operation-lifecycle.json"),
@@ -1924,6 +1938,17 @@ impl Scenarios {
                 tx.commit()?;
             }
             return Ok(Ok(response));
+        }
+        if action == Action::GetAssemblyAsBuilt {
+            let Some(setup) = &definition.assembly else {
+                return Ok(Err(reject("TOOL_UNAVAILABLE", "name")));
+            };
+            return crate::assembly::as_built(
+                &tx,
+                run,
+                setup,
+                parameters["serial_number"].as_str().unwrap(),
+            );
         }
         if crate::assembly::TOOLS.iter().any(|tool| tool.0 == action)
             || (matches!(

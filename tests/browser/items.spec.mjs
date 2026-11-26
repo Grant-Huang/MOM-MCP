@@ -173,18 +173,21 @@ test("P9A-09 Freeze a work order definition", async ({ page }) => {
   expect(comparison.current.inspection_plan.specification_version).toBe("QA@2");
 });
 
-test("P12-UI Freeze configuration-specific assembly requirements", ({ page }) => assemblyConfiguration(page, false));
+test("P12-UI Freeze configuration-specific assembly requirements", ({ page }) => assemblyConfiguration(page, 30, "snapshot"));
 
-test("P12-03 Trace a qualified assembly substitute", ({ page }) => assemblyConfiguration(page, true));
+test("P12-03 Trace a qualified assembly substitute", ({ page }) => assemblyConfiguration(page, 31, "substitute"));
 
-test("P12-05 Observe contested assembly capacity", ({ page }) => assemblyConfiguration(page, true, true));
+test("P12-05 Observe contested assembly capacity", ({ page }) => assemblyConfiguration(page, 31, "shared-resources"));
 
-async function assemblyConfiguration(page, qualified, sharedResources = false) {
+test("P12-07 Read assembly as-built correction history", ({ page }) => assemblyConfiguration(page, 32, "as-built"));
+
+async function assemblyConfiguration(page, version, flow) {
+  const qualified = version >= 31;
   await page.goto("/scenarios");
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
   await button("加载场景").click();
-  await page.getByLabel("已发布场景").selectOption(qualified ? "assembly@31" : "assembly@30");
+  await page.getByLabel("已发布场景").selectOption(`assembly@${version}`);
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   const { run_id } = JSON.parse(await status.textContent());
@@ -259,7 +262,24 @@ async function assemblyConfiguration(page, qualified, sharedResources = false) {
     expect(report.material_inputs).toContainEqual(expect.objectContaining({
       lot_id: "LOT-ALT", substitute: { required_item_id: "STD", qualification_id: "QA-ALT-1" },
     }));
-    if (sharedResources) {
+    if (flow === "as-built") {
+      await page.getByLabel("搜索词").fill("get_assembly_as_built");
+      await button("搜索工具").click();
+      await page.getByLabel("匹配工具").selectOption("get_assembly_as_built");
+      await page.getByLabel("JSON 参数").fill(JSON.stringify({ serial_number: "UNIT-E-01" }));
+      await button("调用工具").click();
+      await expect(status).toContainText('"status": "active"');
+      await write("reverse_operation_report", { work_order: "WO-E", report_id: report.id, reason: "correct actual inputs" });
+      await button("调用工具").click();
+      await expect(status).toContainText('"status": "reversed"');
+      const manifest = JSON.parse(await status.textContent());
+      expect(manifest.bom_revision).toBe(1);
+      expect(manifest.builds[0].material_inputs).toContainEqual(expect.objectContaining({
+        item_id: "ALT", lot_id: "LOT-ALT", revision: 1, substitute: { required_item_id: "STD", qualification_id: "QA-ALT-1" },
+      }));
+      return;
+    }
+    if (flow === "shared-resources") {
       await page.getByLabel("搜索词").fill("list_dispatch_queue");
       await button("搜索工具").click();
       await page.getByLabel("匹配工具").selectOption("list_dispatch_queue");
