@@ -172,3 +172,62 @@ test("P9A-09 Freeze a work order definition", async ({ page }) => {
   expect(comparison.frozen.inspection_plan.specification_version).toBe("QA@1");
   expect(comparison.current.inspection_plan.specification_version).toBe("QA@2");
 });
+
+test("P12-UI Freeze configuration-specific assembly requirements", async ({ page }) => {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption("assembly@30");
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  const { run_id } = JSON.parse(await status.textContent());
+  const invoke = async (name, arguments_) => {
+    const response = await page.request.post("/api/scenarios", {
+      data: { name: "call_tool", arguments: { run_id, name, arguments: arguments_ } },
+    });
+    expect(response.ok()).toBe(true);
+    const result = await response.json();
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    return result;
+  };
+  let cursor = 0;
+  const write = async (name, args) => {
+    const result = await invoke(name, { ...args, expected_cursor: cursor, idempotency_key: name + cursor });
+    cursor = result.cursor;
+    return result;
+  };
+  for (const item_id of ["FRAME", "BASE", "STD", "RUG"]) {
+    await write("create_item", { item_id, base_unit: "each" });
+    await write("create_item_revision", { item_id, revision: 1, name: item_id });
+    await write("activate_revision", { item_id, revision: 1, revision_type: "item" });
+  }
+  const frame = { item_id: "FRAME", revision: 1 };
+  await write("create_bom_revision", frame);
+  await write("set_bom_components", { ...frame, components: {
+    BASE: { revision: 1, quantity: 1, unit: "each" },
+    STD: { revision: 1, quantity: 1, unit: "each", configurations: ["standard"] },
+    RUG: { revision: 1, quantity: 2, unit: "each", configurations: ["rugged"] },
+  } });
+  await write("activate_revision", { ...frame, revision_type: "bom" });
+  await write("create_route_revision", frame);
+  await write("set_route_operations", { ...frame, operations: { build: { work_center: "CELL-A", predecessors: [] } } });
+  await write("activate_revision", { ...frame, revision_type: "route" });
+  const plan = { plan_id: "QA", revision: 1 };
+  await write("create_inspection_plan_revision", { ...plan, characteristics: { width: { unit: "mm", lower_limit: 1, upper_limit: 2 } } });
+  await write("activate_inspection_plan_revision", plan);
+  await button("搜索工具").click();
+  await page.getByLabel("匹配工具").selectOption("get_order_snapshot");
+  for (const [work_order, configuration, variant, quantity] of [["WO-E", "standard", "STD", "1"], ["WO-L", "rugged", "RUG", "2"]]) {
+    const release = { work_order, definition_selection: { item_id: "FRAME", inspection_plan_id: "QA" } };
+    const ready = await invoke("get_release_readiness", release);
+    await write("release_work_order", { ...release, snapshot_fingerprint: ready.definition_snapshot.fingerprint });
+    await page.getByLabel("JSON 参数").fill(JSON.stringify({ work_order }));
+    await button("调用工具").click();
+    await expect(status).toContainText(`"configuration": "${configuration}"`);
+    const result = JSON.parse(await status.textContent());
+    expect(Object.keys(result.snapshot.bom.components)).toEqual(["BASE", variant]);
+    const requirements = await invoke("get_material_requirements", { work_order });
+    expect(requirements.requirements).toContainEqual(expect.objectContaining({ item_id: variant, required: quantity }));
+  }
+});

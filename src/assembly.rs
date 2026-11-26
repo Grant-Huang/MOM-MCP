@@ -137,6 +137,8 @@ pub struct Setup {
     pub exclusive_dispatch: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub issued_report_inputs: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) configuration_bom: bool,
     stock: BTreeMap<String, usize>,
     orders: BTreeMap<String, OrderDefinition>,
     cells: BTreeMap<String, Vec<String>>,
@@ -153,6 +155,12 @@ struct OrderDefinition {
 }
 
 impl Setup {
+    pub(crate) fn configuration(&self, order: &str) -> Option<&str> {
+        self.orders
+            .get(order)
+            .map(|definition| definition.configuration.as_str())
+    }
+
     pub fn add_order(
         &mut self,
         id: &str,

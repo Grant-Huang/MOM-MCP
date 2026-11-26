@@ -19,6 +19,8 @@ struct Component {
     unit: String,
     #[serde(default)]
     expand_bom: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    configurations: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -27,6 +29,37 @@ pub(crate) struct Bom {
     revision: i64,
     status: String,
     components: BTreeMap<String, Component>,
+}
+
+impl Bom {
+    pub(crate) fn for_configuration(
+        mut self,
+        configuration: Option<&str>,
+    ) -> Result<Self, Rejection> {
+        if self
+            .components
+            .values()
+            .any(|component| !component.configurations.is_empty())
+        {
+            let Some(configuration) = configuration else {
+                return Err(reject("BOM_CONFIGURATION_REQUIRED", "definition_selection"));
+            };
+            self.components.retain(|_, component| {
+                component.configurations.is_empty()
+                    || component
+                        .configurations
+                        .iter()
+                        .any(|name| name == configuration)
+            });
+            if self.components.is_empty() {
+                return Err(reject("BOM_CONFIGURATION_EMPTY", "definition_selection"));
+            }
+            for component in self.components.values_mut() {
+                component.configurations.clear();
+            }
+        }
+        Ok(self)
+    }
 }
 
 fn id_schema() -> Value {
@@ -41,7 +74,7 @@ fn component_schema() -> Value {
     json!({"type":"object","propertyNames":id_schema(),"maxProperties":MAX_COMPONENTS,
         "additionalProperties":object(&["revision","quantity","unit"],json!({
             "revision":revision_number(),"quantity":{"type":"number","exclusiveMinimum":0},
-            "unit":text(),"expand_bom":{"type":"boolean"}}))})
+            "unit":text(),"expand_bom":{"type":"boolean"},"configurations":{"type":"array","minItems":1,"maxItems":16,"uniqueItems":true,"items":id_schema()}}))})
 }
 
 pub(crate) fn revision_schema() -> Value {
@@ -66,6 +99,7 @@ pub(crate) fn validation_spec(allow_route: bool) -> Spec {
             "COMPONENT_REVISION_NOT_FOUND",
             "COMPONENT_UNIT_MISMATCH",
             "COMPONENT_BOM_NOT_FOUND",
+            "NESTED_CONFIGURATION_UNSUPPORTED",
             "BOM_DEPENDENCY_NOT_PUBLISHED",
             "ROUTE_REVISION_NOT_FOUND",
             "ROUTE_REVISION_NOT_ACTIVATABLE",
@@ -141,6 +175,7 @@ pub(crate) fn spec(action: Action) -> Spec {
             "COMPONENT_REVISION_NOT_FOUND",
             "COMPONENT_UNIT_MISMATCH",
             "COMPONENT_BOM_NOT_FOUND",
+            "NESTED_CONFIGURATION_UNSUPPORTED",
             "BOM_CYCLE",
             "BOM_DEPENDENCY_NOT_PUBLISHED",
             "VERSION_CONFLICT",
@@ -219,6 +254,17 @@ fn check_components(
             || component.revision == 0
             || !component.quantity.is_finite()
             || component.quantity <= 0.0
+            || component.configurations.len() > 16
+            || component
+                .configurations
+                .iter()
+                .any(|name| !identifier(name))
+            || component
+                .configurations
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != component.configurations.len()
         {
             return Ok(Err(Rejection::invalid("components")));
         }
@@ -236,6 +282,16 @@ fn check_components(
             let Some(child) = read(tx, run, id, number)? else {
                 return Ok(Err(reject("COMPONENT_BOM_NOT_FOUND", "components")));
             };
+            if child
+                .components
+                .values()
+                .any(|component| !component.configurations.is_empty())
+            {
+                return Ok(Err(reject(
+                    "NESTED_CONFIGURATION_UNSUPPORTED",
+                    "components",
+                )));
+            }
             if publish && child.status == "draft" {
                 return Ok(Err(reject("BOM_DEPENDENCY_NOT_PUBLISHED", "components")));
             }

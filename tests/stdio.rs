@@ -7905,3 +7905,140 @@ async fn smt_cross_order_recall(
         assert_eq!(stock["balance"]["on_hand"], "1");
     }
 }
+
+#[tokio::test]
+async fn p12_01_assembly_configuration_bom_effectivity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("configuration.sqlite3"), "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"assembly","version":30}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let invoke = async |name: &str, args| business(&client, run, name, args).await;
+    let write = async |name: &str, mut args: Value| {
+        let cursor = call(&client, "get_run", json!({"run_id":run})).await["cursor"].clone();
+        args["expected_cursor"] = cursor.clone();
+        args["idempotency_key"] = json!(format!("{name}-{cursor}"));
+        invoke(name, args).await
+    };
+    let apply = async |name: &str, args| {
+        let result = write(name, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    };
+    for item in ["FRAME", "BASE", "STANDARD", "RUGGED"] {
+        apply("create_item", json!({"item_id":item,"base_unit":"each"})).await;
+        if item != "FRAME" {
+            apply(
+                "create_item_revision",
+                json!({"item_id":item,"revision":1,"name":item}),
+            )
+            .await;
+            apply(
+                "activate_revision",
+                json!({"item_id":item,"revision":1,"revision_type":"item"}),
+            )
+            .await;
+        }
+    }
+    apply("create_inspection_plan_revision",json!({"plan_id":"QA","revision":1,"characteristics":{"width":{"unit":"mm","lower_limit":1,"upper_limit":2}}})).await;
+    apply(
+        "activate_inspection_plan_revision",
+        json!({"plan_id":"QA","revision":1}),
+    )
+    .await;
+    let activate = async |revision, rugged_quantity| {
+        apply(
+            "create_item_revision",
+            json!({"item_id":"FRAME","revision":revision,"name":"Frame"}),
+        )
+        .await;
+        apply(
+            "activate_revision",
+            json!({"item_id":"FRAME","revision":revision,"revision_type":"item"}),
+        )
+        .await;
+        apply(
+            "create_bom_revision",
+            json!({"item_id":"FRAME","revision":revision}),
+        )
+        .await;
+        apply("set_bom_components",json!({"item_id":"FRAME","revision":revision,"components":{
+            "BASE":{"revision":1,"quantity":1,"unit":"each"},
+            "STANDARD":{"revision":1,"quantity":1,"unit":"each","configurations":["standard"]},
+            "RUGGED":{"revision":1,"quantity":rugged_quantity,"unit":"each","configurations":["rugged"]}
+        }})).await;
+        apply(
+            "activate_revision",
+            json!({"item_id":"FRAME","revision":revision,"revision_type":"bom"}),
+        )
+        .await;
+        apply(
+            "create_route_revision",
+            json!({"item_id":"FRAME","revision":revision}),
+        )
+        .await;
+        apply("set_route_operations",json!({"item_id":"FRAME","revision":revision,"operations":{"build":{"work_center":"CELL-A","predecessors":[]}}})).await;
+        apply(
+            "activate_revision",
+            json!({"item_id":"FRAME","revision":revision,"revision_type":"route"}),
+        )
+        .await;
+    };
+    let selection = |order| json!({"work_order":order,"definition_selection":{"item_id":"FRAME","inspection_plan_id":"QA"}});
+    let release = async |order| {
+        let mut args = selection(order);
+        let ready = invoke("get_release_readiness", args.clone()).await;
+        assert_eq!(ready["ready"], true, "{ready}");
+        args["snapshot_fingerprint"] = ready["definition_snapshot"]["fingerprint"].clone();
+        args
+    };
+    activate(1, 2).await;
+    let mut spoofed = selection("WO-E");
+    spoofed["definition_selection"]["configuration"] = json!("rugged");
+    assert_eq!(
+        invoke("get_release_readiness", spoofed).await["code"],
+        "INVALID_ARGUMENT"
+    );
+    let early = apply("release_work_order", release("WO-E").await).await;
+    let stale = release("WO-L").await;
+    activate(2, 3).await;
+    assert_eq!(
+        write("release_work_order", stale).await["code"],
+        "SNAPSHOT_CHANGED"
+    );
+    let late = apply("release_work_order", release("WO-L").await).await;
+    for (order, config, revision, required, excluded, released) in [
+        ("WO-E", "standard", 1, "STANDARD", "RUGGED", &early),
+        ("WO-L", "rugged", 2, "RUGGED", "STANDARD", &late),
+    ] {
+        let snapshot =
+            invoke("get_order_snapshot", json!({"work_order":order})).await["snapshot"].clone();
+        assert_eq!(snapshot, released["definition_snapshot"]);
+        assert_eq!(snapshot["definition_selection"]["configuration"], config);
+        assert_eq!(snapshot["bom"]["revision"], revision);
+        let items = snapshot["bom"]["components"].as_object().unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(
+            items.contains_key("BASE")
+                && items.contains_key(required)
+                && !items.contains_key(excluded)
+        );
+        let material = invoke("get_material_requirements", json!({"work_order":order})).await;
+        let rows = material["requirements"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        let variant = rows.iter().find(|row| row["item_id"] == required).unwrap();
+        assert_eq!(variant["required"], if order == "WO-E" { "1" } else { "3" });
+    }
+    let impact = invoke("assess_engineering_change", json!({"work_order":"WO-E"})).await;
+    assert_eq!(impact["requires_review"], true, "{impact}");
+    assert_eq!(
+        impact["current"]["definition_selection"]["configuration"],
+        "standard"
+    );
+    assert!(impact["current"]["bom"]["components"]["RUGGED"].is_null());
+}
