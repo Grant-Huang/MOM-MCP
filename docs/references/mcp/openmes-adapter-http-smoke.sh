@@ -47,10 +47,12 @@ $witness = createOperator($otherLine);
 $initialUpdate = '2020-01-01 00:00:00';
 $visible = WorkOrder::factory()->create(['line_id' => $line->id, 'updated_at' => $initialUpdate]);
 $hidden = WorkOrder::factory()->create(['line_id' => $otherLine->id, 'updated_at' => $initialUpdate]);
+$token = $actor->createToken('adapter-http-sample');
 $fixture = [
     'visible' => $visible->id,
     'hidden' => $hidden->id,
-    'token' => $actor->createToken('adapter-http-sample')->plainTextToken,
+    'token' => $token->plainTextToken,
+    'token_id' => $token->accessToken->getKey(),
     'witness_token' => $witness->createToken('adapter-http-witness')->plainTextToken,
 ];
 if (getenv('MOM_OPENMES_LIFECYCLE') === '1') {
@@ -171,6 +173,42 @@ if ($adapter !== false) {
         }
         echo "OpenMES source time: accepted work order advanced, witness work order unchanged", PHP_EOL;
         echo "OpenMES lifecycle: PENDING -> ACCEPTED confirmed by the read-only adapter", PHP_EOL;
+
+        require 'vendor/autoload.php';
+        $app = require 'bootstrap/app.php';
+        $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+        $deleted = Laravel\Sanctum\PersonalAccessToken::whereKey($fixture['token_id'])
+            ->where('name', 'adapter-http-sample')
+            ->delete();
+        [$status] = request($visible, $fixture['token']);
+        if ($deleted !== 1 || $status !== 401) {
+            throw new RuntimeException("OpenMES revoked reader expected HTTP 401, received $status");
+        }
+        $env = getenv();
+        unset($env['MOM_ODOO_WITNESS_TOKEN'], $env['MOM_SAMPLE_SOURCE_UPDATED_AT']);
+        $env['MOM_SAMPLE_TOKEN'] = $fixture['token'];
+        $process = proc_open(
+            [$adapter, 'openmes', 'http://127.0.0.1:18765', (string) $visible, (string) $hidden, 'ACCEPTED'],
+            [STDIN, ['pipe', 'w'], ['pipe', 'w']],
+            $pipes,
+            null,
+            $env,
+        );
+        if (!is_resource($process)) {
+            throw new RuntimeException('Could not run the Adapter revocation check');
+        }
+        $output = stream_get_contents($pipes[1]);
+        $error = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        if (proc_close($process) !== 1 || $output !== '' || trim($error) !== 'Visible record: source unavailable') {
+            throw new RuntimeException('Adapter did not return the expected sanitized source error');
+        }
+        $witnessAfterRevocation = checkAdapter($adapter, $hidden, $visible, $fixture['witness_token'], 'PENDING');
+        if ($witnessAfterRevocation != $witnessBefore) {
+            throw new RuntimeException('The witness work order timestamp changed after token revocation');
+        }
+        echo "OpenMES revocation: HTTP 401, sanitized Adapter error, witness reader unaffected", PHP_EOL;
     }
 }
 PHP
