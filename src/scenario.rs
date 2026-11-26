@@ -205,6 +205,10 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     .map_err(|reason| anyhow::anyhow!("model configuration: {reason}"))?;
     if let Some(setup) = &definition.smt {
         anyhow::ensure!(
+            definition.capabilities.contains(&Action::SmtSpliceReel) == setup.spliced_placement,
+            "SMT splice capability requires spliced placement"
+        );
+        anyhow::ensure!(
             !setup.shared_material
                 || (definition.capabilities.contains(&Action::GetOrderSnapshot)
                     && definition
@@ -909,6 +913,7 @@ impl Scenarios {
             include_str!("../fixtures/smt-shared-ledger.json"),
             include_str!("../fixtures/smt-lot-holds.json"),
             include_str!("../fixtures/smt-split-reels.json"),
+            include_str!("../fixtures/smt-spliced-placement.json"),
             include_str!("../fixtures/assembly.json"),
             include_str!("../fixtures/assembly-production.json"),
             include_str!("../fixtures/assembly-public-orders.json"),
@@ -1267,8 +1272,10 @@ impl Scenarios {
             .smt
             .as_ref()
             .filter(|setup| setup.shared_material);
-        if action == Action::SmtPlace && shared_smt.is_some() {
-            spec = crate::smt::placement_spec(spec);
+        if action == Action::SmtPlace
+            && let Some(setup) = shared_smt
+        {
+            spec = crate::smt::placement_spec(spec, setup.spliced_placement);
         }
         if name == "describe_tool" {
             return Ok(Ok(json!({"ok":true,"tool":spec})));

@@ -736,6 +736,8 @@ pub(crate) struct Report {
     pub(crate) components: BTreeMap<String, usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) material_inputs: Vec<MaterialInput>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) material_input_serials: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) wip_move: Option<crate::wip::Movement>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -2232,6 +2234,7 @@ fn apply(
                 serial_numbers,
                 components: BTreeMap::new(),
                 material_inputs: Vec::new(),
+                material_input_serials: Default::default(),
                 wip_move: None,
                 wip_movement_reversals: Vec::new(),
                 wip_partitions: Vec::new(),
