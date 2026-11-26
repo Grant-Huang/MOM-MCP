@@ -63,6 +63,7 @@ PY
 
 python3 - "$sample" "$address" "$name" "$db" <<'PY'
 import json, os, subprocess, sys
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 with open(sys.argv[1]) as f:
     sample = json.load(f)
@@ -105,11 +106,14 @@ order.action_confirm()
 assert order.state == 'confirmed'
 env.cr.commit()
 """
-subprocess.run(
-    ['docker', 'exec', '-i', sys.argv[3], 'odoo', 'shell', '-d', sample['database'],
-     '--db_host=' + sys.argv[4], '--db_user=odoo', '--db_password=odoo', '--no-http'],
-    input=confirm, text=True, check=True, stdout=subprocess.DEVNULL,
-)
+def run_odoo_shell(script):
+    subprocess.run(
+        ['docker', 'exec', '-i', sys.argv[3], 'odoo', 'shell', '-d', sample['database'],
+         '--db_host=' + sys.argv[4], '--db_user=odoo', '--db_password=odoo', '--no-http'],
+        input=script, text=True, check=True, stdout=subprocess.DEVNULL,
+    )
+
+run_odoo_shell(confirm)
 cmd[-1] = 'confirmed'
 after = read_source_time(sample['visible'], sample['token'], {})
 assert after > before, 'Odoo source update time did not advance after confirmation'
@@ -119,6 +123,33 @@ cmd[3:5] = reversed(cmd[3:5])
 env['MOM_SAMPLE_TOKEN'], env['MOM_ODOO_WITNESS_TOKEN'] = env['MOM_ODOO_WITNESS_TOKEN'], env['MOM_SAMPLE_TOKEN']
 witness_time = read_source_time(sample['hidden'], sample['witness'], {})
 check_adapter(cmd, env, witness_time)
+run_odoo_shell("""
+key = env['res.users.apikeys'].sudo().search([
+    ('user_id.login', '=', 'm3-primary'), ('name', '=', 'M3 acceptance')
+])
+assert len(key) == 1
+key.unlink()
+env.cr.commit()
+""")
+try:
+    read_source_time(sample['visible'], sample['token'], {})
+except HTTPError as error:
+    assert error.code == 401, f'Expected Odoo HTTP 401 after revocation, received {error.code}'
+else:
+    raise AssertionError('Revoked API key still reads its former work order')
+
+revoked = subprocess.run(
+    [*cmd[:3], str(sample['visible']), str(sample['hidden']), 'confirmed'],
+    env=dict(env, MOM_SAMPLE_TOKEN=sample['token'], MOM_ODOO_WITNESS_TOKEN=sample['witness']),
+    text=True, capture_output=True,
+)
+assert (revoked.returncode, revoked.stdout, revoked.stderr.strip()) == (
+    1, '', 'Visible record: source unavailable',
+), 'Adapter did not return the expected sanitized source error'
+# The revoked key had served as the witness for the other company's read.
+del env['MOM_ODOO_WITNESS_TOKEN']
+check_adapter(cmd, env, witness_time)
+print("Odoo revocation: HTTP 401, sanitized Adapter error, independent reader unaffected")
 print("Odoo source time: Adapter matched all three JSON-2 source observations")
 print("Odoo lifecycle: draft -> confirmed verified through the read-only adapter")
 PY

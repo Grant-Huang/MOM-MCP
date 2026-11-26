@@ -45,6 +45,8 @@ GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传�
 
 两个方向均通过。主身份读到自己的工单并投影为源状态 `draft`，读取另一公司工单返回 `NotVisible`。第二身份在同一数据库按相同 ID 独立读取成功，确认工单存在。此记录是实际来源直连证据。正式 AgentNexus Observe 仍待首站获批后联调。
 
+Odoo 生命周期脚本还撤销主读取身份的临时 API 密钥。原密钥再次读取原本可见的制造单时，JSON-2 返回 401，Rust Adapter 报告来源不可用，未返回工单。另一公司的独立会话仍可经 Adapter 读取自己的工单。此项是来源凭据撤销证据，正式 AgentNexus 服务身份的撤权仍在 M3 验收范围。 [复跑脚本](../references/mcp/odoo-adapter-lifecycle-smoke.sh)
+
 ### OpenMES 来源令牌撤销
 
 OpenMES 生命周期脚本撤销单产线 Operator 的临时读取令牌。该令牌再读原本可见的工单时返回 401，Rust Adapter 报告来源不可用。另一产线的见证凭据可继续读取自己的工单，且原工单对其仍不可见。证据范围为来源凭据。 [复跑脚本](../references/mcp/openmes-adapter-http-smoke.sh)
