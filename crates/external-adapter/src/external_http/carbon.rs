@@ -33,6 +33,9 @@ impl HttpOrderReader<'_> {
         if !response.status().is_success() {
             return Err(ReadError::SourceUnavailable);
         }
+        if response.headers().contains_key("mcp-session-id") {
+            return Err(ReadError::InvalidResponse);
+        }
         Ok(response)
     }
 
@@ -79,7 +82,9 @@ impl HttpOrderReader<'_> {
                 }),
             )
             .await?;
-        if initialized["protocolVersion"] != PROTOCOL_VERSION {
+        if initialized["protocolVersion"] != PROTOCOL_VERSION
+            || !initialized["capabilities"]["tools"].is_object()
+        {
             return Err(ReadError::InvalidResponse);
         }
         let notification = self

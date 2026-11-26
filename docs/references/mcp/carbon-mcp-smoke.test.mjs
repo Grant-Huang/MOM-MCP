@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { checkCarbon } from "./carbon-mcp-smoke.mjs";
 
-function options({ refusal = true, httpStatus, rowId = "own" } = {}) {
+function options({ refusal = true, httpStatus, rowId = "own", initializeHeaders, tools = {} } = {}) {
   const calls = [];
   async function request(_, init) {
     const { id, method, params } = JSON.parse(init.body);
@@ -12,7 +12,9 @@ function options({ refusal = true, httpStatus, rowId = "own" } = {}) {
     if (method === "notifications/initialized") return new Response(null, { status: 202 });
     let result;
     if (method === "initialize") {
-      result = { protocolVersion: "2025-11-25" };
+      return Response.json({
+        jsonrpc: "2.0", id, result: { protocolVersion: "2025-11-25", capabilities: { tools } },
+      }, { headers: initializeHeaders });
     } else if (params.name === "describe_tool") {
       result = { content: [{ type: "text", text: "production_getJob" }] };
     } else if (params.arguments.arguments.id === "own") {
@@ -52,4 +54,15 @@ test("rejects a mismatched visible record before reading the other fixture", asy
   const config = options({ rowId: "wrong" });
   await assert.rejects(checkCarbon(config), /candidate contract/);
   assert.equal(config.calls.length, 4);
+});
+
+test("stops before tool discovery for a session or missing tools capability", async () => {
+  for (const [overrides, expected] of [
+    [{ initializeHeaders: { "Mcp-Session-Id": "fixture-session" } }, /unsupported MCP session/],
+    [{ tools: null }, /did not advertise MCP tools/],
+  ]) {
+    const config = options(overrides);
+    await assert.rejects(checkCarbon(config), expected);
+    assert.deepEqual(config.calls.map(([method]) => method), ["initialize"]);
+  }
 });
