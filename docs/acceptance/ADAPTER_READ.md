@@ -29,6 +29,8 @@
 
 执行 `cargo test --locked --test external_observe source_failures_keep_their_classification_without_fallback -- --exact` 复跑三源失败矩阵。Odoo 空结果、OpenMES 对象级 403 和 Carbon REST 空结果均返回不可见。OpenMES 无效正文或记录错配、Carbon REST 跨公司记录错配均返回响应无效。Odoo 上游 401 和 Carbon REST 上游 503 均返回来源不可用。八种失败各触发一次已绑定来源请求，备用站点请求数为零。此为 MOM-MCP 候选 Observe 回环证据。
 
+运行 `cargo test --locked --test external_observe interrupted_source_response_is_unavailable_without_fallback -- --exact` 复跑响应中断。绑定来源发送 HTTP 200 和一段可解析为工单的 JSON，但在达到声明的正文长度前关闭连接。候选 Observe 返回来源不可用，备用站点零调用，且未发布工单快照。
+
 运行 `cargo test --locked --test external_http reads_and_classifies_odoo_and_openmes_http_responses -- --exact` 复跑数值工单 ID 边界。OpenMES 回环接口往返验证 `18446744073709551615`（`u64::MAX`）的完整路径和响应身份，Odoo 拒绝同一超出有符号范围的绑定。OpenMES 拒绝溢出、零、显式加号和前导零。此证据验证 Adapter 传输，现场数据库可分配的 ID 范围由来源决定。
 
 运行 `cargo test --locked --test external_observe carbon_native_rejections_do_not_read_community_rest -- --exact` 复跑 Carbon 原生 MCP 失败隔离。初始化返回 402 时只调用一次初始化。工具返回 `isError: true` 时完成初始化并调用一次固定读取工具。两条路径在候选 Observe 均返回来源不可用，已配置的 Carbon 社区 REST 零调用。上游错误正文不进入 Observe 结果。回环覆盖协议响应和隔离，授权实例的真实工具拒绝语义仍待核对。
