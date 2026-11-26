@@ -1,3 +1,4 @@
+mod harness_batch;
 mod nesting;
 
 use std::collections::BTreeMap;
@@ -86,10 +87,17 @@ pub const HARNESS: &[(Action, &str, &str, &str)] = &[
 
 pub fn tools() -> impl Iterator<Item = &'static (Action, &'static str, &'static str, &'static str)>
 {
-    SHEET.iter().chain(HARNESS).chain(nesting::TOOLS)
+    SHEET
+        .iter()
+        .chain(HARNESS)
+        .chain(nesting::TOOLS)
+        .chain(harness_batch::TOOLS)
 }
 
 pub fn spec(action: Action) -> Spec {
+    if harness_batch::TOOLS.iter().any(|tool| tool.0 == action) {
+        return harness_batch::spec(action);
+    }
     if nesting::TOOLS.iter().any(|tool| tool.0 == action) {
         return nesting::spec(action);
     }
@@ -159,6 +167,7 @@ pub enum Setup {
     SheetRemnantNesting,
     SheetLayoutNesting,
     WireHarness,
+    WireHarnessBatches,
 }
 
 impl Setup {
@@ -178,6 +187,7 @@ impl Setup {
                 | Self::SheetRemnantNesting
                 | Self::SheetLayoutNesting => nesting::TOOLS,
                 Self::WireHarness => HARNESS,
+                Self::WireHarnessBatches => harness_batch::TOOLS,
             }
             .iter()
             .any(|tool| tool.0 == action)
@@ -190,7 +200,7 @@ impl Setup {
             | Self::SheetDimensionalNesting
             | Self::SheetRemnantNesting
             | Self::SheetLayoutNesting => mom_model_fabrication::SHEET,
-            Self::WireHarness => mom_model_fabrication::HARNESS,
+            Self::WireHarness | Self::WireHarnessBatches => mom_model_fabrication::HARNESS,
         }
     }
 }
@@ -567,6 +577,7 @@ enum State {
     Sheet(Sheet),
     Nesting(nesting::Nesting),
     Harness(Harness),
+    HarnessBatches(harness_batch::HarnessBatches),
 }
 
 pub fn invoke(
@@ -616,12 +627,16 @@ pub fn invoke(
             | Setup::SheetRemnantNesting
             | Setup::SheetLayoutNesting => State::Nesting(nesting::Nesting::dimensional()),
             Setup::WireHarness => State::Harness(Harness::default()),
+            Setup::WireHarnessBatches => {
+                State::HarnessBatches(harness_batch::HarnessBatches::default())
+            }
         },
     };
     let mut response = match &mut state {
         State::Sheet(sheet) => sheet.apply(action, args, events),
         State::Nesting(nesting) => nesting.apply(action, args, events, orders, setup),
         State::Harness(harness) => harness.apply(action, args, events),
+        State::HarnessBatches(harness) => harness.apply(action, args, &orders[0]),
     };
     if let Some(key) = key.filter(|_| response["ok"] == true) {
         response["cursor"] = (cursor + 1).into();
