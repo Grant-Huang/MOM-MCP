@@ -1385,3 +1385,19 @@ spec = "acceptance/P13.md"
 features = ["F08", "F09", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P13-10 Validate sheet placement and remnant reuse" }
+
+[[case]]
+id = "P14-01"
+phase = "P14"
+spec = "acceptance/P14.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p14_01_harness_cut_batch_length_and_retry" }
+
+[[case]]
+id = "P14-UI"
+phase = "P14"
+spec = "acceptance/P14.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P14-UI Cut wire batches and recover from short stock" }

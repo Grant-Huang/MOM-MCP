@@ -281,6 +281,11 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
             setup.model() == definition.model,
             "fabrication setup requires its registered model"
         );
+        anyhow::ensure!(
+            setup != crate::fabrication::Setup::WireHarnessBatches
+                || definition.work_orders.len() == 1,
+            "batch cutting requires exactly one work order"
+        );
     }
     anyhow::ensure!(
         !definition.capabilities.contains(&Action::ReleaseWorkOrder)
@@ -968,6 +973,7 @@ impl Scenarios {
             include_str!("../fixtures/sheet-metal-trace.json"),
             include_str!("../fixtures/sheet-metal-layout.json"),
             include_str!("../fixtures/wire-harness.json"),
+            include_str!("../fixtures/wire-harness-cut-batches.json"),
         ] {
             let definition = parse_definition(source)?;
             tx.execute(

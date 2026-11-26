@@ -167,3 +167,30 @@ async function sheetRemnantFlow(page, version) {
     expect(backward.cuts).toEqual(forward.cuts);
   }
 }
+
+test("P14-UI Cut wire batches and recover from short stock", async ({ page }) => {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption("wire-harness@2");
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  await button("搜索工具").click();
+  const invoke = async (name, args, evidence) => {
+    await page.getByLabel("匹配工具").selectOption(name);
+    await page.getByLabel("JSON 参数").fill(JSON.stringify(args));
+    await button("调用工具").click();
+    await expect(status).toContainText(evidence);
+    return JSON.parse(await status.textContent());
+  };
+  await invoke("cut_harness_batch", { batch_id:"FIRST", wire_lot:"WIRE-CU-1",
+    serial_numbers:["WIRE-01","WIRE-02"], idempotency_key:"first" }, '"remaining_mm": 180');
+  const second = { batch_id:"SECOND", wire_lot:"WIRE-CU-1", serial_numbers:["WIRE-03"], idempotency_key:"second" };
+  await invoke("cut_harness_batch", second, "INSUFFICIENT_WIRE_LENGTH");
+  await invoke("cut_harness_batch", { ...second, wire_lot:"WIRE-CU-2" }, '"remaining_mm": 140');
+  const { batch } = await invoke("get_harness_cut_batch", { batch_id:"FIRST" }, '"batch_id": "FIRST"');
+  expect(batch.wire_lot).toBe("WIRE-CU-1");
+  expect(batch.input_mm).toBe(batch.product_mm + batch.trim_mm);
+  expect(Object.keys(batch.segments)).toEqual(["WIRE-01","WIRE-02"]);
+});

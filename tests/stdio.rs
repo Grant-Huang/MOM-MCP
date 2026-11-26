@@ -8831,3 +8831,96 @@ async fn p13_09_sheet_geometric_layout() {
     .await;
     assert_eq!(trace["cuts"], json!([cut["nest"]]));
 }
+
+#[tokio::test]
+async fn p14_01_harness_cut_batch_length_and_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("harness-cut.sqlite3");
+    let (client, _child) = connect_mode(&db, "0", true).await;
+    let (peer, _peer_child) = connect_mode(&db, "0", true).await;
+    let opened = call(
+        &client,
+        "open_scenario",
+        json!({"scenario_id":"wire-harness","version":2}),
+    )
+    .await;
+    assert_eq!(opened["ok"], true, "{opened}");
+    let run = &opened["run_id"];
+    let search = call(
+        &client,
+        "search_tools",
+        json!({"run_id":run,"query":"cut_harness_batch"}),
+    )
+    .await;
+    assert!(
+        search["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "cut_harness_batch")
+    );
+    let request =
+        |batch, lot, serials| json!({"batch_id":batch,"wire_lot":lot,"serial_numbers":serials});
+    let cut =
+        async |key: &str, args| shop_action(&client, run, "cut_harness_batch", key, args).await;
+    assert_eq!(
+        cut(
+            "duplicate",
+            request("FIRST", "WIRE-CU-1", vec!["WIRE-01", "WIRE-01"])
+        )
+        .await["code"],
+        "DUPLICATE_SERIAL"
+    );
+    assert_eq!(
+        cut("wire", request("FIRST", "WIRE-OTHER", vec!["WIRE-01"])).await["code"],
+        "WIRE_LOT_NOT_QUALIFIED"
+    );
+    let first = request("FIRST", "WIRE-CU-1", vec!["WIRE-02", "WIRE-01"]);
+    let (left, right) = tokio::join!(
+        cut("first", first.clone()),
+        shop_action(&peer, run, "cut_harness_batch", "first", first.clone())
+    );
+    assert_eq!(left, right);
+    assert_eq!(left["cursor"], 1, "{left}");
+    let batch = &left["batch"];
+    assert_eq!(batch["work_order"], "WO-HARNESS");
+    assert_eq!(batch["process_revision"], "HARNESS-CUT-1");
+    assert_eq!(
+        batch["segments"]["WIRE-01"],
+        json!([{"segment_id":"POWER","length_mm":400},{"segment_id":"SIGNAL","length_mm":250}])
+    );
+    assert_eq!(batch["segments"]["WIRE-01"], batch["segments"]["WIRE-02"]);
+    assert_eq!(batch["input_mm"], 1320);
+    assert_eq!(batch["product_mm"], 1300);
+    assert_eq!(batch["trim_mm"], 20);
+    assert_eq!(batch["remaining_mm"], 180);
+    assert_eq!(
+        cut(
+            "overlap",
+            request("SECOND", "WIRE-CU-2", vec!["WIRE-02", "WIRE-03"])
+        )
+        .await["code"],
+        "SERIAL_ALREADY_CUT"
+    );
+    assert_eq!(
+        cut("second", request("SECOND", "WIRE-CU-1", vec!["WIRE-03"])).await["code"],
+        "INSUFFICIENT_WIRE_LENGTH"
+    );
+    let second = cut("second", request("SECOND", "WIRE-CU-2", vec!["WIRE-03"])).await;
+    assert_eq!(second["cursor"], 2, "{second}");
+    assert_eq!(second["batch"]["remaining_mm"], 140);
+    assert_eq!(
+        business(
+            &peer,
+            run,
+            "get_harness_cut_batch",
+            json!({"batch_id":"FIRST"})
+        )
+        .await["batch"],
+        *batch
+    );
+    assert_eq!(
+        call(&peer, "get_run", json!({"run_id":run})).await["cursor"],
+        2
+    );
+}

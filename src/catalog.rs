@@ -150,6 +150,8 @@ pub enum Action {
     ReturnSheetRemnant,
     TraceSheetMaterial,
     HarnessCut,
+    CutHarnessBatch,
+    GetHarnessCutBatch,
     HarnessCrimp,
     HarnessSample,
     HarnessTest,
