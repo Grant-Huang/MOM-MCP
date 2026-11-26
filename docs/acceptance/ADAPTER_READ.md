@@ -29,6 +29,8 @@
 
 执行 `cargo test --locked --test external_observe source_failures_keep_their_classification_without_fallback -- --exact` 复跑三源失败矩阵。Odoo 空结果、OpenMES 对象级 403 和 Carbon REST 空结果均返回不可见。OpenMES 无效正文或记录错配、Carbon REST 跨公司记录错配均返回响应无效。Odoo 上游 401 和 Carbon REST 上游 503 均返回来源不可用。八种失败各触发一次已绑定来源请求，备用站点请求数为零。此为 MOM-MCP 候选 Observe 回环证据。
 
+运行 `cargo test --locked --test external_http reads_and_classifies_odoo_and_openmes_http_responses -- --exact` 复跑数值工单 ID 边界。OpenMES 回环接口往返验证 `18446744073709551615`（`u64::MAX`）的完整路径和响应身份，Odoo 拒绝同一超出有符号范围的绑定。OpenMES 拒绝溢出、零、显式加号和前导零。此证据验证 Adapter 传输，现场数据库可分配的 ID 范围由来源决定。
+
 ### PR 自动回归
 
 GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传输、Observe、本体投影及 Odoo 关联测试，同时复跑 Carbon REST、Carbon MCP 和 Odoo 关联的离线探针用例。默认使用本地回环和合成数据。真实来源和正式 Observe 验收使用各自的获批环境，继续按本台账登记。

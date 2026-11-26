@@ -38,6 +38,6 @@ v0.1 是首期工单观测切片。中期按来源证据增补对象、关系、
 
 ### 离线契约回归
 
-运行 `cargo test --locked --test external_order`。用例调用实际 Adapter 的投影器，覆盖三源字段、映射版本、同号及跨作用域身份、记录 ID 精确匹配、缺失或畸形状态及单对象响应形状。数值 ID 在 Rust 中按整数保存并与绑定中的字符串精确匹配。OpenMES 带偏移量的源时间统一为 UTC，Odoo 使用已验证的 UTC 规则，Carbon 社区 REST 将 `jobs.updatedAt` 中带时区的有效时间转为 UTC（映射 `0.2`），空值或无效时间省略。Carbon 原生 MCP 沿用映射 `0.1`。
+运行 `cargo test --locked --test external_order`。用例调用实际 Adapter 的投影器，覆盖三源字段、映射版本、同号及跨作用域身份、记录 ID 精确匹配、缺失或畸形状态及单对象响应形状。数值 ID 在 Rust 中按整数保存并与绑定中的字符串精确匹配。OpenMES HTTP 工单路径接受正的无符号 64 位整数，Odoo JSON-2 查询使用正的有符号 64 位整数。两者的绑定均使用无前导零的十进制字符串。OpenMES 带偏移量的源时间统一为 UTC，Odoo 使用已验证的 UTC 规则，Carbon 社区 REST 将 `jobs.updatedAt` 中带时区的有效时间转为 UTC（映射 `0.2`），空值或无效时间省略。Carbon 原生 MCP 沿用映射 `0.1`。
 
 输入从宿主已解析的绑定及传输层已分类的响应开始。身份元组用于内部断言，产品 Observe 对外使用不透明引用。Carbon 投影用合成记录验证。来源权限、传输包络、故障隔离和宿主接线按[短期验收台账](acceptance/ADAPTER_READ.md)复跑。

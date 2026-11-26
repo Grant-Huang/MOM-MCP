@@ -33,6 +33,9 @@ async fn openmes(headers: HeaderMap, Path(id): Path<u64>) -> impl IntoResponse {
         42 => {
             Json(json!({"data":{"id":42,"order_no":"WO-42","status":"ACCEPTED"}})).into_response()
         }
+        u64::MAX => {
+            Json(json!({"data":{"id":id,"order_no":"WO-LARGE","status":"PENDING"}})).into_response()
+        }
         43 => StatusCode::FORBIDDEN.into_response(),
         44 => StatusCode::NOT_FOUND.into_response(),
         45 => StatusCode::UNAUTHORIZED.into_response(),
@@ -83,6 +86,14 @@ async fn reads_and_classifies_odoo_and_openmes_http_responses() {
             .as_deref(),
         Some("ACCEPTED")
     );
+    let large_id = u64::MAX.to_string();
+    let large = openmes.read_order(&large_id).await.unwrap();
+    assert_eq!(large.identity.source_id, large_id);
+    assert_eq!(large.display_number, "WO-LARGE");
+    assert_eq!(
+        odoo.read_order(&large_id).await,
+        Err(ReadError::InvalidBinding)
+    );
     for (id, expected) in [
         ("43", ReadError::NotVisible),
         ("44", ReadError::NotVisible),
@@ -92,6 +103,10 @@ async fn reads_and_classifies_odoo_and_openmes_http_responses() {
         ("48", ReadError::UnexpectedRecord),
         ("49", ReadError::SourceUnavailable),
         ("42/../43", ReadError::InvalidBinding),
+        ("18446744073709551616", ReadError::InvalidBinding),
+        ("+42", ReadError::InvalidBinding),
+        ("042", ReadError::InvalidBinding),
+        ("0", ReadError::InvalidBinding),
     ] {
         assert_eq!(openmes.read_order(id).await, Err(expected), "fixture {id}");
     }
