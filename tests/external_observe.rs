@@ -361,6 +361,38 @@ async fn source_failures_keep_their_classification_without_fallback() {
         assert_eq!(primary_calls.load(Ordering::Relaxed), index + 1);
         assert_eq!(alternate_calls.load(Ordering::Relaxed), 0);
     }
+    let calls_before_invalid_binding = primary_calls.load(Ordering::Relaxed);
+    for (instance, source_id) in [
+        ("openmes", "04242"),
+        ("odoo", "18446744073709551615"),
+        ("carbon-rest", "job,invalid"),
+    ] {
+        let result = service
+            .observe(
+                WorkOrderSelection {
+                    world_id: instance,
+                    object_ref: "opaque-ref",
+                },
+                |_| async {
+                    Some(AuthorizedWorkOrder {
+                        scope: SourceScope {
+                            tenant: "tenant-a",
+                            site: "site-a",
+                            instance,
+                        },
+                        source_id,
+                    })
+                },
+            )
+            .await;
+        assert_eq!(result.unwrap_err(), SourceUnavailable, "{instance}");
+        assert_eq!(
+            primary_calls.load(Ordering::Relaxed),
+            calls_before_invalid_binding
+        );
+        assert_eq!(alternate_calls.load(Ordering::Relaxed), 0);
+    }
+
     primary_task.abort();
     alternate_task.abort();
 }
