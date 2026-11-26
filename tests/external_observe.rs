@@ -88,6 +88,12 @@ async fn resolves_each_request_before_read_and_exposes_only_observation_fields()
     assert_eq!(observed.object_ref, "opaque-ref");
     assert_eq!(observed.display_number, "WO-42");
     assert_eq!(observed.source_status.as_deref(), Some("PENDING"));
+    assert!(
+        serde_json::to_value(&observed)
+            .unwrap()
+            .get("source_updated_at")
+            .is_none()
+    );
     let serialized = serde_json::to_string(&observed).unwrap();
     for private in ["4242", "tenant-a", "site-a", "local-fixture", &origin] {
         assert!(!serialized.contains(private));
@@ -233,7 +239,7 @@ fn rejects_duplicate_configuration() {
 }
 
 #[tokio::test]
-async fn one_observe_entry_reads_three_authorized_worlds() {
+async fn one_observe_entry_preserves_source_time_across_authorized_worlds() {
     use axum::routing::post;
 
     async fn odoo(Json(request): Json<serde_json::Value>) -> Json<serde_json::Value> {
@@ -255,7 +261,7 @@ async fn one_observe_entry_reads_three_authorized_worlds() {
                     "job-4242"
                 );
                 json!({"content":[{"type":"text","text":json!({
-                    "id":"job-4242","jobId":"WO-42","status":"Ready"
+                    "id":"job-4242","jobId":"WO-42","status":"Ready","updatedAt":"2026-11-01T10:30:00+02:00"
                 }).to_string()}]})
             }
             _ => panic!("unexpected method"),
@@ -268,7 +274,16 @@ async fn one_observe_entry_reads_three_authorized_worlds() {
         .route(
             "/api/v1/work-orders/4242",
             get(|| async {
-                Json(json!({"data":{"id":4242,"order_no":"WO-42","status":"PENDING"}}))
+                Json(json!({"data":{"id":4242,"order_no":"WO-42","status":"PENDING","updated_at":"2026-11-01T03:30:00-05:00"}}))
+            }),
+        )
+        .route(
+            "/rest/v1/jobs",
+            get(|| async {
+                Json(json!([{
+                    "id":"job-4242","jobId":"WO-42","status":"Ready",
+                    "companyId":"company-a","updatedAt":"2026-11-01T10:30:00+02:00"
+                }]))
             }),
         )
         .route("/api/mcp", post(carbon));
@@ -283,7 +298,14 @@ async fn one_observe_entry_reads_three_authorized_worlds() {
             },
         ),
         ("openmes", HttpSourceKind::OpenMes),
-        ("carbon", HttpSourceKind::Carbon),
+        (
+            "carbon-rest",
+            HttpSourceKind::CarbonRest {
+                company: "company-a",
+                project_key: "public-fixture",
+            },
+        ),
+        ("carbon-mcp", HttpSourceKind::Carbon),
     ];
     let service = ExternalObserve::new(connectors.map(|(instance, kind)| HttpSource {
         instance,
@@ -292,10 +314,12 @@ async fn one_observe_entry_reads_three_authorized_worlds() {
     }))
     .unwrap();
 
-    for (world, expected_instance, expected_state) in [
-        ("world-a", "odoo", "confirmed"),
-        ("world-b", "openmes", "PENDING"),
-        ("world-c", "carbon", "Ready"),
+    let utc = Some("2026-11-01T08:30:00Z");
+    for (world, expected_instance, expected_state, mapping, source_time) in [
+        ("world-a", "odoo", "confirmed", "0.2", utc),
+        ("world-b", "openmes", "PENDING", "0.1", utc),
+        ("world-c", "carbon-rest", "Ready", "0.2", utc),
+        ("world-d", "carbon-mcp", "Ready", "0.1", None),
     ] {
         let observation = service
             .observe(
@@ -307,7 +331,8 @@ async fn one_observe_entry_reads_three_authorized_worlds() {
                     let (instance, source_id) = match (selection.world_id, selection.object_ref) {
                         ("world-a", "opaque-42") => ("odoo", "4242"),
                         ("world-b", "opaque-42") => ("openmes", "4242"),
-                        ("world-c", "opaque-42") => ("carbon", "job-4242"),
+                        ("world-c", "opaque-42") => ("carbon-rest", "job-4242"),
+                        ("world-d", "opaque-42") => ("carbon-mcp", "job-4242"),
                         _ => return None,
                     };
                     Some(AuthorizedWorkOrder {
@@ -327,19 +352,14 @@ async fn one_observe_entry_reads_three_authorized_worlds() {
         assert_eq!(observation.source_instance, expected_instance);
         assert_eq!(observation.source_status.as_deref(), Some(expected_state));
         assert_eq!(observation.normalized_status, None);
-        if expected_instance == "odoo" {
-            assert_eq!(observation.mapping_version, "0.2");
-            assert_eq!(
-                observation.source_updated_at.as_deref(),
-                Some("2026-11-01T08:30:00Z")
-            );
-            assert_ne!(
-                observation.source_updated_at.as_deref(),
-                Some(observation.observed_at.as_str())
-            );
+        let payload = serde_json::to_value(&observation).unwrap();
+        assert_eq!(payload["mapping_version"], mapping);
+        assert!(observation.observed_at.ends_with('Z'));
+        if let Some(expected) = source_time {
+            assert_eq!(payload["source_updated_at"], expected);
+            assert_ne!(payload["source_updated_at"], payload["observed_at"]);
         } else {
-            assert_eq!(observation.mapping_version, "0.1");
-            assert_eq!(observation.source_updated_at, None);
+            assert!(payload.get("source_updated_at").is_none());
         }
     }
     task.abort();

@@ -25,7 +25,7 @@
 | Carbon 社区版 REST | 固定版本 Carbon 社区后端完成迁移，真实 Supabase 登录双向验证公司隔离 | 工作区候选经同一真实会话通过 200／404 | 待获批联调 |
 | Carbon 原生 MCP | 回环验证固定协议与结果映射，具备权益的授权实例待验证 | 工作区候选已通过协议夹具 | 兼容性证据待补 |
 
-适配器回环共用入口可执行 `cargo test --locked --test external_observe one_observe_entry_reads_three_authorized_worlds -- --exact`。另执行 `cargo test --locked --test external_observe` 验证逐请求授权、配置与故障隔离。工作区候选证据使用 `/api/world/production/observe`，依赖适配器提交 `ea1fcd8` 和宿主提交 `7a680bf`。用 `scripts/accept-m3-observe.py` 复跑，覆盖 Odoo、OpenMES、Carbon 原生 MCP、Carbon REST 四条回环传输及拒绝、撤权和故障隔离。Carbon 社区版数据路径作为短期取证候选，原生 MCP 兼容性证据单列。MOM-MCP `fbd798a` 的三个适配器 Rust 集成套件共 11 项通过，Carbon 原生探针与本体离线用例共 11 项通过。
+适配器回环共用入口可执行 `cargo test --locked --test external_observe one_observe_entry_preserves_source_time_across_authorized_worlds -- --exact`。另执行 `cargo test --locked --test external_observe` 验证逐请求授权、配置与故障隔离。 共用入口的序列化验收覆盖 Odoo、OpenMES 和 Carbon 社区 REST，核对 `source_updated_at` 统一为 UTC、与读取时点 `observed_at` 独立，并按来源发布映射版本。无源时间的响应及 Carbon 原生 MCP 路径省略该字段。此证据来自 MOM-MCP 回环测试。工作区候选证据使用 `/api/world/production/observe`，依赖适配器提交 `ea1fcd8` 和宿主提交 `7a680bf`。用 `scripts/accept-m3-observe.py` 复跑，覆盖 Odoo、OpenMES、Carbon 原生 MCP、Carbon REST 四条回环传输及拒绝、撤权和故障隔离。Carbon 社区版数据路径作为短期取证候选，原生 MCP 兼容性证据单列。MOM-MCP `fbd798a` 的三个适配器 Rust 集成套件共 11 项通过，Carbon 原生探针与本体离线用例共 11 项通过。
 
 ### PR 自动回归
 
