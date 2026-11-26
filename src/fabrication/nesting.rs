@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     Action, Event, Map, PART_AREA, SCRAP_AREA, Setup, Sheet, Spec, Stock, Value, error,
@@ -37,6 +37,12 @@ pub(super) const TOOLS: &[(Action, &str, &str, &str)] = &[
         "返库并登记可复用余料",
         "inventory",
     ),
+    (
+        Action::TraceSheetMaterial,
+        "trace_sheet_material",
+        "按板材、批次或工单查询实际切割谱系",
+        "inventory",
+    ),
 ];
 
 pub(super) fn spec(action: Action) -> Spec {
@@ -61,34 +67,30 @@ pub(super) fn spec(action: Action) -> Spec {
         required.push("machine");
         fields["machine"] = text();
     }
-    let area = json!({"type":"integer","minimum":0});
-    let dimensions = object(
-        &["length_mm", "width_mm"],
-        json!({
-            "length_mm":{"type":"integer","minimum":1},"width_mm":{"type":"integer","minimum":1}
-        }),
-    );
-    let nest = object(
-        &[
-            "nest_id",
-            "stock",
-            "lot",
-            "status",
-            "order_area_mm2",
-            "input_mm2",
-            "product_mm2",
-            "scrap_mm2",
-            "remnant_mm2",
-        ],
-        json!({"nest_id":text(),"stock":text(),"lot":text(),"status":{"enum":["planned","cut","cancelled"]},
-        "order_area_mm2":{"type":"object","additionalProperties":area},
-        "input_mm2":area,"product_mm2":area,"scrap_mm2":area,"remnant_mm2":area,"machine":text(),"remnant_dimensions":dimensions,"returned_remnant":text(),"parent_stock":text(),
-        "dimensional_fit":object(&["stock_dimensions","size_grade","order_footprints","eligible_machines"], json!({
-            "stock_dimensions":dimensions,"size_grade":{"enum":["standard","wide","strip"]},
-            "order_footprints":{"type":"object","additionalProperties":dimensions},
-            "eligible_machines":{"type":"array","items":text()}
-        }))}),
-    );
+    let nest = nest_schema();
+    if action == Action::TraceSheetMaterial {
+        let subject_type = json!({"type":"string","enum":["stock","lot","work_order"]});
+        return Spec {
+            name,
+            description,
+            domain,
+            effect: "read",
+            input: object(
+                &["subject_type", "subject"],
+                json!({"subject_type":subject_type,"subject":text()}),
+            ),
+            output: object(
+                &["ok", "subject_type", "subject", "cuts"],
+                json!({
+                    "ok":{"const":true},"subject_type":subject_type,"subject":text(),"cuts":{"type":"array","items":nest}
+                }),
+            ),
+            preconditions: &["run_open", "tool_enabled_in_scenario"],
+            side_effect: "none",
+            errors: &["TRACE_SUBJECT_NOT_FOUND"],
+            visibility: "run",
+        };
+    }
     Spec {
         name,
         description,
@@ -132,6 +134,37 @@ pub(super) fn spec(action: Action) -> Spec {
         ],
         visibility: "run",
     }
+}
+
+fn nest_schema() -> Value {
+    let area = json!({"type":"integer","minimum":0});
+    let dimensions = object(
+        &["length_mm", "width_mm"],
+        json!({
+            "length_mm":{"type":"integer","minimum":1},"width_mm":{"type":"integer","minimum":1}
+        }),
+    );
+    object(
+        &[
+            "nest_id",
+            "stock",
+            "lot",
+            "status",
+            "order_area_mm2",
+            "input_mm2",
+            "product_mm2",
+            "scrap_mm2",
+            "remnant_mm2",
+        ],
+        json!({"nest_id":text(),"stock":text(),"lot":text(),"status":{"enum":["planned","cut","cancelled"]},
+        "order_area_mm2":{"type":"object","additionalProperties":area},
+        "input_mm2":area,"product_mm2":area,"scrap_mm2":area,"remnant_mm2":area,"machine":text(),"remnant_dimensions":dimensions,"returned_remnant":text(),"parent_stock":text(),
+        "dimensional_fit":object(&["stock_dimensions","size_grade","order_footprints","eligible_machines"], json!({
+            "stock_dimensions":dimensions,"size_grade":{"enum":["standard","wide","strip"]},
+            "order_footprints":{"type":"object","additionalProperties":dimensions},
+            "eligible_machines":{"type":"array","items":text()}
+        }))}),
+    )
 }
 
 #[derive(Serialize, Deserialize, PartialEq)]
@@ -276,6 +309,9 @@ impl Nesting {
         orders: &[String],
         setup: Setup,
     ) -> Value {
+        if action == Action::TraceSheetMaterial {
+            return self.trace(args, orders);
+        }
         let id = args["nest_id"].as_str().unwrap();
         if action == Action::CreateSheetNest {
             return self.create(id, args, events, orders, setup);
@@ -339,6 +375,64 @@ impl Nesting {
             nest.status = Status::Cut;
         }
         json!({"ok":true,"nest":nest})
+    }
+
+    fn trace(&self, args: &Map<String, Value>, orders: &[String]) -> Value {
+        let subject = args["subject"].as_str().unwrap();
+        let kind = args["subject_type"].as_str().unwrap();
+        let cuts = || {
+            self.nests
+                .values()
+                .filter(|nest| nest.status == Status::Cut)
+        };
+        let selected: Vec<_> = match kind {
+            "lot" if self.inventory.values().any(|stock| stock.lot == subject) => {
+                cuts().filter(|nest| nest.lot == subject).collect()
+            }
+            "stock"
+                if self.inventory.contains_key(subject)
+                    || self
+                        .inventory
+                        .values()
+                        .any(|stock| stock.parent.as_deref() == Some(subject)) =>
+            {
+                let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+                for (id, stock) in &self.inventory {
+                    if let Some(parent) = &stock.parent {
+                        children.entry(parent).or_default().push(id);
+                    }
+                }
+                let mut pending = vec![subject];
+                let mut lineage = BTreeSet::new();
+                while let Some(stock) = pending.pop() {
+                    if lineage.insert(stock)
+                        && let Some(downstream) = children.get(stock)
+                    {
+                        pending.extend(downstream);
+                    }
+                }
+                cuts()
+                    .filter(|nest| lineage.contains(nest.stock.as_str()))
+                    .collect()
+            }
+            "work_order" if orders.iter().any(|order| order == subject) => {
+                let mut lineage = BTreeSet::new();
+                if let Some(cut) = cuts().find(|nest| nest.order_area_mm2.contains_key(subject)) {
+                    let mut source = Some(cut.stock.as_str());
+                    while let Some(stock) = source.filter(|stock| lineage.insert(*stock)) {
+                        source = self
+                            .inventory
+                            .get(stock)
+                            .and_then(|entry| entry.parent.as_deref());
+                    }
+                }
+                cuts()
+                    .filter(|nest| lineage.contains(nest.stock.as_str()))
+                    .collect()
+            }
+            _ => return error("TRACE_SUBJECT_NOT_FOUND"),
+        };
+        json!({"ok":true,"subject_type":kind,"subject":subject,"cuts":selected})
     }
 
     fn create(

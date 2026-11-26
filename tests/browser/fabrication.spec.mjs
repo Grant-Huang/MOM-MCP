@@ -118,12 +118,15 @@ test("P13-04 Route a wide sheet to a compatible laser", async ({ page }) => {
   expect(cut.nest.machine).toBe("LASER-B");
 });
 
-test("P13-06 Return and reuse a sheet remnant", async ({ page }) => {
+test("P13-06 Return and reuse a sheet remnant", ({ page }) => sheetRemnantFlow(page, 4));
+test("P13-08 Trace a reused sheet remnant in both directions", ({ page }) => sheetRemnantFlow(page, 5));
+
+async function sheetRemnantFlow(page, version) {
   await page.goto("/scenarios");
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
   await button("加载场景").click();
-  await page.getByLabel("已发布场景").selectOption("sheet-metal@4");
+  await page.getByLabel("已发布场景").selectOption(`sheet-metal@${version}`);
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   await button("搜索工具").click();
@@ -146,4 +149,10 @@ test("P13-06 Return and reuse a sheet remnant", async ({ page }) => {
   expect(nest.parent_stock).toBe("SHEET-FULL");
   expect(nest.lot).toBe("LOT-AL-1");
   expect(nest.input_mm2).toBe(900);
-});
+  if (version === 5) {
+    const forward = await invoke("trace_sheet_material", { subject_type: "stock", subject: "SHEET-FULL" }, '"subject_type": "stock"');
+    expect(forward.cuts.map(cut => cut.nest_id)).toEqual(["FIRST", "SECOND"]);
+    const backward = await invoke("trace_sheet_material", { subject_type: "work_order", subject: "WO-SHEET-B" }, '"subject_type": "work_order"');
+    expect(backward.cuts).toEqual(forward.cuts);
+  }
+}
