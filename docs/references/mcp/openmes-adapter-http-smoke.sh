@@ -150,6 +150,16 @@ if ($adapter !== false) {
     $witnessBefore = checkAdapter($adapter, $hidden, $visible, $fixture['witness_token'], 'PENDING');
 
     if (isset($fixture['accept_token'])) {
+        [$status] = request($visible, $fixture['token'], accept: true);
+        if ($status !== 403) {
+            throw new RuntimeException("OpenMES reader acceptance expected HTTP 403, received $status");
+        }
+        $afterDenied = checkAdapter($adapter, $visible, $hidden, $fixture['token'], 'PENDING');
+        if ($afterDenied != $before) {
+            throw new RuntimeException('OpenMES reader acceptance denial changed the work order timestamp');
+        }
+        echo "OpenMES reader acceptance: HTTP 403, pending status and source time unchanged", PHP_EOL;
+
         [$status] = request($visible, $fixture['accept_token'], accept: true);
         if ($status !== 200) {
             throw new RuntimeException("OpenMES acceptance expected HTTP 200, received $status");
