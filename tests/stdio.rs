@@ -8576,6 +8576,15 @@ async fn p13_03_sheet_dimensional_compatibility() {
 
 #[tokio::test]
 async fn p13_05_sheet_remnant_return_and_reuse() {
+    sheet_remnant_workflow(4).await;
+}
+
+#[tokio::test]
+async fn p13_07_sheet_material_lineage() {
+    sheet_remnant_workflow(5).await;
+}
+
+async fn sheet_remnant_workflow(version: u64) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("remnants.sqlite3");
     let (client, _child) = connect_mode(&db, "0", true).await;
@@ -8583,7 +8592,7 @@ async fn p13_05_sheet_remnant_return_and_reuse() {
     let opened = call(
         &client,
         "open_scenario",
-        json!({"scenario_id":"sheet-metal","version":4}),
+        json!({"scenario_id":"sheet-metal","version":version}),
     )
     .await;
     assert_eq!(opened["ok"], true, "{opened}");
@@ -8685,4 +8694,77 @@ async fn p13_05_sheet_remnant_return_and_reuse() {
         .await["code"],
         "NO_REUSABLE_REMNANT"
     );
+    if version == 5 {
+        let trace = async |kind, subject| {
+            business(
+                &peer,
+                run,
+                "trace_sheet_material",
+                json!({"subject_type":kind,"subject":subject}),
+            )
+            .await
+        };
+        let search = call(
+            &peer,
+            "search_tools",
+            json!({"run_id":run,"query":"trace_sheet_material"}),
+        )
+        .await;
+        assert!(
+            search["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == "trace_sheet_material")
+        );
+        assert_eq!(
+            write(
+                "create_sheet_nest",
+                "unrelated",
+                plan("UNRELATED", "REM-OK", "WO-SHEET-C")
+            )
+            .await["cursor"],
+            6
+        );
+        assert_eq!(trace("work_order", "WO-SHEET-C").await["cuts"], json!([]));
+        assert_eq!(
+            write(
+                "cut_sheet_nest",
+                "cut-unrelated",
+                json!({"nest_id":"UNRELATED","machine":"LASER-A"})
+            )
+            .await["cursor"],
+            7
+        );
+        let root = trace("stock", "SHEET-FULL").await;
+        assert_eq!(root["cuts"].as_array().unwrap().len(), 2);
+        assert_eq!(root["cuts"][0]["nest_id"], "FIRST");
+        assert_eq!(root["cuts"][0]["returned_remnant"], "REM-NEW");
+        assert_eq!(root["cuts"][1]["nest_id"], *id);
+        assert_eq!(root["cuts"][1]["parent_stock"], "SHEET-FULL");
+        assert_eq!(trace("lot", "LOT-AL-1").await["cuts"], root["cuts"]);
+        assert_eq!(
+            trace("lot", "LOT-AL-2").await["cuts"][0]["nest_id"],
+            "UNRELATED"
+        );
+        let order = winner["nest"]["order_area_mm2"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap();
+        assert_eq!(trace("work_order", order).await["cuts"], root["cuts"]);
+        assert_eq!(
+            trace("stock", "REM-NEW").await["cuts"],
+            json!([root["cuts"][1]])
+        );
+        assert_eq!(
+            trace("stock", "UNKNOWN").await["code"],
+            "TRACE_SUBJECT_NOT_FOUND"
+        );
+        assert_eq!(
+            call(&peer, "get_run", json!({"run_id":run})).await["cursor"],
+            7
+        );
+    }
 }

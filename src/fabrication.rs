@@ -163,11 +163,15 @@ pub enum Setup {
 impl Setup {
     pub fn valid(self, model: &str, action: Action) -> bool {
         self.model() == model
-            && (action != Action::ReturnSheetRemnant || self == Self::SheetRemnantNesting)
+            && (!matches!(
+                action,
+                Action::ReturnSheetRemnant | Action::TraceSheetMaterial
+            ) || self == Self::SheetRemnantNesting)
             && match self {
                 Self::SheetMetal => SHEET,
-                Self::SheetNesting | Self::SheetDimensionalNesting => nesting::TOOLS,
-                Self::SheetRemnantNesting => nesting::TOOLS,
+                Self::SheetNesting | Self::SheetDimensionalNesting | Self::SheetRemnantNesting => {
+                    nesting::TOOLS
+                }
                 Self::WireHarness => HARNESS,
             }
             .iter()

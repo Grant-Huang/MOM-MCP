@@ -148,6 +148,7 @@ pub enum Action {
     CutSheetNest,
     CancelSheetNest,
     ReturnSheetRemnant,
+    TraceSheetMaterial,
     HarnessCut,
     HarnessCrimp,
     HarnessSample,
