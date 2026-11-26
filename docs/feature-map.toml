@@ -1273,3 +1273,19 @@ spec = "acceptance/P12.md"
 features = ["F08", "F09", "F10"]
 layers = ["playwright"]
 tests = { playwright = "P12-05 Observe contested assembly capacity" }
+
+[[case]]
+id = "P12-06"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F10", "F11", "F14"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p12_06_assembly_as_built_correction" }
+
+[[case]]
+id = "P12-07"
+phase = "P12"
+spec = "acceptance/P12.md"
+features = ["F08", "F09", "F11", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P12-07 Read assembly as-built correction history" }

@@ -135,6 +135,7 @@ pub enum Action {
     AssemblyRepair,
     AssemblyDeliver,
     AssemblyTrace,
+    GetAssemblyAsBuilt,
     SheetIssue,
     SheetNest,
     SheetCut,

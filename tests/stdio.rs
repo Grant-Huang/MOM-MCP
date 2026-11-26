@@ -7921,6 +7921,11 @@ async fn p12_04_assembly_shared_resources() {
     assembly_configuration_bom(31, true).await;
 }
 
+#[tokio::test]
+async fn p12_06_assembly_as_built_correction() {
+    assembly_configuration_bom(32, false).await;
+}
+
 async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
     let dir = tempfile::tempdir().unwrap();
     let (client, _child) = connect_mode(&dir.path().join("configuration.sqlite3"), "0", true).await;
@@ -7944,6 +7949,42 @@ async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
         assert_eq!(result["ok"], true, "{name}: {result}");
         result
     };
+    let manifest = async || {
+        invoke(
+            "get_assembly_as_built",
+            json!({"serial_number":"UNIT-E-01"}),
+        )
+        .await
+    };
+    if version == 32 {
+        let search = call(
+            &client,
+            "search_tools",
+            json!({"run_id":run,"query":"get_assembly_as_built"}),
+        )
+        .await;
+        assert!(
+            search["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == "get_assembly_as_built")
+        );
+        let spec = call(
+            &client,
+            "describe_tool",
+            json!({"run_id":run,"name":"get_assembly_as_built"}),
+        )
+        .await;
+        assert_eq!(spec["tool"]["effect"], "read");
+        let original = manifest().await;
+        assert_eq!(original["builds"], json!([]));
+        assert_eq!(original["work_order"], "WO-E");
+        assert_eq!(
+            invoke("get_assembly_as_built", json!({"serial_number":"UNKNOWN"})).await["code"],
+            "SERIAL_NOT_FOUND"
+        );
+    }
     for item in ["FRAME", "BASE", "STANDARD", "RUGGED", "ALT"] {
         apply("create_item", json!({"item_id":item,"base_unit":"each"})).await;
         if item != "FRAME" {
@@ -7986,7 +8027,7 @@ async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
             "STANDARD":{"revision":1,"quantity":1,"unit":"each","configurations":["standard"]},
             "RUGGED":{"revision":1,"quantity":rugged_quantity,"unit":"each","configurations":["rugged"]}
         }});
-        if version == 31 && revision == 1 {
+        if version >= 31 && revision == 1 {
             components["components"]["STANDARD"]["alternate"] =
                 json!({"item_id":"ALT","revision":1,"qualification_id":"QA-ALT-1"});
         }
@@ -8060,7 +8101,7 @@ async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
         "standard"
     );
     assert!(impact["current"]["bom"]["components"]["RUGGED"].is_null());
-    if version == 31 {
+    if version >= 31 {
         assert_eq!(
             early["definition_snapshot"]["bom"]["components"]["STANDARD"]["alternate"]["qualification_id"],
             "QA-ALT-1"
@@ -8156,6 +8197,68 @@ async fn assembly_configuration_bom(version: u64, shared_resources: bool) {
             assert_eq!(list("CELL-A").await[0]["blocking"], "RESOURCE_BUSY");
         }
         apply("complete_operation", scope).await;
+        if version == 32 {
+            let first = manifest().await;
+            assert_eq!(first["bom_revision"], 1);
+            assert_eq!(
+                first["snapshot_fingerprint"],
+                early["definition_snapshot"]["fingerprint"]
+            );
+            assert_eq!(first["builds"][0]["status"], "active");
+            assert_eq!(
+                first["builds"][0]["material_inputs"][0],
+                json!({
+                    "item_id":"ALT","revision":1,"reservation_id":"RS-ALT","lot_id":"LOT-ALT",
+                    "quantity":"1","unit":"each","substitute":{"required_item_id":"STANDARD","qualification_id":"QA-ALT-1"}
+                })
+            );
+            apply("reverse_operation_report", json!({"work_order":"WO-E","report_id":report["report"]["id"],"reason":"correct actual inputs"})).await;
+            assert_eq!(manifest().await["builds"][0]["status"], "reversed");
+            apply("return_unused_material", json!({"movement_id":"RET-ALT","reservation_id":"RS-ALT","quantity":"1","reason":"replace part"})).await;
+            apply("reserve_material", json!({"reservation_id":"RS-STD","work_order":"WO-E","lot_id":"LOT-STANDARD","quantity":"1"})).await;
+            apply("pick_material", json!({"reservation_id":"RS-STD"})).await;
+            apply(
+                "issue_material_to_operation",
+                json!({"reservation_id":"RS-STD","operation":"build"}),
+            )
+            .await;
+            let corrected = apply("post_operation_report", json!({
+                "work_order":"WO-E","operation":"build","quantity":1,"material_inputs":{"RS-BASE":"1","RS-STD":"1"}
+            })).await;
+            let after = manifest().await;
+            assert_eq!(
+                after["builds"][0]["material_inputs"],
+                first["builds"][0]["material_inputs"]
+            );
+            assert_eq!(after["builds"][0]["status"], "reversed");
+            assert_eq!(after["builds"][1]["report_id"], corrected["report"]["id"]);
+            assert_eq!(after["builds"][1]["status"], "active");
+            assert!(
+                after["builds"][1]["material_inputs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|input| input["lot_id"] == "LOT-STANDARD"
+                        && input["item_id"] == "STANDARD"
+                        && input["substitute"].is_null())
+            );
+            let edges = invoke(
+                "trace_serial_backward",
+                json!({"serial_number":"UNIT-E-01"}),
+            )
+            .await;
+            let edges = edges["edges"].as_array().unwrap();
+            assert!(
+                edges
+                    .iter()
+                    .any(|edge| edge["source"]["id"] == "LOT-STANDARD")
+            );
+            assert!(
+                edges
+                    .iter()
+                    .any(|edge| edge["source"]["id"] == "LOT-ALT" && edge["status"] == "reversed")
+            );
+        }
         if shared_resources {
             assert!(list("CELL-A").await[0]["blocking"].is_null());
             apply("dispatch_operation", late_dispatch).await;
