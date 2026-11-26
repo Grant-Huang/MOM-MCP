@@ -36,6 +36,12 @@ v0.1 是首期工单观测切片。中期按来源证据增补对象、关系、
 
 固定 Odoo Community 19 与 PostgreSQL 16 的隔离复验将同一合成制造单的 `write_date` 设为已知 UTC 值。在默认上下文、`America/Vancouver` 和 `Asia/Tokyo` 下，用同一身份按同一 ID 查询 JSON-2 `search_read`，三次均返回相同的无偏移时间字符串，并与数据库基准吻合。可用 [Odoo 生命周期脚本](references/mcp/odoo-adapter-lifecycle-smoke.sh) 复跑。Odoo 映射 v0.2 将固定格式 `YYYY-MM-DD HH:MM:SS` 转成 RFC 3339 UTC 并输出为 `source_updated_at`。缺失或不符合格式时省略该字段，仍使用 v0.2。Observe 的 `observed_at` 记录 Adapter 读取时刻。 [Odoo ORM 时间存储约定](https://www.odoo.com/documentation/19.0/developer/reference/backend/orm.html#date-time-fields)
 
+### 快照时间与事件续读
+
+`source_updated_at` 是来源报告的工单更新时间，`observed_at` 是 Adapter 读取时点。来源时间可以缺失，也可以在两次不同快照间相同或回退。每次授权读取都返回本次取得的快照，保留来源时间和状态。候选 Adapter 输出只承载快照观测。事件续读需要独立的来源排序、续读水位、重复投递和过期恢复契约。
+
+运行 `cargo test --locked --test external_observe rereads_snapshots_when_source_time_is_equal_or_older -- --exact`。回环用例针对同一引用连续读取三次，检查状态变化和来源时间相同或回退时的返回值、每次一次来源调用，以及候选输出中省略游标及水位。
+
 ### 离线契约回归
 
 运行 `cargo test --locked --test external_order`。用例调用实际 Adapter 的投影器，覆盖三源字段、映射版本、同号及跨作用域身份、记录 ID 精确匹配、缺失或畸形状态及单对象响应形状。数值 ID 在 Rust 中按整数保存并与绑定中的字符串精确匹配。OpenMES 带偏移量的源时间统一为 UTC，Odoo 使用已验证的 UTC 规则，Carbon 社区 REST 将 `jobs.updatedAt` 中带时区的有效时间转为 UTC（映射 `0.2`），空值或无效时间省略。Carbon 原生 MCP 沿用映射 `0.1`。
