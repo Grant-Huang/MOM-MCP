@@ -1,11 +1,11 @@
 # 三源工单首个状态转换
 
-适用范围为单工单只读观测，映射版本为 `0.1`。来源固定版本见[能力矩阵](ADAPTER_CAPABILITIES.md)。
+适用范围为单工单只读观测。来源及映射版本见[能力矩阵](ADAPTER_CAPABILITIES.md)。
 
 | 来源 | 源状态转换 | 证据与业务约束 |
 |---|---|---|
 | Odoo Community 19.0 | `draft → confirmed` | 本地 JSON-2 读回已确认。制造确认涉及库存移动及物料准备。[运行记录及源码](../EXTERNAL_ADAPTER_DESIGN.md#首个状态转换的对照证据) |
-| OpenMES | `PENDING → ACCEPTED` | 本地 Laravel 测试内核对同一工单执行接受并读回。该入口校验更新权限和 `PENDING` 前置状态。[接受实现](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Http/Controllers/Api/V1/WorkOrderController.php#L136) |
+| OpenMES | `PENDING → ACCEPTED` | 本地 Laravel 测试内核对同一工单执行接受并读回。该入口校验更新权限和 `PENDING` 前置状态。实际 HTTP 复验确认接受后源更新时间推进，另一产线工单时间保持原值。[双身份实测与复跑命令](../EXTERNAL_ADAPTER_DESIGN.md#openmes-本地接口验证) · [接受实现](https://github.com/Mes-Open/OpenMes/blob/faccc52a543382922aa8b7d9d79b89e6a30b28d3/backend/app/Http/Controllers/Api/V1/WorkOrderController.php#L136) |
 | Carbon Community | `Draft / Planned → Ready` | 固定源码显示放行时先重新计算并尝试运行 MRP，随后按当前状态有条件地更新为 `Ready`。放行还有后续业务动作。本轮证据为源码，真实后端转换待复验。[放行实现](https://github.com/crbnos/carbon/blob/05bd067c0a72ca9f0983f6278d2a7c9bb48b716c/apps/erp/app/modules/production/production.server.ts#L316) |
 
 当前映射逐项保留源值，`normalized_status` 为空，`mapping_issue=unmapped`。未来提议同一规范状态时，需要核对各来源的操作前置条件、库存或计划副作用、进入状态后的可执行操作及反例。运行 `cargo test --locked --test external_order preserves_source_specific_release_states` 验证实际 Rust 投影器。测试使用来源响应夹具。
