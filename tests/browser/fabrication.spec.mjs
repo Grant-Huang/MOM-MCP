@@ -222,3 +222,41 @@ test("P14-04 Check terminal and tooling qualification for a cut endpoint", async
   expect(qualification.terminal_qualification).toBe("TERM-PWR-B-ALT@1");
   expect(qualification.tooling_qualification).toBe("TOOL-PWR@1");
 });
+
+test("P14-06 Crimp and verify four harness endpoints", async ({ page }) => {
+  await page.goto("/scenarios");
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const status = page.getByRole("status");
+  await button("加载场景").click();
+  await page.getByLabel("已发布场景").selectOption("wire-harness@4");
+  await button("打开场景").click();
+  await expect(status).toContainText('"run_id"');
+  await button("搜索工具").click();
+  const invoke = async (name, args, evidence) => {
+    await page.getByLabel("匹配工具").selectOption(name);
+    await page.getByLabel("JSON 参数").fill(JSON.stringify(args));
+    await button("调用工具").click();
+    await expect(status).toContainText(evidence);
+    return JSON.parse(await status.textContent());
+  };
+  const serial_number = "WIRE-01";
+  await invoke("cut_harness_batch", { batch_id:"CUT-Q", wire_lot:"WIRE-CU-1",
+    serial_numbers:[serial_number], idempotency_key:"cut" }, '"batch_id": "CUT-Q"');
+  const crimp = "crimp_harness_endpoint";
+  const endpoint = { serial_number, segment_id:"POWER", end:"B",
+    terminal_lot:"TERM-PWR-ALT", tooling_id:"TOOL-PWR-1", idempotency_key:"power-b" };
+  await invoke(crimp, { ...endpoint, tooling_id:"TOOL-PWR-EXPIRED" }, "TOOLING_CALIBRATION_EXPIRED");
+  await invoke(crimp, endpoint, '"remaining_terminals": 0');
+  await invoke("get_harness_crimp_status", { serial_number }, '"complete": false');
+  for (const [segment_id, end, terminal_lot, tooling_id, cursor] of [
+    ["POWER","A","TERM-PWR-1","TOOL-PWR-1",3],
+    ["SIGNAL","A","TERM-SIG-1","TOOL-SIG-1",4],
+    ["SIGNAL","B","TERM-SIG-1","TOOL-SIG-1",5],
+  ]) {
+    await invoke(crimp, { serial_number, segment_id, end, terminal_lot, tooling_id,
+      idempotency_key:segment_id+end }, `"cursor": ${cursor}`);
+  }
+  const result = await invoke("get_harness_crimp_status", { serial_number }, '"complete": true');
+  expect(result.crimps).toHaveLength(4);
+  expect(result.crimps[0]).toMatchObject({ cut_batch_id:"CUT-Q", terminal_qualification:"TERM-PWR-B-ALT@1" });
+});
