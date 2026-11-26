@@ -446,6 +446,108 @@ async fn one_observe_entry_preserves_source_time_across_authorized_worlds() {
 }
 
 #[tokio::test]
+async fn carbon_native_rejections_do_not_read_community_rest() {
+    use axum::{http::HeaderMap, routing::post};
+    use serde_json::Value;
+
+    let native_calls = Arc::new(AtomicUsize::new(0));
+    let rest_calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new()
+        .route("/api/mcp", post({
+            let calls = native_calls.clone();
+            move |headers: HeaderMap, Json(request): Json<Value>| {
+                calls.fetch_add(1, Ordering::Relaxed);
+                async move {
+                    let id = &request["id"];
+                    let method = request["method"].as_str().unwrap();
+                    if headers["authorization"] == "Bearer no-entitlement" {
+                        assert_eq!(method, "initialize");
+                        return StatusCode::PAYMENT_REQUIRED.into_response();
+                    }
+                    assert_eq!(headers["authorization"], "Bearer tool-refused");
+                    let result = match method {
+                        "initialize" => json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}),
+                        "notifications/initialized" => return StatusCode::ACCEPTED.into_response(),
+                        "tools/call" => {
+                            assert_eq!(request["params"]["arguments"]["name"], "production_getJob");
+                            assert_eq!(request["params"]["arguments"]["arguments"]["id"], "job-a");
+                            json!({"isError":true,"content":[{"type":"text","text":"upstream-private-detail"}]})
+                        }
+                        _ => panic!("unexpected Carbon MCP method"),
+                    };
+                    Json(json!({"jsonrpc":"2.0","id":id,"result":result})).into_response()
+                }
+            }
+        }))
+        .route("/rest/v1/jobs", get({
+            let calls = rest_calls.clone();
+            move || {
+                calls.fetch_add(1, Ordering::Relaxed);
+                async { Json(json!([{"id":"job-a","companyId":"company-a","jobId":"WO-42","status":"Ready"}])) }
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let service = ExternalObserve::new([
+        HttpSource {
+            instance: "native-no-entitlement",
+            kind: HttpSourceKind::Carbon,
+            ..source(&origin, "site-a", "no-entitlement")
+        },
+        HttpSource {
+            instance: "native-tool-refused",
+            kind: HttpSourceKind::Carbon,
+            ..source(&origin, "site-a", "tool-refused")
+        },
+        HttpSource {
+            instance: "carbon-rest",
+            kind: HttpSourceKind::CarbonRest {
+                company: "company-a",
+                project_key: "fixture",
+            },
+            ..source(&origin, "site-a", "community")
+        },
+    ])
+    .unwrap();
+
+    let read = |instance| {
+        service.observe(
+            WorkOrderSelection {
+                world_id: instance,
+                object_ref: "opaque-job",
+            },
+            move |_| async move {
+                Some(AuthorizedWorkOrder {
+                    scope: SourceScope {
+                        tenant: "tenant-a",
+                        site: "site-a",
+                        instance,
+                    },
+                    source_id: "job-a",
+                })
+            },
+        )
+    };
+    for (instance, total_calls) in [("native-no-entitlement", 1), ("native-tool-refused", 4)] {
+        assert_eq!(
+            read(instance).await.unwrap_err(),
+            ObserveError::SourceUnavailable
+        );
+        assert_eq!(native_calls.load(Ordering::Relaxed), total_calls);
+        assert_eq!(rest_calls.load(Ordering::Relaxed), 0);
+    }
+
+    let observation = read("carbon-rest").await.unwrap();
+    assert_eq!(observation.source_instance, "carbon-rest");
+    assert_eq!(observation.source_status.as_deref(), Some("Ready"));
+    assert_eq!(rest_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(native_calls.load(Ordering::Relaxed), 4);
+    task.abort();
+}
+
+#[tokio::test]
 async fn rereads_snapshots_when_source_time_is_equal_or_older() {
     async fn order(State(calls): State<Arc<AtomicUsize>>) -> Json<serde_json::Value> {
         let (status, updated_at) = match calls.fetch_add(1, Ordering::Relaxed) {

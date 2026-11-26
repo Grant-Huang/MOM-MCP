@@ -29,6 +29,8 @@
 
 执行 `cargo test --locked --test external_observe source_failures_keep_their_classification_without_fallback -- --exact` 复跑三源失败矩阵。Odoo 空结果、OpenMES 对象级 403 和 Carbon REST 空结果均返回不可见。OpenMES 无效正文或记录错配、Carbon REST 跨公司记录错配均返回响应无效。Odoo 上游 401 和 Carbon REST 上游 503 均返回来源不可用。八种失败各触发一次已绑定来源请求，备用站点请求数为零。此为 MOM-MCP 候选 Observe 回环证据。
 
+运行 `cargo test --locked --test external_observe carbon_native_rejections_do_not_read_community_rest -- --exact` 复跑 Carbon 原生 MCP 失败隔离。初始化返回 402 时只调用一次初始化。工具返回 `isError: true` 时完成初始化并调用一次固定读取工具。两条路径在候选 Observe 均返回来源不可用，已配置的 Carbon 社区 REST 零调用。上游错误正文不进入 Observe 结果。回环覆盖协议响应和隔离，授权实例的真实工具拒绝语义仍待核对。
+
 ### PR 自动回归
 
 GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传输、Observe、本体投影及 Odoo 关联测试，同时复跑 Carbon REST、Carbon MCP 和 Odoo 关联的离线探针用例。默认使用本地回环和合成数据。真实来源和正式 Observe 验收使用各自的获批环境，继续按本台账登记。
