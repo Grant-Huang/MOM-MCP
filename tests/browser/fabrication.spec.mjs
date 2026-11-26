@@ -261,12 +261,15 @@ test("P14-06 Crimp and verify four harness endpoints", async ({ page }) => {
   expect(result.crimps[0]).toMatchObject({ cut_batch_id:"CUT-Q", terminal_qualification:"TERM-PWR-B-ALT@1" });
 });
 
-test("P14-08 Isolate only the sampled terminal endpoints", async ({ page }) => {
+test("P14-08 Isolate only the sampled terminal endpoints", ({ page }) => harnessSampleFlow(page, 5));
+test("P14-10 Rework retest and release a harness serial", ({ page }) => harnessSampleFlow(page, 6));
+
+async function harnessSampleFlow(page, version) {
   await page.goto("/scenarios");
   const button = (name) => page.getByRole("button", { name, exact: true });
   const status = page.getByRole("status");
   await button("加载场景").click();
-  await page.getByLabel("已发布场景").selectOption("wire-harness@5");
+  await page.getByLabel("已发布场景").selectOption(`wire-harness@${version}`);
   await button("打开场景").click();
   await expect(status).toContainText('"run_id"');
   await button("搜索工具").click();
@@ -292,4 +295,22 @@ test("P14-08 Isolate only the sampled terminal endpoints", async ({ page }) => {
   const result = await invoke("get_harness_crimp_status", { serial_number }, '"held_endpoints"');
   expect(result.held_endpoints).toEqual(hold.affected_endpoints);
   expect(result.crimps).toHaveLength(2);
-});
+  if (version === 6) {
+    for (const [end, cursor] of [["A",5],["B",6]]) {
+      await invoke("crimp_harness_endpoint", { serial_number, segment_id:"SIGNAL", end,
+        terminal_lot:"TERM-SIG-1", tooling_id:"TOOL-SIG-1", idempotency_key:"signal-"+end }, `"cursor": ${cursor}`);
+    }
+    const release = { serial_number, idempotency_key:"release" };
+    await invoke("release_harness_serial", release, "TERMINAL_QUALITY_HOLD");
+    await invoke("rework_harness_endpoint", { ...args, terminal_lot:"TERM-PWR-2", reason:"replace held terminal",
+      idempotency_key:"repair" }, '"revision": 2');
+    await invoke("release_harness_serial", release, "TEST_PASS_REQUIRED");
+    await invoke("record_harness_continuity_test", { serial_number, result:"pass", evidence:"TEST-R2", revision:2,
+      idempotency_key:"retest" }, '"evidence": "TEST-R2"');
+    await invoke("release_harness_serial", release, '"released": true');
+    const final = await invoke("get_harness_crimp_status", { serial_number }, '"disposition"');
+    expect(final.disposition.released).toBe(true);
+    expect(final.disposition.reworks[0].previous.terminal_lot).toBe("TERM-PWR-1");
+    expect(final.disposition.tests[0].revision).toBe(2);
+  }
+}

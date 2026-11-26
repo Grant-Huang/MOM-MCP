@@ -69,3 +69,9 @@ P8B 是现有命令示例。后续阶段先接入执行器、feature map 和验�
 登记表分别记录采用状态和证据等级。使用 DECLARED、IMPLEMENTED、VERIFIED、ENFORCED，无法核实的范围登记 NOT_VERIFIED。Rulesets、Required Checks、Owner 审批和部署保护需平台证据。审计试点报告保留真实结果和未知项。
 
 规范变更说明理由、影响和生效范围。本规范采纳上传的 AgentNexus《DEV_STANDARD.md》的六环、文档对齐和交接方法，以及《AGENT_GUARDRAILS_MASTER.md》《IMPLEMENTATION_PLAYBOOK.md》的围栏、风险分级与渐进实施方法。文件、编号、测试入口及权限边界采用 MOM-MCP 的现有结构。 [采用计划及附件出处](docs/governance/GUARDRAIL_ADOPTION_PLAN.md)
+
+## PR 与派工的中文审查格式
+
+标题使用 `[第N线][风险等级] 一句话结果（Closes #编号）`。结果控制在约 30 字以内，用业务语言。只在明确关联关闭项时写编号，实际关闭关系在正文添加 `Closes #编号`，跨仓库关系使用完整链接。派工标题写预期结果。
+
+正文按「给审查人」「需要你决定」「怎么看效果」「技术细节」组织。前三行分别写做了什么、为什么、需要审查人做什么。需要拍板时给出选项、推荐和理由，无则写「无」。界面变化附图或提供三步以内的复现。技术细节放在后面，保留设计一致性、非目标、风险、回滚与验证证据。术语和编号首次出现时补充释义或链接，标题和审查摘要避免使用术语表以外的缩写。 [PR 模板](.github/pull_request_template.md) · [派工模板](.github/ISSUE_TEMPLATE/work_assignment.md) · [术语表](docs/GLOSSARY.md)
