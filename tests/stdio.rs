@@ -2484,6 +2484,114 @@ async fn p8_02_public_mcp_contract_excludes_evaluation_internals() {
 }
 
 #[tokio::test]
+async fn adapter_and_mock_read_the_same_work_order_intent() {
+    use axum::{
+        Json, Router, extract::Path, http::StatusCode, response::IntoResponse, routing::get,
+    };
+    use mom_mcp::{
+        external_http::{HttpSource, HttpSourceKind},
+        external_observe::{
+            AuthorizedWorkOrder, ExternalObserve, ObserveError, SourceScope, WorkOrderSelection,
+        },
+    };
+
+    async fn upstream(Path(id): Path<u64>) -> impl IntoResponse {
+        match id {
+            1 => {
+                Json(json!({"data":{"id":1,"order_no":"WO-1","status":"ACCEPTED"}})).into_response()
+            }
+            2 => StatusCode::FORBIDDEN.into_response(),
+            3 => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            _ => panic!("unexpected source record"),
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let router = Router::new().route("/api/v1/work-orders/{id}", get(upstream));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let scope = SourceScope {
+        tenant: "tenant-a",
+        site: "site-a",
+        instance: "openmes",
+    };
+    let observe = ExternalObserve::new([HttpSource {
+        kind: HttpSourceKind::OpenMes,
+        base_url: &origin,
+        token: "local-fixture",
+        tenant: scope.tenant,
+        site: scope.site,
+        instance: scope.instance,
+    }])
+    .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;
+    timeout(WAIT, async {
+        let opened = call(
+            &client,
+            "open_scenario",
+            json!({"scenario_id":"cnc","version":3}),
+        )
+        .await;
+        assert_eq!(opened["ok"], true, "{opened}");
+        let run = &opened["run_id"];
+        let tools = call(&client, "search_tools", json!({"run_id":run})).await;
+        assert!(
+            tools["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == "get_work_order")
+        );
+
+        let read_mock = |order| {
+            call(
+                &client,
+                "call_tool",
+                json!({
+                    "run_id":run, "name":"get_work_order", "arguments":{"work_order":order}
+                }),
+            )
+        };
+        let mock = read_mock("WO-1").await;
+        assert_eq!(mock["work_order"], "WO-1");
+        assert_eq!(mock["status"], "planned");
+        assert_eq!(
+            read_mock("missing-order").await["code"],
+            "WORK_ORDER_NOT_FOUND"
+        );
+
+        let read_external = |object_ref, source_id| {
+            observe.observe(
+                WorkOrderSelection {
+                    world_id: "production-world",
+                    object_ref,
+                },
+                move |_| async move { Some(AuthorizedWorkOrder { scope, source_id }) },
+            )
+        };
+        let external = read_external("opaque-order", "1").await.unwrap();
+        assert_eq!(external.object_ref, "opaque-order");
+        assert_eq!(external.source_instance, "openmes");
+        assert_eq!(external.display_number, mock["work_order"]);
+        assert_eq!(external.source_status.as_deref(), Some("ACCEPTED"));
+        assert_eq!(external.normalized_status, None);
+        assert_eq!(
+            read_external("blocked-order", "2").await.unwrap_err(),
+            ObserveError::NotVisible
+        );
+        assert_eq!(
+            read_external("unavailable-order", "3").await.unwrap_err(),
+            ObserveError::SourceUnavailable
+        );
+    })
+    .await
+    .unwrap();
+    server.abort();
+}
+
+#[tokio::test]
 async fn p8b_01_public_order_reads() {
     let dir = tempfile::tempdir().unwrap();
     let (client, _child) = connect_mode(&dir.path().join("runs.sqlite3"), "0", true).await;

@@ -68,3 +68,8 @@ AgentNexus #251 已合并单站点探针，默认模式仍要求三源。候选�
 | 验收边界 | 三源实测和正式宿主串联用于短期准出。事件续读、多源延迟和浏览器准出按 AgentNexus M3 后续任务卡独立验收。 |
 
 两条主线完成短期验证后，提交对象引用、来源、版本、能力和错误语义的共同评审。Mock 证据以同一个 CNC run 核对下达、领料、部分报工、质量冻结、纠正及台账，再用装配复验。 [Mock 公共门槛](COMMON_MES_GATE.md)
+
+
+## Adapter 与 Mock 工单读取意图预验收
+
+运行 `cargo test --locked --test stdio adapter_and_mock_read_the_same_work_order_intent -- --exact`。在同一验收用例中，Mock 走实际 stdio MCP 工具发现及 `get_work_order`，Adapter 走授权路由和 OpenMES 回环 HTTP。两边读取显示号 `WO-1`，分别保留 Mock 的 `planned` 与 OpenMES 的源状态 `ACCEPTED`。Adapter 输出来源实例及世界内不透明引用，规范状态为空。Mock 缺失工单、来源对象不可见及来源不可用分别校验各自结果。正式联调仍需由共同宿主验证跨世界授权、来源标识、能力声明和公开错误包络。
