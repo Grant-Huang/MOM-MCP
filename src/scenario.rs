@@ -205,6 +205,14 @@ fn parse_definition(source: &str) -> anyhow::Result<Definition> {
     .map_err(|reason| anyhow::anyhow!("model configuration: {reason}"))?;
     if let Some(setup) = &definition.smt {
         anyhow::ensure!(
+            definition.capabilities.contains(&Action::SmtReviewAoi) == setup.aoi_review
+                && (!setup.aoi_review
+                    || [Action::SmtAoi, Action::SmtSplit, Action::SmtFinish]
+                        .iter()
+                        .all(|action| definition.capabilities.contains(action))),
+            "SMT AOI review requires inspection, board split and finish"
+        );
+        anyhow::ensure!(
             definition.capabilities.contains(&Action::SmtSpliceReel) == setup.spliced_placement,
             "SMT splice capability requires spliced placement"
         );
@@ -914,6 +922,7 @@ impl Scenarios {
             include_str!("../fixtures/smt-lot-holds.json"),
             include_str!("../fixtures/smt-split-reels.json"),
             include_str!("../fixtures/smt-spliced-placement.json"),
+            include_str!("../fixtures/smt-aoi-review.json"),
             include_str!("../fixtures/assembly.json"),
             include_str!("../fixtures/assembly-production.json"),
             include_str!("../fixtures/assembly-public-orders.json"),

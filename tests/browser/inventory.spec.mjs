@@ -151,7 +151,7 @@ test("P9C-UI Reserve and pick an eligible lot", async ({ page }) => {
   expect(stock.balance).toMatchObject({ on_hand: "2", reserved: "0", available: "2" });
 });
 
-for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup, machiningInspections, deviceRecovery, operationGenealogy, smtSplitReel, smtSplice } of [
+for (const { title, scenario, work_order, operation, work_center, report, returns, transfer, reverse, receiptReversal, operationReversal, assemblyLedger, partial, wip, moveWip, genealogy, reverseWip, splitWip, outputReceipt, reconciliation, reconcileWip, qualityRecovery, replenish, crossShopHold, sharedSmt, scopedLotHold, consolidateWip, coatingHandoff, assemblyClosure, smtLotHold, cncToolSetup, machiningInspections, deviceRecovery, operationGenealogy, smtSplitReel, smtSplice, smtAoiReview } of [
   { title: "P9C-03 Issue picked stock to an operation", scenario: "assembly@26", work_order: "WO-E", operation: "build", work_center: "CELL-A" },
   { title: "P9C-05 Record issued material in a partial report", scenario: "cnc@28", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true },
   { title: "P9C-07 Return unused issued material", scenario: "cnc@29", work_order: "WO-1", operation: "machining", work_center: "MACH-01", report: true, returns: true },
@@ -170,6 +170,7 @@ for (const { title, scenario, work_order, operation, work_center, report, return
   { title: "P9D-19 Replenish after a quality reinspection", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", replenish: true },
   { title: "P9D-21 Hold WIP across workshops", scenario: "cnc@42", work_order: "WO-1", operation: "machining", work_center: "MACH-01", moveWip: true, crossShopHold: true },
   { title: "P9D-23 Trace SMT placement through the common stock ledger", scenario: "smt@3", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true },
+  { title: "P11-05 Review failed SMT AOI by board", scenario: "smt@7", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplice: true, smtAoiReview: true },
   { title: "P11-03 Trace both sides of an SMT reel splice", scenario: "smt@6", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplice: true },
   { title: "P11-UI Split a reel and trace SMT placement", scenario: "smt@5", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtSplitReel: true },
   { title: "P9D-33 Release a held SMT reel and resume placement", scenario: "smt@4", work_order: "WO-A", operation: "placement", work_center: "SMT-1", sharedSmt: true, smtLotHold: true },
@@ -262,8 +263,27 @@ for (const { title, scenario, work_order, operation, work_center, report, return
         const spliced = JSON.parse(await status.textContent());
         cursor = spliced.cursor;
         await write("smt_place", { panel: "P-A", slot: "F1", reservation_ids: ["RS-OLD", "RS-NEW"] });
-        await write("smt_aoi", { panel: "P-A", result: "pass" });
+        await write("smt_aoi", { panel: "P-A", result: smtAoiReview ? "fail" : "pass" });
+        if (smtAoiReview) {
+          await page.getByLabel("匹配工具").selectOption("smt_review_aoi");
+          await page.getByLabel("JSON 参数").fill(JSON.stringify({
+            panel: "P-A", decisions: { "A-01": "hold", "A-02": "pass" }, responsible: "QA-01",
+            reason: "manual board review", evidence: "AOI-IMAGE-1", expected_cursor: cursor, idempotency_key: "aoi-review-ui",
+          }));
+          await button("调用工具").click();
+          await expect(status).toContainText('"aoi_review"');
+          cursor = JSON.parse(await status.textContent()).cursor;
+        }
         await write("smt_split", { panel: "P-A" });
+        if (smtAoiReview) {
+          const fail = await invoke("smt_finish", { serial: "A-01", idempotency_key: "held-a" });
+          expect(fail.code).toBe("QUALITY_HOLD");
+          const pass = await invoke("smt_finish", { serial: "A-02", idempotency_key: "pass-b" });
+          expect(pass.finished).toBe(true);
+          const trace = await invoke("smt_trace", { subject: "A-01" });
+          expect(trace.links[0]).toMatchObject({ aoi: "fail", quality: "held" });
+          expect(trace.links[0].history).toContainEqual(expect.objectContaining({ action: "aoi_review", evidence: "AOI-IMAGE-1" }));
+        }
         for (const [serial_number, source] of [["A-01", "REEL-C"], ["A-02", "REEL-N"]]) {
           const trace = await invoke("trace_serial_backward", { serial_number });
           expect(trace.edges.filter(edge => edge.kind === "material_input")).toMatchObject([{ source: { id: source }, quantity: "1" }]);

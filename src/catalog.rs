@@ -115,6 +115,7 @@ pub enum Action {
     SmtSpliceReel,
     SmtPlace,
     SmtAoi,
+    SmtReviewAoi,
     SmtSplit,
     SmtFinish,
     SmtStatus,

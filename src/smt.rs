@@ -27,6 +27,12 @@ pub const TOOLS: &[(Action, &str, &str, &str)] = &[
         "production",
     ),
     (Action::SmtPlace, "smt_place", "贴装拼板", "production"),
+    (
+        Action::SmtReviewAoi,
+        "smt_review_aoi",
+        "复判拼板 AOI 失败并逐板登记处置",
+        "quality",
+    ),
     (Action::SmtAoi, "smt_aoi", "拼板 AOI 检测", "quality"),
     (
         Action::SmtSplit,
@@ -76,6 +82,14 @@ pub fn spec(action: Action) -> Spec {
         Action::SmtSpliceReel => vec!["slot", "reel", "expected_cursor"],
         Action::SmtPlace => vec!["panel", "slot"],
         Action::SmtAoi => vec!["panel", "result"],
+        Action::SmtReviewAoi => vec![
+            "panel",
+            "decisions",
+            "responsible",
+            "reason",
+            "evidence",
+            "expected_cursor",
+        ],
         Action::SmtSplit => vec!["panel"],
         Action::SmtFinish => vec!["serial"],
         Action::SmtTrace => vec!["subject"],
@@ -95,6 +109,8 @@ pub fn spec(action: Action) -> Spec {
             (
                 field.into(),
                 match field {
+                    "decisions" => json!({"type":"object","minProperties":1,"maxProperties":64,
+                        "additionalProperties":{"enum":["pass","hold"]}}),
                     "result" => json!({"type":"string","enum":["pass","fail"]}),
                     "expected_cursor" => json!({"type":"integer","minimum":0,"maximum":i64::MAX}),
                     "event_cursor" => json!({"type":"integer","minimum":1,"maximum":10000}),
@@ -103,13 +119,26 @@ pub fn spec(action: Action) -> Spec {
             )
         })
         .collect::<Map<_, _>>();
+    let output = if action == Action::SmtReviewAoi {
+        let cursor = json!({"type":"integer","minimum":1});
+        let review = object(
+            &["decisions", "responsible", "reason", "evidence", "cursor"],
+            json!({"decisions":fields["decisions"],"responsible":text(),"reason":text(),"evidence":text(),"cursor":cursor}),
+        );
+        json!({"oneOf":[
+            object(&["ok","panel","aoi_review","cursor"],json!({"ok":{"const":true},"panel":text(),"aoi_review":review,"cursor":cursor})),
+            object(&["ok","code"],json!({"ok":{"const":false},"code":text()}))
+        ]})
+    } else {
+        json!({"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"},"code":{"type":"string"}}})
+    };
     Spec {
         name,
         description,
         domain,
         effect: if read { "read" } else { "write" },
         input: object(&required, Value::Object(fields)),
-        output: json!({"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"},"code":{"type":"string"}}}),
+        output,
         preconditions: &["run_open", "tool_enabled_in_scenario"],
         side_effect: if read { "none" } else { "update_smt_state" },
         errors: &[
@@ -120,6 +149,9 @@ pub fn spec(action: Action) -> Spec {
             "REEL_NOT_FOUND",
             "FEEDER_EMPTY",
             "SPLICE_MATERIAL_MISMATCH",
+            "AOI_REVIEW_REQUIRED",
+            "AOI_REVIEW_NOT_ELIGIBLE",
+            "INVALID_ARGUMENT",
             "VERSION_CONFLICT",
             "RETEST_REQUIRED",
             "BOARD_SCRAPPED",
@@ -138,6 +170,8 @@ pub struct Setup {
     split_reels: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) spliced_placement: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) aoi_review: bool,
     reels: BTreeMap<String, usize>,
     panels: BTreeMap<String, PanelDefinition>,
 }
@@ -236,7 +270,18 @@ struct Panel {
     load_id: usize,
     slot: String,
     aoi: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    aoi_review: Option<AoiReview>,
     split: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AoiReview {
+    decisions: BTreeMap<String, String>,
+    responsible: String,
+    reason: String,
+    evidence: String,
+    cursor: i64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -498,8 +543,10 @@ pub fn invoke(
             false,
         ));
     }
-    if matches!(action, Action::ReleaseWorkOrder | Action::SmtSpliceReel)
-        || (setup.shared_material && action == Action::SmtPlace)
+    if matches!(
+        action,
+        Action::ReleaseWorkOrder | Action::SmtSpliceReel | Action::SmtReviewAoi
+    ) || (setup.shared_material && action == Action::SmtPlace)
     {
         if args["expected_cursor"].as_i64() != Some(cursor) {
             return Ok((failure("VERSION_CONFLICT"), false));
@@ -507,7 +554,7 @@ pub fn invoke(
     }
     if setup.shared_material {
         let affected = match action {
-            Action::SmtPlace | Action::SmtAoi | Action::SmtSplit => {
+            Action::SmtPlace | Action::SmtAoi | Action::SmtReviewAoi | Action::SmtSplit => {
                 args.get("panel").and_then(Value::as_str)
             }
             Action::SmtFinish => args
@@ -801,9 +848,45 @@ fn apply(
                     load_id,
                     slot: slot.into(),
                     aoi: None,
+                    aoi_review: None,
                     split: false,
                 },
             );
+        }
+        Action::SmtReviewAoi => {
+            let id = string("panel");
+            let Some(panel) = state.panels.get_mut(id) else {
+                return failure("AOI_REVIEW_NOT_ELIGIBLE");
+            };
+            if panel.aoi.as_deref() != Some("fail") || panel.split || panel.aoi_review.is_some() {
+                return failure("AOI_REVIEW_NOT_ELIGIBLE");
+            }
+            let serials = &setup.panels[id].serials;
+            let decisions = args["decisions"].as_object().unwrap();
+            if decisions.len() != serials.len()
+                || serials.iter().any(|serial| {
+                    !matches!(
+                        decisions.get(serial).and_then(Value::as_str),
+                        Some("pass" | "hold")
+                    )
+                })
+                || ["responsible", "reason", "evidence"]
+                    .iter()
+                    .any(|field| string(field).trim().is_empty())
+            {
+                return failure("INVALID_ARGUMENT");
+            }
+            panel.aoi_review = Some(AoiReview {
+                decisions: decisions
+                    .iter()
+                    .map(|(serial, decision)| (serial.clone(), decision.as_str().unwrap().into()))
+                    .collect(),
+                responsible: string("responsible").into(),
+                reason: string("reason").into(),
+                evidence: string("evidence").into(),
+                cursor: args["expected_cursor"].as_i64().unwrap() + 1,
+            });
+            return json!({"ok":true,"panel":id,"aoi_review":panel.aoi_review});
         }
         Action::SmtAoi | Action::SmtSplit => {
             let id = string("panel");
@@ -828,21 +911,35 @@ fn apply(
                 if panel.split {
                     return failure("INVALID_STATE");
                 }
+                if setup.aoi_review && aoi == "fail" && panel.aoi_review.is_none() {
+                    return failure("AOI_REVIEW_REQUIRED");
+                }
                 panel.split = true;
                 let serials = &setup.panels[id].serials;
                 for serial in serials {
-                    let quality = if aoi == "fail" || recalled(panel.reel_for(serial)) {
+                    let reviewed = panel
+                        .aoi_review
+                        .as_ref()
+                        .map(|review| &review.decisions[serial]);
+                    let quality = if recalled(panel.reel_for(serial))
+                        || (aoi == "fail" && reviewed.is_none_or(|result| result == "hold"))
+                    {
                         Quality::Held
                     } else {
                         Quality::Clear
                     };
+                    let mut history = vec![json!({"action":"split","aoi":aoi})];
+                    if let Some(review) = &panel.aoi_review {
+                        history.push(json!({"action":"aoi_review","decision":review.decisions[serial],
+                            "responsible":review.responsible,"reason":review.reason,"evidence":review.evidence,"cursor":review.cursor}));
+                    }
                     state.boards.insert(
                         serial.clone(),
                         Board {
                             panel: id.into(),
                             quality,
                             finished: false,
-                            history: vec![json!({"action":"split","aoi":aoi})],
+                            history,
                             replacements: vec![],
                         },
                     );
