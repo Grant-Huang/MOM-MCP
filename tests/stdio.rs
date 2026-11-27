@@ -2486,7 +2486,11 @@ async fn p8_02_public_mcp_contract_excludes_evaluation_internals() {
 #[tokio::test]
 async fn adapter_and_mock_read_the_same_work_order_intent() {
     use axum::{
-        Json, Router, extract::Path, http::StatusCode, response::IntoResponse, routing::get,
+        Json, Router,
+        extract::{Path, Query},
+        http::StatusCode,
+        response::IntoResponse,
+        routing::{get, post},
     };
     use mom_mcp::{
         external_http::{HttpSource, HttpSourceKind},
@@ -2506,23 +2510,56 @@ async fn adapter_and_mock_read_the_same_work_order_intent() {
         }
     }
 
+    async fn odoo(Json(query): Json<Value>) -> impl IntoResponse {
+        match query["domain"][0][2].as_u64().unwrap() {
+            1 => Json(json!([{"id":1,"name":"WO-1","state":"confirmed"}])).into_response(),
+            2 => Json(json!([])).into_response(),
+            3 => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            _ => panic!("unexpected Odoo record"),
+        }
+    }
+
+    async fn carbon(
+        Query(query): Query<std::collections::HashMap<String, String>>,
+    ) -> impl IntoResponse {
+        assert_eq!(query["companyId"], "eq.company-a");
+        match query["id"].as_str() {
+            "eq.1" => {
+                Json(json!([{"id":"1","jobId":"WO-1","status":"Ready","companyId":"company-a"}]))
+                    .into_response()
+            }
+            "eq.2" => Json(json!([])).into_response(),
+            "eq.3" => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            _ => panic!("unexpected Carbon record"),
+        }
+    }
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    let router = Router::new().route("/api/v1/work-orders/{id}", get(upstream));
+    let router = Router::new()
+        .route("/api/v1/work-orders/{id}", get(upstream))
+        .route("/json/2/mrp.production/search_read", post(odoo))
+        .route("/rest/v1/jobs", get(carbon));
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let scope = SourceScope {
-        tenant: "tenant-a",
-        site: "site-a",
-        instance: "openmes",
-    };
-    let observe = ExternalObserve::new([HttpSource {
-        kind: HttpSourceKind::OpenMes,
+    let sources = [
+        ("openmes", HttpSourceKind::OpenMes),
+        ("odoo", HttpSourceKind::Odoo { database: "sample" }),
+        (
+            "carbon-rest",
+            HttpSourceKind::CarbonRest {
+                company: "company-a",
+                project_key: "sample",
+            },
+        ),
+    ];
+    let observe = ExternalObserve::new(sources.map(|(instance, kind)| HttpSource {
+        kind,
         base_url: &origin,
         token: "local-fixture",
-        tenant: scope.tenant,
-        site: scope.site,
-        instance: scope.instance,
-    }])
+        tenant: "tenant-a",
+        site: "site-a",
+        instance,
+    }))
     .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
@@ -2562,29 +2599,40 @@ async fn adapter_and_mock_read_the_same_work_order_intent() {
             "WORK_ORDER_NOT_FOUND"
         );
 
-        let read_external = |object_ref, source_id| {
-            observe.observe(
-                WorkOrderSelection {
-                    world_id: "production-world",
-                    object_ref,
-                },
-                move |_| async move { Some(AuthorizedWorkOrder { scope, source_id }) },
-            )
-        };
-        let external = read_external("opaque-order", "1").await.unwrap();
-        assert_eq!(external.object_ref, "opaque-order");
-        assert_eq!(external.source_instance, "openmes");
-        assert_eq!(external.display_number, mock["work_order"]);
-        assert_eq!(external.source_status.as_deref(), Some("ACCEPTED"));
-        assert_eq!(external.normalized_status, None);
-        assert_eq!(
-            read_external("blocked-order", "2").await.unwrap_err(),
-            ObserveError::NotVisible
-        );
-        assert_eq!(
-            read_external("unavailable-order", "3").await.unwrap_err(),
-            ObserveError::SourceUnavailable
-        );
+        for (instance, expected_state) in [
+            ("openmes", "ACCEPTED"),
+            ("odoo", "confirmed"),
+            ("carbon-rest", "Ready"),
+        ] {
+            let scope = SourceScope {
+                tenant: "tenant-a",
+                site: "site-a",
+                instance,
+            };
+            let read_external = |object_ref, source_id| {
+                observe.observe(
+                    WorkOrderSelection {
+                        world_id: instance,
+                        object_ref,
+                    },
+                    move |_| async move { Some(AuthorizedWorkOrder { scope, source_id }) },
+                )
+            };
+            let external = read_external("opaque-order", "1").await.unwrap();
+            assert_eq!(external.object_ref, "opaque-order");
+            assert_eq!(external.source_instance, instance);
+            assert_eq!(external.display_number, mock["work_order"]);
+            assert_eq!(external.source_status.as_deref(), Some(expected_state));
+            assert_eq!(external.normalized_status, None);
+            assert_eq!(
+                read_external("blocked-order", "2").await.unwrap_err(),
+                ObserveError::NotVisible
+            );
+            assert_eq!(
+                read_external("unavailable-order", "3").await.unwrap_err(),
+                ObserveError::SourceUnavailable
+            );
+        }
     })
     .await
     .unwrap();
