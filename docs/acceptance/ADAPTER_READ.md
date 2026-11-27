@@ -37,6 +37,8 @@
 
 运行 `cargo test --locked --test external_observe reads_again_after_source_recovery_but_stops_after_revocation -- --exact`。同一工单第一次读取遇到来源故障。来源恢复后，再次请求读取原绑定并返回当前源状态。撤销宿主授权后，再次请求被拒绝，来源调用数保持不变。全过程备用站点零调用。该项是候选入口回环证据。
 
+缺少世界标识或工单引用时，工单详情和 Odoo 销售单关系查询都应拒绝请求。两条入口均在调用授权回调与访问来源前停止。运行 `cargo test --locked --test external_observe incomplete_order_selection_stops_before_authorization_and_source_access -- --exact` 复跑。
+
 ### PR 自动回归
 
 GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传输、Observe、本体投影及 Odoo 关联测试，同时复跑 Carbon REST、Carbon MCP 和 Odoo 关联的离线探针用例。默认使用本地回环和合成数据。真实来源和正式 Observe 验收使用各自的获批环境，继续按本台账登记。
