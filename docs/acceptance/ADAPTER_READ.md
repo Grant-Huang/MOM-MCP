@@ -41,6 +41,8 @@
 
 同一个工单引用和源记录编号可在不同租户、站点和来源实例出现。候选读取入口按这三个绑定字段共同选择来源。已配置的作用域只访问自己绑定的来源，未配置的组合报告来源不可用，所有来源调用数保持原值。运行 `cargo test --locked --test external_observe routes_by_tenant_site_and_instance_when_work_order_ids_are_equal -- --exact` 复跑。
 
+同一租户、站点和来源实例只允许一条来源配置。给 Carbon 原生接口和社区 REST 使用相同绑定时，候选入口初始化拒绝配置，两种登记顺序结果一致。运行 `cargo test --locked --test external_observe rejects_duplicate_configuration -- --exact` 复跑。
+
 ### PR 自动回归
 
 GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传输、Observe、本体投影及 Odoo 关联测试，同时复跑 Carbon REST、Carbon MCP 和 Odoo 关联的离线探针用例。默认使用本地回环和合成数据。真实来源和正式 Observe 验收使用各自的获批环境，继续按本台账登记。
