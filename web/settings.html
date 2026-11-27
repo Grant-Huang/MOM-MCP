@@ -6,6 +6,13 @@
 <main>
 <h1>站点设置验收</h1>
 <button id="read">读取工作中心与班次</button>
+<section data-drafts-disabled>
+<h2>草稿与影响预览</h2>
+<label>草稿参数 <textarea id="draft" rows="10" cols="65"></textarea></label>
+<button id="create">保存草稿</button>
+<button id="validate">校验草稿</button>
+<button id="preview">预览影响</button>
+</section>
 <pre role="status" id="result" aria-live="polite"></pre>
 </main>
 <script src="/settings.js" defer></script>

@@ -9417,3 +9417,81 @@ async fn p16_01_settings_scope_and_production_isolation() {
         client.cancel().await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn p16_02_settings_draft_validation_and_preview() {
+    let mut command = Command::new(acceptance_binary());
+    command.args(["settings-stdio", "--site", "SITE-A", "--draft-tools"]);
+    let client = ().serve(rmcp::transport::TokioChildProcess::new(command).unwrap()).await.unwrap();
+    let get = "get_mes_settings";
+    let create = "create_mes_settings_draft";
+    let validate = "validate_mes_settings_draft";
+    let preview = "preview_mes_settings_draft";
+    let before = call(&client, get, json!({})).await;
+    let mut draft = json!({"draft_id":"NIGHT","base_version":1,"idempotency_key":"night",
+        "work_centers":[{"work_center":"MACH-01","active":true}],
+        "shifts":[{"shift_id":"NIGHT","work_center":"MACH-01","start_local":"22:00","end_local":"06:00"}]});
+    let saved = call(&client, create, draft.clone()).await;
+    assert_eq!(saved["ok"], true, "{saved}");
+    assert_eq!(call(&client, create, draft.clone()).await, saved);
+    let mut stale = draft.clone();
+    stale["base_version"] = json!(2);
+    stale["idempotency_key"] = json!("stale");
+    assert_eq!(
+        call(&client, create, stale).await["code"],
+        "VERSION_CONFLICT"
+    );
+    assert_eq!(
+        call(&client, validate, json!({"draft_id":"NIGHT"})).await["valid"],
+        true
+    );
+    let planned = call(&client, preview, json!({"draft_id":"NIGHT"})).await;
+    assert_eq!(planned["changed"], json!(["shifts"]));
+    assert_eq!(planned["existing_runs_affected"], false);
+    assert_eq!(planned["candidate_fingerprint"].as_str().unwrap().len(), 64);
+    assert_eq!(
+        call(&client, preview, json!({"draft_id":"NIGHT"})).await,
+        planned
+    );
+    draft["draft_id"] = json!("INVALID");
+    assert_eq!(
+        call(&client, create, draft.clone()).await["code"],
+        "IDEMPOTENCY_CONFLICT"
+    );
+    draft["idempotency_key"] = json!("invalid");
+    draft["shifts"].as_array_mut().unwrap().push(json!({
+        "shift_id":"EARLY","work_center":"MACH-01","start_local":"05:00","end_local":"09:00"
+    }));
+    draft["shifts"].as_array_mut().unwrap().push(json!({
+        "shift_id":"UNKNOWN","work_center":"OTHER","start_local":"9:00","end_local":"17:00"
+    }));
+    assert_eq!(call(&client, create, draft).await["ok"], true);
+    let invalid = call(&client, validate, json!({"draft_id":"INVALID"})).await;
+    assert_eq!(invalid["valid"], false);
+    let issues: Vec<_> = invalid["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|issue| issue["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        issues,
+        [
+            "SHIFT_OVERLAP",
+            "WORK_CENTER_UNAVAILABLE",
+            "INVALID_SHIFT_TIME"
+        ]
+    );
+    assert_eq!(
+        call(&client, preview, json!({"draft_id":"INVALID"})).await["code"],
+        "DRAFT_INVALID"
+    );
+    assert_eq!(call(&client, get, json!({})).await, before);
+    let mut command = Command::new(acceptance_binary());
+    command.args(["settings-stdio", "--site", "SITE-B", "--draft-tools"]);
+    let other = ().serve(rmcp::transport::TokioChildProcess::new(command).unwrap()).await.unwrap();
+    assert_eq!(
+        call(&other, preview, json!({"draft_id":"NIGHT"})).await["code"],
+        "DRAFT_NOT_FOUND"
+    );
+}

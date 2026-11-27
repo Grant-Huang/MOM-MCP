@@ -18,6 +18,7 @@ mod reservations;
 mod routes;
 mod scenario;
 mod settings;
+mod settings_drafts;
 mod simulation;
 mod smt;
 mod snapshots;
@@ -48,10 +49,12 @@ enum Mode {
         #[arg(long, requires = "scenario_tools")]
         control_tools: bool,
     },
-    /// Serve the read-only settings endpoint for a host-selected site.
+    /// Serve the settings endpoint for a host-selected site.
     SettingsStdio {
         #[arg(long)]
         site: settings::Site,
+        #[arg(long)]
+        draft_tools: bool,
     },
     /// Register a scenario definition from a trusted local caller.
     RegisterScenario {
@@ -70,6 +73,8 @@ enum Mode {
         control_tools: bool,
         #[arg(long)]
         settings_site: Option<settings::Site>,
+        #[arg(long, requires = "settings_site")]
+        settings_drafts: bool,
     },
 }
 
@@ -88,8 +93,9 @@ async fn main() -> anyhow::Result<()> {
                 .waiting()
                 .await?;
         }
-        Mode::SettingsStdio { site } => {
-            site.serve(rmcp::transport::stdio())
+        Mode::SettingsStdio { site, draft_tools } => {
+            settings::Settings::new(site, draft_tools)
+                .serve(rmcp::transport::stdio())
                 .await?
                 .waiting()
                 .await?;
@@ -100,7 +106,8 @@ async fn main() -> anyhow::Result<()> {
             port,
             control_tools,
             settings_site,
-        } => web::serve(db, port, control_tools, settings_site).await?,
+            settings_drafts,
+        } => web::serve(db, port, control_tools, settings_site, settings_drafts).await?,
     }
     Ok(())
 }
