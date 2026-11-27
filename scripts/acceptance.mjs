@@ -6,11 +6,11 @@ import { parse } from "smol-toml";
 import { validateTrace, requireBrowserEvidence } from "./acceptance-trace.mjs";
 
 const args = process.argv.slice(2);
-const stages = [...Array.from({ length: 9 }, (_, number) => `P${number}`), "P8B", "P8C", "P8D", "P9A", "P9B", "P9C", "P9D", "P10", "P11", "P12", "P13", "P14"];
+const stages = [...Array.from({ length: 9 }, (_, number) => `P${number}`), "P8B", "P8C", "P8D", "P9A", "P9B", "P9C", "P9D", "P10", "P11", "P12", "P13", "P14", "P15"];
 const phase = args.find((arg) => stages.includes(arg)) ?? "P0";
 const gate = args.includes("--gate");
 if (args.some((arg) => arg !== phase && arg !== "--gate")) {
-  throw new Error("Usage: npm run acceptance -- [P0..P8|P8B|P8C|P8D|P9A|P9B|P9C|P9D|P10|P11|P12|P13|P14] [--gate]");
+  throw new Error("Usage: npm run acceptance -- [P0..P8|P8B|P8C|P8D|P9A|P9B|P9C|P9D|P10|P11|P12|P13|P14|P15] [--gate]");
 }
 const read = (path) => readFileSync(path, "utf8");
 const map = parse(read("docs/feature-map.toml")).case;
@@ -47,7 +47,7 @@ mkdirSync(resultsDir, { recursive: true });
 for (const file of [
   "industry-replay.json", "restart-recovery.json", "agentnexus-industries.json", "five-industry-catalog.json",
   "p9d-cnc-closure.json", "p9d-assembly-closure.json", "p9d-smt-lot-holds.json",
-  "p9d-agentnexus-cnc-closure.json",
+  "p9d-agentnexus-cnc-closure.json", "p15-five-industry-session.json",
 ]) {
   rmSync(join(resultsDir,file), { force: true });
 }

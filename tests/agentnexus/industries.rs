@@ -33,12 +33,7 @@ impl Session {
     }
 }
 
-#[tokio::test]
-async fn p6_agentnexus_three_industries() {
-    let db = format!(
-        "{}-industries.sqlite3",
-        std::env::var("MOM_PROBE_DATABASE").unwrap()
-    );
+async fn public_session(db: String) -> Session {
     let bindings = [
         ("list_scenarios","read_only"),("open_scenario","workspace_write"),("get_run","read_only"),
         ("close_run","workspace_write"),("search_tools","read_only"),("describe_tool","read_only"),
@@ -49,10 +44,19 @@ async fn p6_agentnexus_three_industries() {
         "args":["stdio","--scenario-tools","--db",db],"timeout_ms":5000,"tools":bindings
     }))
     .unwrap();
-    let mut session = Session {
+    Session {
         tools: connect(&[config]).await.unwrap(),
         trace: vec![],
-    };
+    }
+}
+
+#[tokio::test]
+async fn p6_agentnexus_three_industries() {
+    let db = format!(
+        "{}-industries.sqlite3",
+        std::env::var("MOM_PROBE_DATABASE").unwrap()
+    );
+    let mut session = public_session(db).await;
     let scenarios = session.call("list_scenarios", json!({})).await;
     let mut runs = Vec::new();
     for scenario in ["cnc", "smt", "assembly"] {
@@ -308,4 +312,188 @@ async fn p9d_agentnexus_cnc_closure() {
     std::fs::write(output, serde_json::to_vec_pretty(&json!({
         "run_id":run,"agent_trace":session.trace,"settlement":settlement
     })).unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn p15_agentnexus_five_industry_session() {
+    let db = format!(
+        "{}-p15.sqlite3",
+        std::env::var("MOM_PROBE_DATABASE").unwrap()
+    );
+    let mut session = public_session(db).await;
+    let catalog = session.call("list_scenarios", json!({})).await;
+    let selections = [
+        ("cnc", 49, "set_dispatch_priority"),
+        ("smt", 9, "smt_load"),
+        ("assembly", 33, "set_dispatch_priority"),
+        ("sheet-metal", 6, "create_sheet_nest"),
+        ("wire-harness", 6, "cut_harness_batch"),
+    ];
+    let mut runs = Vec::new();
+    for (scenario, version, tool) in selections {
+        assert!(
+            catalog["scenarios"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["scenario_id"] == scenario && item["version"] == version)
+        );
+        let opened = session
+            .call(
+                "open_scenario",
+                json!({"scenario_id":scenario,"version":version}),
+            )
+            .await;
+        assert_eq!(opened["ok"], true, "{opened}");
+        let run = opened["run_id"].clone();
+        assert!(!runs.contains(&run));
+        let found = session
+            .call("search_tools", json!({"run_id":run,"query":tool}))
+            .await;
+        assert!(
+            found["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["name"] == tool)
+        );
+        let described = session
+            .call("describe_tool", json!({"run_id":run,"name":tool}))
+            .await;
+        assert_eq!(described["tool"]["effect"], "write");
+        runs.push(run);
+    }
+    let [cnc, smt, assembly, sheet, wire] = runs.as_slice() else {
+        unreachable!()
+    };
+    for (run, order, priority) in [(cnc, "WO-1", 7), (assembly, "WO-E", 5)] {
+        let request = json!({"work_order":order,"priority":priority,"expected_cursor":0,"idempotency_key":"shared"});
+        let result = session
+            .business(run, "set_dispatch_priority", request.clone())
+            .await;
+        assert_eq!(result["priority"], priority, "{result}");
+        assert_eq!(
+            session
+                .business(run, "set_dispatch_priority", request)
+                .await,
+            result
+        );
+    }
+    let before = session
+        .business(
+            smt,
+            "smt_load",
+            json!({"slot":"F1","reel":"REEL-P15","idempotency_key":"shared"}),
+        )
+        .await;
+    assert_eq!(before["code"], "REEL_NOT_FOUND");
+    for (cursor, name, mut arguments) in [
+        (
+            0,
+            "create_item",
+            json!({"item_id":"PART","base_unit":"each"}),
+        ),
+        (
+            1,
+            "create_item_revision",
+            json!({"item_id":"PART","revision":1,"name":"Part"}),
+        ),
+        (
+            2,
+            "activate_revision",
+            json!({"item_id":"PART","revision":1,"revision_type":"item"}),
+        ),
+        (
+            3,
+            "create_receipt",
+            json!({"receipt_id":"R-P15","item_id":"PART","revision":1,"quantity":"3","requires_inspection":false}),
+        ),
+        (
+            4,
+            "assign_receipt_tracking",
+            json!({"receipt_id":"R-P15","lot_id":"REEL-P15","supplier_lot":"S-P15","location":"RAW-02"}),
+        ),
+        (5, "post_receipt", json!({"receipt_id":"R-P15"})),
+    ] {
+        arguments["idempotency_key"] = json!(format!("receipt-{cursor}"));
+        arguments["expected_cursor"] = json!(cursor);
+        let result = session.business(smt, name, arguments).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+    }
+    let load = session
+        .business(
+            smt,
+            "smt_load",
+            json!({"slot":"F1","reel":"REEL-P15","idempotency_key":"shared"}),
+        )
+        .await;
+    assert_eq!(load["load_id"], 1, "{load}");
+    assert_eq!(session.business(sheet,"create_sheet_nest",json!({"nest_id":"N-P15","stock":"SHEET-FULL","work_orders":["WO-SHEET-A","WO-SHEET-C"],"idempotency_key":"shared"})).await["code"],"NEST_LAYOUT_UNAVAILABLE");
+    let planned = session.business(sheet,"create_sheet_nest",json!({"nest_id":"N-P15","stock":"SHEET-FULL","work_orders":["WO-SHEET-A","WO-SHEET-B"],"idempotency_key":"shared"})).await;
+    assert_eq!(
+        planned["nest"]["placements"]["WO-SHEET-B"]["x_mm"], 30,
+        "{planned}"
+    );
+    let cut = session
+        .business(
+            sheet,
+            "cut_sheet_nest",
+            json!({"nest_id":"N-P15","machine":"LASER-B","idempotency_key":"cut"}),
+        )
+        .await;
+    assert_eq!(cut["nest"]["product_mm2"], 1200, "{cut}");
+    let batch = session.business(wire,"cut_harness_batch",json!({"batch_id":"C-P15","wire_lot":"WIRE-CU-1","serial_numbers":["WIRE-01"],"idempotency_key":"shared"})).await;
+    assert_eq!(batch["batch"]["input_mm"], 660, "{batch}");
+    assert_eq!(
+        session
+            .business(
+                wire,
+                "release_harness_serial",
+                json!({"serial_number":"WIRE-01","idempotency_key":"early"})
+            )
+            .await["code"],
+        "ENDPOINTS_INCOMPLETE"
+    );
+    assert_eq!(
+        session
+            .business(cnc, "get_harness_cut_batch", json!({"batch_id":"C-P15"}))
+            .await["code"],
+        "TOOL_UNAVAILABLE"
+    );
+
+    for (run, cursor) in [(assembly, 1), (wire, 1), (cnc, 1), (sheet, 2), (smt, 7)] {
+        let metadata = session.call("get_run", json!({"run_id":run})).await;
+        assert_eq!(metadata["cursor"], cursor, "{metadata}");
+        assert_eq!(metadata["clock"], 0);
+        assert_eq!(
+            session.call("close_run", json!({"run_id":run})).await["closed"],
+            true
+        );
+    }
+
+    let legacy = session
+        .call(
+            "open_scenario",
+            json!({"scenario_id":"wire-harness","version":1}),
+        )
+        .await;
+    assert_eq!(legacy["ok"], true);
+    let legacy = &legacy["run_id"];
+    assert_eq!(session.business(legacy,"cut_harness_batch",json!({"batch_id":"C-P15","wire_lot":"WIRE-CU-1","serial_numbers":["WIRE-01"],"idempotency_key":"shared"})).await["code"],"TOOL_UNAVAILABLE");
+    let result = session
+        .business(
+            legacy,
+            "harness_cut",
+            json!({"serial":"WIRE-01","idempotency_key":"shared"}),
+        )
+        .await;
+    assert_eq!(result["phase"], "cut", "{result}");
+    assert_eq!(
+        session.call("close_run", json!({"run_id":legacy})).await["closed"],
+        true
+    );
+
+    if let Some(path) = std::env::var_os("MOM_P15_SESSION_REPORT") {
+        std::fs::write(path, serde_json::to_vec_pretty(&session.trace).unwrap()).unwrap();
+    }
 }
