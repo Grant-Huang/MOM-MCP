@@ -17,7 +17,7 @@ struct Bridge {
     db: PathBuf,
     executable: PathBuf,
     control_tools: bool,
-    settings_site: Option<crate::settings::Site>,
+    settings: Option<crate::settings::Settings>,
 }
 
 type Reply = Result<Json<Value>, (StatusCode, Json<Value>)>;
@@ -135,16 +135,16 @@ async fn document(Path(path): Path<String>) -> impl IntoResponse {
 }
 
 async fn settings(State(bridge): State<Bridge>, Json(request): Json<Call>) -> Reply {
-    let Some(site) = bridge
-        .settings_site
-        .filter(|_| request.name == crate::settings::GET_SETTINGS)
+    let Some(settings) = bridge
+        .settings
+        .filter(|settings| settings.supports(&request.name))
     else {
         return Err((
             StatusCode::NOT_FOUND,
             Json(json!({"ok":false,"code":"UNKNOWN_TOOL"})),
         ));
     };
-    Ok(Json(site.read(&request.arguments)))
+    Ok(Json(settings.invoke(&request.name, request.arguments)))
 }
 
 pub async fn serve(
@@ -152,11 +152,12 @@ pub async fn serve(
     port: u16,
     control_tools: bool,
     settings_site: Option<crate::settings::Site>,
+    settings_drafts: bool,
 ) -> anyhow::Result<()> {
     let state = Bridge {
         db,
         control_tools,
-        settings_site,
+        settings: settings_site.map(|site| crate::settings::Settings::new(site, settings_drafts)),
         executable: std::env::current_exe()?,
     };
     let app = Router::new()
@@ -212,8 +213,12 @@ pub async fn serve(
         .route(
             "/settings",
             get(|State(bridge): State<Bridge>| async move {
-                if bridge.settings_site.is_some() {
-                    Html(include_str!("../web/settings.html")).into_response()
+                if let Some(settings) = bridge.settings {
+                    Html(include_str!("../web/settings.html").replace(
+                        "data-drafts-disabled",
+                        if settings.can_draft() { "" } else { "hidden" },
+                    ))
+                    .into_response()
                 } else {
                     StatusCode::NOT_FOUND.into_response()
                 }

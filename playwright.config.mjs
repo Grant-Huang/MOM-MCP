@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-const settings = process.env.MOM_TEST_SETTINGS === "1" ? " --settings-site SITE-A" : "";
+const settings = process.env.MOM_TEST_SETTINGS === "1" ? " --settings-site SITE-A --settings-drafts" : "";
 const baseURL = "http://127.0.0.1:4173";
 export default defineConfig({
   testDir: "./tests/browser",

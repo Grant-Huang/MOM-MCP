@@ -1,3 +1,6 @@
+use std::sync::{Arc, Mutex};
+
+use crate::settings_drafts::{self, CREATE, Drafts, PREVIEW, VALIDATE};
 use clap::ValueEnum;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
@@ -34,7 +37,47 @@ impl Site {
     }
 }
 
-impl ServerHandler for Site {
+#[derive(Clone)]
+pub struct Settings {
+    site: Site,
+    drafts: Option<Arc<Mutex<Drafts>>>,
+}
+
+impl Settings {
+    pub fn new(site: Site, draft_tools: bool) -> Self {
+        Self {
+            site,
+            drafts: draft_tools.then(|| Arc::new(Mutex::new(Drafts::default()))),
+        }
+    }
+
+    pub fn can_draft(&self) -> bool {
+        self.drafts.is_some()
+    }
+
+    pub fn supports(&self, name: &str) -> bool {
+        name == GET_SETTINGS
+            || (self.drafts.is_some() && matches!(name, CREATE | VALIDATE | PREVIEW))
+    }
+
+    pub fn invoke(&self, name: &str, args: Map<String, Value>) -> Value {
+        if name == GET_SETTINGS {
+            return self.site.read(&args);
+        }
+        if !self.supports(name) {
+            return settings_drafts::error("UNKNOWN_TOOL");
+        }
+        let active = self.site.read(&Map::new());
+        self.drafts
+            .as_ref()
+            .unwrap()
+            .lock()
+            .expect("settings draft store")
+            .invoke(name, args, &active)
+    }
+}
+
+impl ServerHandler for Settings {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build()).with_server_info(
             Implementation::new("mom-mes-settings", env!("CARGO_PKG_VERSION")),
@@ -55,7 +98,23 @@ impl ServerHandler for Site {
                 .clone(),
         );
         tool.annotations = Some(ToolAnnotations::new().read_only(true));
-        Ok(ListToolsResult::with_all_items(vec![tool]))
+        let mut tools = vec![tool];
+        if self.drafts.is_some() {
+            for (name, description) in [
+                (CREATE, "登记站点设置草稿"),
+                (VALIDATE, "校验工作中心与班次草稿"),
+                (PREVIEW, "预览候选设置及生效范围"),
+            ] {
+                let mut tool = Tool::new(
+                    name,
+                    description,
+                    settings_drafts::schema(name).as_object().unwrap().clone(),
+                );
+                tool.annotations = Some(ToolAnnotations::new().read_only(name != CREATE));
+                tools.push(tool);
+            }
+        }
+        Ok(ListToolsResult::with_all_items(tools))
     }
 
     async fn call_tool(
@@ -63,11 +122,9 @@ impl ServerHandler for Site {
         request: CallToolRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        if request.name != GET_SETTINGS {
-            return Ok(
-                CallToolResult::structured(json!({"ok":false,"code":"UNKNOWN_TOOL"})).into(),
-            );
-        }
-        Ok(CallToolResult::structured(self.read(&request.arguments.unwrap_or_default())).into())
+        Ok(CallToolResult::structured(
+            self.invoke(&request.name, request.arguments.unwrap_or_default()),
+        )
+        .into())
     }
 }
