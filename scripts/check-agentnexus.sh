@@ -7,7 +7,9 @@ revision=e0a21d32e5597ab785cf717144590711584d519a
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-cargo build --locked --manifest-path "$project/Cargo.toml" --target-dir "$project/target"
+if [[ -z ${MOM_ACCEPTANCE_BINARY:-} ]]; then
+  cargo build --locked --manifest-path "$project/Cargo.toml" --target-dir "$project/target"
+fi
 git -C "$agentnexus" archive "$revision" | tar -x -C "$scratch"
 cp "$project/tests/agentnexus/probe.rs" "$scratch/crates/agents/tests/mom_probe.rs"
 cp "$project/tests/agentnexus/industries.rs" "$scratch/crates/agents/tests/mom_industries.rs"
@@ -16,7 +18,7 @@ export CARGO_TARGET_DIR="${MOM_AGENT_TARGET_DIR:-$project/target/agentnexus}"
 mkdir -p "$project/test-results"
 export MOM_DES_REPORT="$project/test-results/des-baseline.json"
 rm -f "$MOM_DES_REPORT"
-export MOM_PROBE_BINARY="$project/target/debug/mom-mcp"
+export MOM_PROBE_BINARY="${MOM_ACCEPTANCE_BINARY:-$project/target/debug/mom-mcp}"
 export MOM_PROBE_DATABASE="$scratch/probe.sqlite3"
 (
   cd "$scratch"
