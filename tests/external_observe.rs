@@ -65,6 +65,46 @@ async fn run_source(status: StatusCode) -> (String, Arc<AtomicUsize>, tokio::tas
 }
 
 #[tokio::test]
+async fn incomplete_order_selection_stops_before_authorization_and_source_access() {
+    let (origin, calls, task) = run_source(StatusCode::OK).await;
+    let service = ExternalObserve::new([source(&origin, "site-a", "local-fixture")]).unwrap();
+
+    let authorization_calls = AtomicUsize::new(0);
+    for (world_id, object_ref) in [("", "opaque-order"), ("world-a", " \t")] {
+        let selection = WorkOrderSelection {
+            world_id,
+            object_ref,
+        };
+        let order = service
+            .observe(selection, |_| {
+                authorization_calls.fetch_add(1, Ordering::Relaxed);
+                async { None }
+            })
+            .await;
+        assert_eq!(order.unwrap_err(), ObserveError::AccessDenied);
+
+        let relation = service
+            .observe_odoo_sales_relation(
+                selection,
+                |_| {
+                    authorization_calls.fetch_add(1, Ordering::Relaxed);
+                    async { None }
+                },
+                |_, _| {
+                    authorization_calls.fetch_add(1, Ordering::Relaxed);
+                    async { None }
+                },
+            )
+            .await;
+        assert_eq!(relation, Err(ObserveError::AccessDenied));
+        assert_eq!(authorization_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+
+    task.abort();
+}
+
+#[tokio::test]
 async fn resolves_each_request_before_read_and_exposes_only_observation_fields() {
     let (origin, calls, task) = run_source(StatusCode::OK).await;
     let service = ExternalObserve::new([source(&origin, "site-a", "local-fixture")]).unwrap();
