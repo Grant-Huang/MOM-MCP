@@ -24,6 +24,19 @@ impl Session {
         result
     }
 
+    async fn versioned_write(&mut self, run: &Value, name: &str, mut args: Value) -> Value {
+        let cursor = self.call("get_run", json!({"run_id":run})).await["cursor"].clone();
+        args["expected_cursor"] = cursor.clone();
+        args["idempotency_key"] = json!(format!("{name}-{cursor}"));
+        self.business(run, name, args).await
+    }
+
+    async fn apply(&mut self, run: &Value, name: &str, args: Value) -> Value {
+        let result = self.versioned_write(run, name, args).await;
+        assert_eq!(result["ok"], true, "{name}: {result}");
+        result
+    }
+
     async fn business(&mut self, run: &Value, name: &str, arguments: Value) -> Value {
         self.call(
             "call_tool",
@@ -387,39 +400,7 @@ async fn p15_agentnexus_five_industry_session() {
         )
         .await;
     assert_eq!(before["code"], "REEL_NOT_FOUND");
-    for (cursor, name, mut arguments) in [
-        (
-            0,
-            "create_item",
-            json!({"item_id":"PART","base_unit":"each"}),
-        ),
-        (
-            1,
-            "create_item_revision",
-            json!({"item_id":"PART","revision":1,"name":"Part"}),
-        ),
-        (
-            2,
-            "activate_revision",
-            json!({"item_id":"PART","revision":1,"revision_type":"item"}),
-        ),
-        (
-            3,
-            "create_receipt",
-            json!({"receipt_id":"R-P15","item_id":"PART","revision":1,"quantity":"3","requires_inspection":false}),
-        ),
-        (
-            4,
-            "assign_receipt_tracking",
-            json!({"receipt_id":"R-P15","lot_id":"REEL-P15","supplier_lot":"S-P15","location":"RAW-02"}),
-        ),
-        (5, "post_receipt", json!({"receipt_id":"R-P15"})),
-    ] {
-        arguments["idempotency_key"] = json!(format!("receipt-{cursor}"));
-        arguments["expected_cursor"] = json!(cursor);
-        let result = session.business(smt, name, arguments).await;
-        assert_eq!(result["ok"], true, "{name}: {result}");
-    }
+    receive_matrix_stock(&mut session, smt).await;
     let load = session
         .business(
             smt,
@@ -433,6 +414,16 @@ async fn p15_agentnexus_five_industry_session() {
     assert_eq!(
         planned["nest"]["placements"]["WO-SHEET-B"]["x_mm"], 30,
         "{planned}"
+    );
+    assert_eq!(
+        session
+            .business(
+                sheet,
+                "cut_sheet_nest",
+                json!({"nest_id":"N-P15","machine":"LASER-A","idempotency_key":"cut"})
+            )
+            .await["code"],
+        "MACHINE_NOT_CAPABLE"
     );
     let cut = session
         .business(
@@ -461,7 +452,20 @@ async fn p15_agentnexus_five_industry_session() {
         "TOOL_UNAVAILABLE"
     );
 
-    for (run, cursor) in [(assembly, 1), (wire, 1), (cnc, 1), (sheet, 2), (smt, 7)] {
+    let trace = session
+        .business(
+            sheet,
+            "trace_sheet_material",
+            json!({"subject_type":"work_order","subject":"WO-SHEET-B"}),
+        )
+        .await;
+    assert_eq!(trace["cuts"], json!([cut["nest"]]));
+    verify_cnc_material_recovery(&mut session, cnc).await;
+    verify_smt_feeder_recovery(&mut session, smt).await;
+    verify_assembly_release_recovery(&mut session, assembly).await;
+    verify_harness_release_recovery(&mut session, wire).await;
+
+    for (run, cursor) in [(assembly, 16), (wire, 8), (cnc, 9), (sheet, 2), (smt, 10)] {
         let metadata = session.call("get_run", json!({"run_id":run})).await;
         assert_eq!(metadata["cursor"], cursor, "{metadata}");
         assert_eq!(metadata["clock"], 0);
@@ -496,4 +500,218 @@ async fn p15_agentnexus_five_industry_session() {
     if let Some(path) = std::env::var_os("MOM_P15_SESSION_REPORT") {
         std::fs::write(path, serde_json::to_vec_pretty(&session.trace).unwrap()).unwrap();
     }
+}
+
+async fn receive_matrix_stock(session: &mut Session, run: &Value) {
+    for (name, args) in [
+        ("create_item", json!({"item_id":"PART","base_unit":"each"})),
+        (
+            "create_item_revision",
+            json!({"item_id":"PART","revision":1,"name":"Part"}),
+        ),
+        (
+            "activate_revision",
+            json!({"item_id":"PART","revision":1,"revision_type":"item"}),
+        ),
+        (
+            "create_receipt",
+            json!({"receipt_id":"R-P15","item_id":"PART","revision":1,"quantity":"3","requires_inspection":false}),
+        ),
+        (
+            "assign_receipt_tracking",
+            json!({"receipt_id":"R-P15","lot_id":"REEL-P15","supplier_lot":"S-P15","location":"RAW-02"}),
+        ),
+        ("post_receipt", json!({"receipt_id":"R-P15"})),
+    ] {
+        session.apply(run, name, args).await;
+    }
+}
+
+async fn verify_cnc_material_recovery(session: &mut Session, run: &Value) {
+    let lot = json!({"lot_id":"REEL-P15"});
+    assert_eq!(
+        session.business(run, "get_lot", lot.clone()).await["code"],
+        "LOT_NOT_FOUND"
+    );
+    receive_matrix_stock(session, run).await;
+    let ready = session.business(run, "get_lot", lot.clone()).await;
+    assert_eq!(ready["lot"]["availability"], "available");
+    assert_eq!(ready["lot"]["quantity"], "3");
+    session
+        .apply(
+            run,
+            "hold_stock_lot",
+            json!({"lot_id":"REEL-P15","hold_id":"H-P15","reason":"supplier review"}),
+        )
+        .await;
+    assert_eq!(
+        session.business(run, "get_lot", lot.clone()).await["lot"]["availability"],
+        "held"
+    );
+    session
+        .apply(
+            run,
+            "release_stock_lot_hold",
+            json!({"hold_id":"H-P15","reason":"supplier lot accepted"}),
+        )
+        .await;
+    let recovered = session.business(run, "get_lot", lot).await;
+    assert_eq!(
+        recovered["lot"]["availability"],
+        ready["lot"]["availability"]
+    );
+    assert_eq!(recovered["lot"]["quantity"], ready["lot"]["quantity"]);
+}
+
+async fn verify_smt_feeder_recovery(session: &mut Session, run: &Value) {
+    let request = json!({"slot":"F2","reel":"REEL-P15","idempotency_key":"second-feeder"});
+    session
+        .apply(
+            run,
+            "hold_stock_lot",
+            json!({"lot_id":"REEL-P15","hold_id":"H-P15","reason":"supplier review"}),
+        )
+        .await;
+    assert_eq!(
+        session.business(run, "smt_load", request.clone()).await["code"],
+        "MATERIAL_HELD"
+    );
+    session
+        .apply(
+            run,
+            "release_stock_lot_hold",
+            json!({"hold_id":"H-P15","reason":"supplier lot accepted"}),
+        )
+        .await;
+    let result = session.business(run, "smt_load", request).await;
+    assert_eq!(result["load_id"], 2, "{result}");
+}
+
+async fn verify_assembly_release_recovery(session: &mut Session, run: &Value) {
+    for item in ["FRAME", "BASE"] {
+        session
+            .apply(
+                run,
+                "create_item",
+                json!({"item_id":item,"base_unit":"each"}),
+            )
+            .await;
+        session
+            .apply(
+                run,
+                "create_item_revision",
+                json!({"item_id":item,"revision":1,"name":item}),
+            )
+            .await;
+        session
+            .apply(
+                run,
+                "activate_revision",
+                json!({"item_id":item,"revision":1,"revision_type":"item"}),
+            )
+            .await;
+    }
+    for (tool, args) in [
+        (
+            "create_bom_revision",
+            json!({"item_id":"FRAME","revision":1}),
+        ),
+        (
+            "set_bom_components",
+            json!({"item_id":"FRAME","revision":1,"components":{"BASE":{"revision":1,"quantity":1,"unit":"each"}}}),
+        ),
+        (
+            "activate_revision",
+            json!({"item_id":"FRAME","revision":1,"revision_type":"bom"}),
+        ),
+        (
+            "create_route_revision",
+            json!({"item_id":"FRAME","revision":1}),
+        ),
+        (
+            "set_route_operations",
+            json!({"item_id":"FRAME","revision":1,"operations":{"build":{"work_center":"CELL-A","predecessors":[]}}}),
+        ),
+        (
+            "activate_revision",
+            json!({"item_id":"FRAME","revision":1,"revision_type":"route"}),
+        ),
+        (
+            "create_inspection_plan_revision",
+            json!({"plan_id":"QA","revision":1,"characteristics":{"width":{"unit":"mm","lower_limit":1,"upper_limit":2}}}),
+        ),
+        (
+            "activate_inspection_plan_revision",
+            json!({"plan_id":"QA","revision":1}),
+        ),
+    ] {
+        session.apply(run, tool, args).await;
+    }
+    let mut request = json!({"work_order":"WO-E","definition_selection":{"item_id":"FRAME","inspection_plan_id":"QA"}});
+    let ready = session
+        .business(run, "get_release_readiness", request.clone())
+        .await;
+    assert_eq!(ready["ready"], true, "{ready}");
+    request["snapshot_fingerprint"] = json!("0".repeat(64));
+    assert_eq!(
+        session
+            .versioned_write(run, "release_work_order", request.clone())
+            .await["code"],
+        "SNAPSHOT_CHANGED"
+    );
+    request["snapshot_fingerprint"] = ready["definition_snapshot"]["fingerprint"].clone();
+    session.apply(run, "release_work_order", request).await;
+    let snapshot = session
+        .business(run, "get_order_snapshot", json!({"work_order":"WO-E"}))
+        .await;
+    assert_eq!(snapshot["snapshot"], ready["definition_snapshot"]);
+}
+
+async fn verify_harness_release_recovery(session: &mut Session, run: &Value) {
+    for (segment, end, lot, tool) in [
+        ("POWER", "A", "TERM-PWR-1", "TOOL-PWR-1"),
+        ("POWER", "B", "TERM-PWR-ALT", "TOOL-PWR-1"),
+        ("SIGNAL", "A", "TERM-SIG-1", "TOOL-SIG-1"),
+        ("SIGNAL", "B", "TERM-SIG-1", "TOOL-SIG-1"),
+    ] {
+        let result = session
+            .business(
+                run,
+                "crimp_harness_endpoint",
+                json!({
+                    "serial_number":"WIRE-01","segment_id":segment,"end":end,"terminal_lot":lot,
+                    "tooling_id":tool,"idempotency_key":format!("{segment}-{end}")
+                }),
+            )
+            .await;
+        assert_eq!(result["ok"], true, "{result}");
+    }
+    let release = json!({"serial_number":"WIRE-01","idempotency_key":"early"});
+    for (result, evidence) in [("fail", "E-FAIL"), ("pass", "E-PASS")] {
+        let recorded = session.business(run,"record_harness_continuity_test",json!({
+            "serial_number":"WIRE-01","revision":1,"result":result,"evidence":evidence,"idempotency_key":evidence
+        })).await;
+        assert_eq!(recorded["test"]["result"], result, "{recorded}");
+        if result == "fail" {
+            assert_eq!(
+                session
+                    .business(run, "release_harness_serial", release.clone())
+                    .await["code"],
+                "TEST_PASS_REQUIRED"
+            );
+        }
+    }
+    let released = session
+        .business(run, "release_harness_serial", release)
+        .await;
+    assert_eq!(released["released"], true, "{released}");
+    let status = session
+        .business(
+            run,
+            "get_harness_crimp_status",
+            json!({"serial_number":"WIRE-01"}),
+        )
+        .await;
+    assert_eq!(status["disposition"]["tests"].as_array().unwrap().len(), 2);
+    assert_eq!(status["disposition"]["released"], true);
 }

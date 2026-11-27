@@ -38,4 +38,16 @@ test("P15-UI Switch five industry runs without losing work", async ({ page }) =>
   await button("调用工具").click();
   await expect(status).toContainText('"nest_id": "UI-NEST"');
   expect(JSON.parse(await status.textContent()).nest.placements["WO-SHEET-B"].x_mm).toBe(30);
+  await page.getByLabel("搜索词").fill("cut_sheet_nest");
+  await button("搜索工具").click();
+  await page.getByLabel("匹配工具").selectOption("cut_sheet_nest");
+  const cut = async (machine, evidence) => {
+    await page.getByLabel("JSON 参数").fill(JSON.stringify({ nest_id: "UI-NEST", machine, idempotency_key: "cut" }));
+    await button("调用工具").click();
+    await expect(status).toContainText(evidence);
+  };
+  await cut("LASER-A", "MACHINE_NOT_CAPABLE");
+  await cut("LASER-B", '"status": "cut"');
+  const { nest } = JSON.parse(await status.textContent());
+  expect(nest.product_mm2).toBe(1200);
 });
