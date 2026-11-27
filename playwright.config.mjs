@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
+const settings = process.env.MOM_TEST_SETTINGS === "1" ? " --settings-site SITE-A" : "";
 const baseURL = "http://127.0.0.1:4173";
 export default defineConfig({
   testDir: "./tests/browser",
@@ -13,8 +14,8 @@ export default defineConfig({
   },
   webServer: {
     command: process.env.MOM_ACCEPTANCE_BINARY
-      ? '"$MOM_ACCEPTANCE_BINARY" web --control-tools --db "$MOM_TEST_DB"'
-      : 'cargo run --locked -- web --control-tools --db "$MOM_TEST_DB"',
+      ? '"$MOM_ACCEPTANCE_BINARY" web --control-tools --db "$MOM_TEST_DB"' + settings
+      : 'cargo run --locked -- web --control-tools --db "$MOM_TEST_DB"' + settings,
     url: baseURL,
     timeout: 120_000,
   },

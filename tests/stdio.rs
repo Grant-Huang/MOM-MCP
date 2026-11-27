@@ -9352,3 +9352,68 @@ async fn p14_09_harness_rework_test_release() {
         json!([repaired["rework"]])
     );
 }
+
+#[tokio::test]
+async fn p16_01_settings_scope_and_production_isolation() {
+    let dir = tempfile::tempdir().unwrap();
+    let (production, _child) = connect_mode(&dir.path().join("production.db"), "0", true).await;
+    let tool = "get_mes_settings";
+    assert!(
+        !production
+            .peer()
+            .list_tools(None)
+            .await
+            .unwrap()
+            .tools
+            .iter()
+            .any(|entry| entry.name == tool)
+    );
+    let run = open(&production, "cnc").await;
+    let search = call(
+        &production,
+        "search_tools",
+        json!({"run_id":run,"query":tool}),
+    )
+    .await;
+    assert!(search["tools"].as_array().unwrap().is_empty());
+    assert_eq!(
+        business(&production, &run, tool, json!({})).await["code"],
+        "UNKNOWN_TOOL"
+    );
+    assert_eq!(
+        call(
+            &production,
+            "describe_tool",
+            json!({"run_id":run,"name":tool})
+        )
+        .await["code"],
+        "UNKNOWN_TOOL"
+    );
+    assert_eq!(
+        call(&production, tool, json!({})).await["code"],
+        "UNKNOWN_TOOL"
+    );
+    for (site, center) in [("SITE-A", "MACH-01"), ("SITE-B", "CELL-A")] {
+        let mut command = Command::new(acceptance_binary());
+        command.args(["settings-stdio", "--site", site]);
+        let transport = rmcp::transport::TokioChildProcess::new(command).unwrap();
+        let client = ().serve(transport).await.unwrap();
+        let listed = client.peer().list_tools(None).await.unwrap().tools;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, tool);
+        let settings = call(&client, tool, json!({})).await;
+        assert_eq!(settings["site_id"], site);
+        assert_eq!(settings["active_version"], 1);
+        assert_eq!(settings["work_centers"][0]["work_center"], center);
+        assert_eq!(settings["shifts"][0]["work_center"], center);
+        assert_eq!(
+            call(&client, tool, json!({"site_id":"OTHER"})).await["code"],
+            "INVALID_ARGUMENT"
+        );
+        assert_eq!(
+            call(&client, "create_mes_settings_draft", json!({})).await["code"],
+            "UNKNOWN_TOOL"
+        );
+        client.cancel().await.unwrap();
+    }
+}
