@@ -59,6 +59,21 @@ GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传�
 
 Odoo 生命周期脚本还撤销主读取身份的临时 API 密钥。原密钥再次读取原本可见的制造单时，JSON-2 返回 401，Rust Adapter 报告来源不可用，未返回工单。另一公司的独立会话仍可经 Adapter 读取自己的工单。此项是来源凭据撤销证据，正式 AgentNexus 服务身份的撤权仍在 M3 验收范围。 [复跑脚本](../references/mcp/odoo-adapter-lifecycle-smoke.sh)
 
+### Odoo 首站联调交接
+
+依据 [AgentNexus 首站审批](https://github.com/Grant-Huang/multi-agent-conv-mvp/blob/2432e4b8c4bf1175c78ebee3effc4e15ce4a497f/docs/mom/WA_M3_ODOO_PILOT_REVIEW.md)，首站使用 Odoo Community 19 的 JSON-2 单工单查询。Adapter 按绑定读取 `mrp.production/search_read`，保留 Odoo 源状态和映射版本。该审批使用的宿主固定依赖为 `5aa312939df2110ff3dda401b9021a0c1ad5a67f`。后续候选提交的兼容复跑可供宿主评审更新依赖时参考。该宿主提交的正式路由仍通过测试注入读取工单，返回 `provenance=fixture`。真实服务接线获批并部署后，单站探针要求成功响应为 `provenance=production`。
+
+| 证据 | 采集方式 |
+|---|---|
+| 范围内工单 | 选定联调身份可见的测试制造单，记录预期源状态。由宿主为该单配置不透明引用 `visible`。 |
+| 范围外工单 | 由另一公司身份确认第二张测试制造单存在，再用联调 Odoo 身份核对该单不可见。由宿主为该单配置探针可选择的引用 `hidden`，以便验收源端 404。另用未绑定引用验收宿主 403 和零来源调用。 |
+| 正式入口 | 部署方批准并配置服务身份、世界绑定、Odoo 只读凭据引用和出站后，在宿主运行 `node scripts/accept-m3-live-observe.mjs --single-site <bindings.json>`。绑定文件包含一条 `vendor=odoo` 的记录，填入宿主的 `world`、`visible`、`hidden`、公开来源别名 `source` 和预期 `sourceStatus`。 |
+| 可复查记录 | 登记宿主和 Adapter 的完整提交、Odoo 版本、脱敏的 401／200／404、请求关联记录及第二身份的样本确认。密钥通过部署方的密钥设施交付。 |
+
+MOM-MCP `adfeffeef694f5dbbc21124820f1af15b98e7fda` 在固定镜像的 Odoo `19.0-20261112` 和 PostgreSQL 16 上通过 [生命周期脚本](../references/mcp/odoo-adapter-lifecycle-smoke.sh)。两家公司分别读到自己的制造单，并以独立身份确认另一方不可见工单存在。同一测试工单从 `draft` 确认到 `confirmed` 后可读回，源更新时间推进并按 UTC 投影。撤销主账号 API 密钥后，Odoo 返回 401，Adapter 返回脱敏的来源不可用，另一公司仍可读取自己的工单。此结果验证独立 Odoo 来源和 Adapter。
+
+在 MOM-MCP `adfeffeef694f5dbbc21124820f1af15b98e7fda` 与 AgentNexus `2432e4b8c4bf1175c78ebee3effc4e15ce4a497f` 上，用 [宿主依赖复跑脚本](../../scripts/check-external-adapter-agentnexus.sh) 通过远端 Git 引入候选 Adapter。临时宿主锁文件仅替换 Adapter 版本。正式路由夹具 9 项、Adapter 回归 33 项通过，另 1 项真实 Odoo 销售单关联用例按配置跳过。宿主单站及三站探针的 6 项测试通过。该结果用于宿主兼容评审，正式入口真实来源仍为 0/3。
+
 ### OpenMES 来源令牌撤销
 
 OpenMES 生命周期脚本撤销单产线 Operator 的临时读取令牌。该令牌再读原本可见的工单时返回 401，Rust Adapter 报告来源不可用。另一产线的见证凭据可继续读取自己的工单，且原工单对其仍不可见。证据范围为来源凭据。 [复跑脚本](../references/mcp/openmes-adapter-http-smoke.sh)
