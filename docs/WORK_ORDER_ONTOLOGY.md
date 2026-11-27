@@ -42,6 +42,12 @@ v0.1 是首期工单观测切片。中期按来源证据增补对象、关系、
 
 运行 `cargo test --locked --test external_observe rereads_snapshots_when_source_time_is_equal_or_older -- --exact`。回环用例针对同一引用连续读取三次，检查状态变化和来源时间相同或回退时的返回值、每次一次来源调用，以及候选输出中省略游标及水位。
 
+### 工单状态缺失与未映射
+
+候选查询输出中，来源未提供状态、返回空值或仅有空白字符时，源状态为空，诊断为 `missing`。来源返回有效文本且尚未建立统一状态映射时，保留文本，诊断为 `unmapped`。两种情况下统一状态均为空。数值等不合约定的状态类型会使整个响应无效。
+
+运行 `cargo test --locked --test external_observe publishes_distinct_diagnostics_for_missing_and_unmapped_source_status -- --exact`，在 OpenMES 回环响应上核对五种情况及候选输出的字段。
+
 ### 离线契约回归
 
 运行 `cargo test --locked --test external_order`。用例调用实际 Adapter 的投影器，覆盖三源字段、映射版本、同号及跨作用域身份、记录 ID 精确匹配、缺失或畸形状态及单对象响应形状。数值 ID 在 Rust 中按整数保存并与绑定中的字符串精确匹配。OpenMES HTTP 工单路径接受正的无符号 64 位整数，Odoo JSON-2 查询使用正的有符号 64 位整数。两者的绑定均使用无前导零的十进制字符串。OpenMES 带偏移量的源时间统一为 UTC，Odoo 使用已验证的 UTC 规则，Carbon 社区 REST 将 `jobs.updatedAt` 中带时区的有效时间转为 UTC（映射 `0.2`），空值或无效时间省略。Carbon 原生 MCP 沿用映射 `0.1`。
