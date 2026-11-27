@@ -47,7 +47,7 @@ mkdirSync(resultsDir, { recursive: true });
 for (const file of [
   "industry-replay.json", "restart-recovery.json", "agentnexus-industries.json", "five-industry-catalog.json",
   "p9d-cnc-closure.json", "p9d-assembly-closure.json", "p9d-smt-lot-holds.json",
-  "p9d-agentnexus-cnc-closure.json", "p15-five-industry-session.json",
+  "p9d-agentnexus-cnc-closure.json", "p15-five-industry-session.json", "p15-concurrency-compatibility.json",
 ]) {
   rmSync(join(resultsDir,file), { force: true });
 }
