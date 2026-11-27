@@ -1,7 +1,7 @@
 name: PR risk advisory
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
 permissions:
   contents: read
 jobs:
@@ -26,3 +26,15 @@ jobs:
         with:
           name: pr-risk
           path: pr-risk.json
+  review-body:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test scripts/pr-review-body.test.mjs
+      - run: node scripts/pr-review-body.mjs
