@@ -1465,3 +1465,19 @@ spec = "acceptance/P14.md"
 features = ["F08", "F09", "F11", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P14-10 Rework retest and release a harness serial" }
+
+[[case]]
+id = "P15-01"
+phase = "P15"
+spec = "acceptance/P15.md"
+features = ["F01", "F02", "F04", "F08", "F09", "F10", "F14"]
+layers = ["agentnexus"]
+tests = { agentnexus = "p15_agentnexus_five_industry_session" }
+
+[[case]]
+id = "P15-UI"
+phase = "P15"
+spec = "acceptance/P15.md"
+features = ["F02", "F04", "F08", "F14"]
+layers = ["playwright"]
+tests = { playwright = "P15-UI Switch five industry runs without losing work" }
