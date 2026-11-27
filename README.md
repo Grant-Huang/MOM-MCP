@@ -1,6 +1,6 @@
 # MOM-MCP
 
-面向 AgentNexus 的离散制造模拟 MCP 项目。当前覆盖 CNC、SMT、按单装配、钣金和线束。启动与接入见 [五行业基线](docs/RELEASE.md)，业务能力覆盖与取舍见 [MES 能力边界](docs/MES_SCOPE.md)。
+面向 AgentNexus 的离散制造模拟 MCP 项目。当前覆盖 CNC、SMT、按单装配、钣金和线束。启动与接入见 [五行业发布与恢复](docs/RELEASE.md)，业务能力覆盖与取舍见 [MES 能力边界](docs/MES_SCOPE.md)。
 
 项目按两条主线推进：异构 MES/MOM 通用 Adapter 与语义本体，以及由 DES 驱动的 Mock MOM-MCP。阶段目标、联合设计审查和联调时点见 [双主轴路线与准出](docs/IMPLEMENTATION_PLAN.md#双主轴路线与准出)。
 
@@ -34,6 +34,8 @@ MOM_AGENTNEXUS=../multi-agent-conv-mvp npm run acceptance -- P0 --gate
 ```
 
 本地命令通过 [feature map](docs/feature-map.toml) 选择 Rust stdio 和浏览器测试。严格门槛还会对固定的 AgentNexus 版本运行实际连接、Agent 工具使用和 CNC 复跑验证。验证使用该仓库的临时源码副本。可以设置 `MOM_CHROMIUM` 使用已安装的 Chromium。浏览器报告保存在 `test-results/browser.json`。
+
+深化场景的候选安装、验收和恢复见 [五行业发布候选](docs/RELEASE.md#p15-五行业发布候选)。
 
 参见 [P0 验收](docs/acceptance/P0.md)、[架构设计](docs/DESIGN.md) 与 [测试及 Mock 替换计划](docs/TEST_AND_MOCK_PLAN.md)。
 

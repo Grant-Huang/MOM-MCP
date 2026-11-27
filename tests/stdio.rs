@@ -9,6 +9,11 @@ use tokio::{
 
 const WAIT: Duration = Duration::from_secs(5);
 
+fn acceptance_binary() -> std::ffi::OsString {
+    std::env::var_os("MOM_ACCEPTANCE_BINARY")
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_mom-mcp").into())
+}
+
 async fn connect(db: &Path, delay: &str) -> (RunningService<RoleClient, ()>, Child) {
     connect_mode(db, delay, false).await
 }
@@ -27,7 +32,7 @@ async fn connect_options(
     scenarios: bool,
     control: bool,
 ) -> (RunningService<RoleClient, ()>, Child) {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_mom-mcp"));
+    let mut command = Command::new(acceptance_binary());
     command
         .args(["stdio", "--db"])
         .arg(db)
@@ -386,7 +391,7 @@ async fn p1_04_register_and_reject_malformed_definitions() {
         "delay":{"distribution":"exponential","mean_minutes":12.5}}]);
     let register = |value: &Value| {
         std::fs::write(&file, value.to_string()).unwrap();
-        std::process::Command::new(env!("CARGO_BIN_EXE_mom-mcp"))
+        std::process::Command::new(acceptance_binary())
             .arg("register-scenario")
             .arg("--db")
             .arg(&db)
@@ -486,7 +491,7 @@ fn register_definition(db: &Path, definition: Value) -> std::process::Output {
     let folder = tempfile::tempdir().unwrap();
     let file = folder.path().join("definition.json");
     std::fs::write(&file, definition.to_string()).unwrap();
-    std::process::Command::new(env!("CARGO_BIN_EXE_mom-mcp"))
+    std::process::Command::new(acceptance_binary())
         .arg("register-scenario")
         .arg("--db")
         .arg(db)
