@@ -17,6 +17,7 @@ struct Bridge {
     db: PathBuf,
     executable: PathBuf,
     control_tools: bool,
+    settings_site: Option<crate::settings::Site>,
 }
 
 type Reply = Result<Json<Value>, (StatusCode, Json<Value>)>;
@@ -133,10 +134,29 @@ async fn document(Path(path): Path<String>) -> impl IntoResponse {
     ([("content-type", "text/plain; charset=utf-8")], text).into_response()
 }
 
-pub async fn serve(db: PathBuf, port: u16, control_tools: bool) -> anyhow::Result<()> {
+async fn settings(State(bridge): State<Bridge>, Json(request): Json<Call>) -> Reply {
+    let Some(site) = bridge
+        .settings_site
+        .filter(|_| request.name == crate::settings::GET_SETTINGS)
+    else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"ok":false,"code":"UNKNOWN_TOOL"})),
+        ));
+    };
+    Ok(Json(site.read(&request.arguments)))
+}
+
+pub async fn serve(
+    db: PathBuf,
+    port: u16,
+    control_tools: bool,
+    settings_site: Option<crate::settings::Site>,
+) -> anyhow::Result<()> {
     let state = Bridge {
         db,
         control_tools,
+        settings_site,
         executable: std::env::current_exe()?,
     };
     let app = Router::new()
@@ -188,6 +208,26 @@ pub async fn serve(db: PathBuf, port: u16, control_tools: bool) -> anyhow::Resul
             }),
         )
         .route("/api/scenarios", post(scenarios))
+        .route("/api/settings", post(settings))
+        .route(
+            "/settings",
+            get(|State(bridge): State<Bridge>| async move {
+                if bridge.settings_site.is_some() {
+                    Html(include_str!("../web/settings.html")).into_response()
+                } else {
+                    StatusCode::NOT_FOUND.into_response()
+                }
+            }),
+        )
+        .route(
+            "/settings.js",
+            get(|| async {
+                (
+                    [("content-type", "text/javascript; charset=utf-8")],
+                    include_str!("../web/settings.js"),
+                )
+            }),
+        )
         .route(
             "/api/control-enabled",
             get(|State(bridge): State<Bridge>| async move { Json(bridge.control_tools) }),

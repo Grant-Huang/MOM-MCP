@@ -24,15 +24,15 @@ export MOM_PROBE_DATABASE="$scratch/probe.sqlite3"
   cd "$scratch"
   cargo test --locked -p an-agents --test mom_probe
   cargo test --locked -p an-des -p an-des-mcp
-  if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P10 || ${MOM_ACCEPTANCE_PHASE:-P0} == P11 || ${MOM_ACCEPTANCE_PHASE:-P0} == P12 || ${MOM_ACCEPTANCE_PHASE:-P0} == P13 || ${MOM_ACCEPTANCE_PHASE:-P0} == P14 || ${MOM_ACCEPTANCE_PHASE:-P0} == P15 || ${MOM_ACCEPTANCE_PHASE:-P0} > P5 ]]; then
+  if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P10 || ${MOM_ACCEPTANCE_PHASE:-P0} == P11 || ${MOM_ACCEPTANCE_PHASE:-P0} == P12 || ${MOM_ACCEPTANCE_PHASE:-P0} == P13 || ${MOM_ACCEPTANCE_PHASE:-P0} == P14 || ${MOM_ACCEPTANCE_PHASE:-P0} == P15 || ${MOM_ACCEPTANCE_PHASE:-P0} == P16 || ${MOM_ACCEPTANCE_PHASE:-P0} > P5 ]]; then
     export MOM_INDUSTRY_REPORT="$project/test-results/agentnexus-industries.json"
     export MOM_RECOVERY_REPORT="$project/test-results/agentnexus-recovery.json"
     rm -f "$MOM_RECOVERY_REPORT"
     rm -f "$MOM_INDUSTRY_REPORT"
-    if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P9D || ${MOM_ACCEPTANCE_PHASE:-P0} == P10 || ${MOM_ACCEPTANCE_PHASE:-P0} == P11 || ${MOM_ACCEPTANCE_PHASE:-P0} == P12 || ${MOM_ACCEPTANCE_PHASE:-P0} == P13 || ${MOM_ACCEPTANCE_PHASE:-P0} == P14 || ${MOM_ACCEPTANCE_PHASE:-P0} == P15 ]]; then
+    if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P9D || ${MOM_ACCEPTANCE_PHASE:-P0} == P10 || ${MOM_ACCEPTANCE_PHASE:-P0} == P11 || ${MOM_ACCEPTANCE_PHASE:-P0} == P12 || ${MOM_ACCEPTANCE_PHASE:-P0} == P13 || ${MOM_ACCEPTANCE_PHASE:-P0} == P14 || ${MOM_ACCEPTANCE_PHASE:-P0} == P1[56] ]]; then
       export MOM_P9D_CNC_INPUT="$project/test-results/p9d-cnc-closure.json"
       export MOM_P9D_AGENT_REPORT="$project/test-results/p9d-agentnexus-cnc-closure.json"
-      if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P15 ]]; then
+      if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P1[56] ]]; then
         export MOM_P15_SESSION_REPORT="$project/test-results/p15-five-industry-session.json"
         export MOM_P15_CONCURRENCY_REPORT="$project/test-results/p15-concurrency-compatibility.json"
         rm -f "$MOM_P15_SESSION_REPORT" "$MOM_P15_CONCURRENCY_REPORT"
@@ -40,7 +40,7 @@ export MOM_PROBE_DATABASE="$scratch/probe.sqlite3"
       test -s "$MOM_P9D_CNC_INPUT"
       cargo test --locked -p an-agents --test mom_industries
       test -s "$MOM_P9D_AGENT_REPORT"
-      if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P15 ]]; then test -s "$MOM_P15_SESSION_REPORT"; test -s "$MOM_P15_CONCURRENCY_REPORT"; fi
+      if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P1[56] ]]; then test -s "$MOM_P15_SESSION_REPORT"; test -s "$MOM_P15_CONCURRENCY_REPORT"; fi
     else
       cargo test --locked -p an-agents --test mom_industries -- --skip p9d_agentnexus_cnc_closure
     fi

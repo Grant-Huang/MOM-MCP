@@ -1489,3 +1489,19 @@ spec = "acceptance/P15.md"
 features = ["F01", "F02", "F04", "F08", "F10", "F14"]
 layers = ["agentnexus"]
 tests = { agentnexus = "p15_agentnexus_concurrency_and_compatibility" }
+
+[[case]]
+id = "P16-01"
+phase = "P16"
+spec = "acceptance/P16.md"
+features = ["F02", "F04", "F15"]
+layers = ["rust-integration"]
+tests = { rust-integration = "p16_01_settings_scope_and_production_isolation" }
+
+[[case]]
+id = "P16-UI"
+phase = "P16"
+spec = "acceptance/P16.md"
+features = ["F04", "F15"]
+layers = ["playwright"]
+tests = { playwright = "P16-UI Read site settings outside the production gateway" }
