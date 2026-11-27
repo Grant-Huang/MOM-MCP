@@ -38,6 +38,9 @@
 
 ## 候选宿主契约
 
+
+候选销售单关系只使用已绑定的 Odoo 来源。工单绑定为 OpenMES 或 Carbon 社区 REST 时，返回来源不可用，所有已配置来源零调用，且跳过销售单授权。运行 `cargo test --locked --test external_observe sales_relation_never_reads_non_odoo_binding_or_alternate_source -- --exact` 复跑。
+
 `ExternalObserve::observe_odoo_sales_relation` 接收现有工单选择。宿主按当前调用者授权该工单，并提供受信的租户、站点、来源实例和公司绑定。Adapter 只读取该来源的单事务关联。查到关系后，宿主在同一世界为销售单单独核对授权，并返回其不透明引用。销售单不可见或宿主未提供引用时返回 `NotVisible`。源端明确没有直接关系时返回空结果。成功载荷只有 `kind=fulfills_sales_order`、`work_order_ref` 和 `sales_order_ref`。
 
 运行 `cargo test --locked --test external_observe publishes_only_host_authorized_odoo_relation_references`。回环用例验证工单拒绝时零来源调用、销售单拒绝及空引用、跨公司目标、无关联与成功输出。绑定来源返回 503 时为来源不可用，返回其他制造单记录时为响应无效。两种故障均验证目标授权零调用及备用站点零调用。宿主身份和引用签发、公开路由及错误包络仍需联审，签收按短期验收计划推进。
