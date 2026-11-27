@@ -497,6 +497,37 @@ async fn routes_by_tenant_site_and_instance_when_work_order_ids_are_equal() {
     }
 }
 
+#[tokio::test]
+async fn concurrent_reads_keep_site_success_and_failure_separate() {
+    let (failed_origin, failed_calls, failed_task) =
+        run_source(StatusCode::SERVICE_UNAVAILABLE).await;
+    let (healthy_origin, healthy_calls, healthy_task) = run_source(StatusCode::OK).await;
+    let service = ExternalObserve::new([
+        source(&failed_origin, "site-a", "site-a-fixture"),
+        source(&healthy_origin, "site-b", "site-b-fixture"),
+    ])
+    .unwrap();
+    let selection = WorkOrderSelection {
+        world_id: "world-a",
+        object_ref: "opaque-ref",
+    };
+
+    let (failed, healthy) = tokio::join!(
+        service.observe(selection, |_| async { Some(granted("site-a", "4242")) }),
+        service.observe(selection, |_| async { Some(granted("site-b", "4242")) }),
+    );
+    assert_eq!(failed.unwrap_err(), ObserveError::SourceUnavailable);
+    let healthy = healthy.unwrap();
+    assert_eq!(healthy.object_ref, selection.object_ref);
+    assert_eq!(healthy.display_number, "WO-42");
+    assert_eq!(healthy.source_status.as_deref(), Some("PENDING"));
+    assert_eq!(failed_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(healthy_calls.load(Ordering::Relaxed), 1);
+
+    failed_task.abort();
+    healthy_task.abort();
+}
+
 #[test]
 fn rejects_duplicate_configuration() {
     let origin = "https://example.test";
