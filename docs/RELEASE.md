@@ -1,3 +1,27 @@
+# 发布与恢复
+
+## P15 五行业发布候选
+
+从 `MOM-MCP` 检出执行以下命令，将参数替换为拟验收的 Git 提交。AgentNexus 检出用于读取仓库中固定的测试版本。脚本从候选提交归档构建发布二进制，并用同一文件运行 Rust 集成、浏览器和 AgentNexus 测试。
+
+```sh
+npm ci
+npx playwright install chromium
+MOM_AGENTNEXUS=../multi-agent-conv-mvp bash scripts/check-p15-release.sh <candidate-commit>
+```
+
+| 行业 | 本轮深化入口 | 兼容性抽验入口 |
+| --- | --- | --- |
+| 机加工 | `cnc@49` | `cnc@2` |
+| 电子装配 | `smt@9` | `smt@2` |
+| 按单装配 | `assembly@33` | `assembly@2` |
+| 钣金 | `sheet-metal@6` | `sheet-metal@1` |
+| 线束 | `wire-harness@6` | `wire-harness@1` |
+
+验收通过后，在 `test-results/p15-release-*` 保存候选二进制、累计日志、双会话轨迹、仿真与恢复证据、Git 标识和校验清单。压缩包同目录生成。可解压后执行 `sha256sum --check SHA256SUMS` 核对内容。验收脚本与测试取自执行验收的工作区，候选提交单独记录。
+
+发布签收审核候选提交、校验清单、已通过的验收及剩余限制。版本或数据库需要回退时，恢复对应版本的二进制和验收前备份，再按固定场景版本复跑。发布标签和对外发布以维护者签收为准。 [P15 验收](acceptance/P15.md)
+
 # P7 五行业基线
 
 此基线包含汽车零部件 CNC、电子装联 SMT、工业设备按单装配、钣金和线束。业务操作走 MCP stdio，场景验收台通过 Axum 的本地 HTTP 桥调用同一 Rust 程序。

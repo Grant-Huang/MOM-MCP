@@ -835,6 +835,74 @@ async fn rereads_snapshots_when_source_time_is_equal_or_older() {
 }
 
 #[tokio::test]
+async fn sales_relation_never_reads_non_odoo_binding_or_alternate_source() {
+    use mom_mcp::external_observe::AuthorizedOdooRelation;
+
+    async fn unexpected_request(State(calls): State<Arc<AtomicUsize>>) -> StatusCode {
+        calls.fetch_add(1, Ordering::Relaxed);
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new()
+        .fallback(unexpected_request)
+        .with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let sources = [
+        ("openmes", HttpSourceKind::OpenMes),
+        (
+            "carbon-rest",
+            HttpSourceKind::CarbonRest {
+                company: "company-a",
+                project_key: "fixture",
+            },
+        ),
+        (
+            "odoo",
+            HttpSourceKind::Odoo {
+                database: "fixture",
+            },
+        ),
+    ];
+    let service = ExternalObserve::new(sources.map(|(instance, kind)| HttpSource {
+        instance,
+        kind,
+        ..source(&origin, "site-a", "fixture")
+    }))
+    .unwrap();
+
+    for instance in ["openmes", "carbon-rest"] {
+        let result = service
+            .observe_odoo_sales_relation(
+                WorkOrderSelection {
+                    world_id: instance,
+                    object_ref: "opaque-work",
+                },
+                |_| async {
+                    Some(AuthorizedOdooRelation {
+                        scope: SourceScope {
+                            tenant: "tenant-a",
+                            site: "site-a",
+                            instance,
+                        },
+                        work_order_id: 4242,
+                        company_id: 7474,
+                    })
+                },
+                |_, _| async {
+                    panic!("cannot authorize a sales target from an unsupported source")
+                },
+            )
+            .await;
+        assert_eq!(result, Err(ObserveError::SourceUnavailable), "{instance}");
+        assert_eq!(calls.load(Ordering::Relaxed), 0, "{instance}");
+    }
+    server.abort();
+}
+
+#[tokio::test]
 async fn publishes_only_host_authorized_odoo_relation_references() {
     use axum::routing::post;
     use mom_mcp::external_observe::AuthorizedOdooRelation;
