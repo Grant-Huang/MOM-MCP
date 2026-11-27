@@ -497,6 +497,52 @@ async fn routes_by_tenant_site_and_instance_when_work_order_ids_are_equal() {
     }
 }
 
+#[tokio::test]
+async fn shared_origin_reads_with_each_sites_bound_credential() {
+    use axum::http::HeaderMap;
+
+    async fn order(headers: HeaderMap) -> impl IntoResponse {
+        let status = match headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+        {
+            Some("Bearer site-a-fixture") => "PENDING",
+            Some("Bearer site-b-fixture") => "ACCEPTED",
+            _ => return StatusCode::UNAUTHORIZED.into_response(),
+        };
+        Json(json!({"data":{"id":4242,"order_no":"WO-42","status":status}})).into_response()
+    }
+
+    let router = Router::new().route("/api/v1/work-orders/4242", get(order));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let service = ExternalObserve::new([
+        source(&origin, "site-a", "site-a-fixture"),
+        source(&origin, "site-b", "site-b-fixture"),
+    ])
+    .unwrap();
+    let selection = WorkOrderSelection {
+        world_id: "world-a",
+        object_ref: "opaque-ref",
+    };
+
+    for (site, expected) in [
+        ("site-a", "PENDING"),
+        ("site-b", "ACCEPTED"),
+        ("site-a", "PENDING"),
+    ] {
+        let observed = service
+            .observe(selection, |_| async { Some(granted(site, "4242")) })
+            .await
+            .unwrap();
+        assert_eq!(observed.display_number, "WO-42");
+        assert_eq!(observed.object_ref, selection.object_ref);
+        assert_eq!(observed.source_status.as_deref(), Some(expected), "{site}");
+    }
+    task.abort();
+}
+
 #[test]
 fn invalid_source_configuration_rejects_entire_registry() {
     use mom_mcp::external_http::ReadError;
