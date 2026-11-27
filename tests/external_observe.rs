@@ -732,6 +732,55 @@ async fn carbon_native_rejections_do_not_read_community_rest() {
 }
 
 #[tokio::test]
+async fn publishes_distinct_diagnostics_for_missing_and_unmapped_source_status() {
+    async fn order(Path(id): Path<u64>) -> Json<serde_json::Value> {
+        let mut record = json!({"id":id,"order_no":"WO-42"});
+        match id {
+            4242 => {}
+            4243 => record["status"] = json!(null),
+            4244 => record["status"] = json!(" \t"),
+            4245 => record["status"] = json!("ACCEPTED"),
+            4246 => record["status"] = json!(42),
+            _ => panic!("unexpected fixture request"),
+        }
+        Json(json!({"data":record}))
+    }
+
+    let router = Router::new().route("/api/v1/work-orders/{id}", get(order));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let service = ExternalObserve::new([source(&origin, "site-a", "local-fixture")]).unwrap();
+    let selection = WorkOrderSelection {
+        world_id: "world-a",
+        object_ref: "opaque-42",
+    };
+    let read = |source_id| {
+        service.observe(selection, move |_| async move {
+            Some(granted("site-a", source_id))
+        })
+    };
+
+    for (id, status, issue) in [
+        ("4242", json!(null), "missing"),
+        ("4243", json!(null), "missing"),
+        ("4244", json!(null), "missing"),
+        ("4245", json!("ACCEPTED"), "unmapped"),
+    ] {
+        let payload = serde_json::to_value(read(id).await.unwrap()).unwrap();
+        assert_eq!(payload.get("source_status"), Some(&status), "{id}");
+        assert_eq!(payload.get("normalized_status"), Some(&json!(null)), "{id}");
+        assert_eq!(payload["mapping_issue"], issue, "{id}");
+    }
+
+    assert_eq!(
+        read("4246").await.unwrap_err(),
+        ObserveError::InvalidSourceResponse
+    );
+    task.abort();
+}
+
+#[tokio::test]
 async fn rereads_snapshots_when_source_time_is_equal_or_older() {
     async fn order(State(calls): State<Arc<AtomicUsize>>) -> Json<serde_json::Value> {
         let (status, updated_at) = match calls.fetch_add(1, Ordering::Relaxed) {
