@@ -504,6 +504,25 @@ fn rejects_duplicate_configuration() {
         ExternalObserve::new([source(origin, "site-a", "a"), source(origin, "site-a", "b")]),
         Err(ConfigurationError::DuplicateSource)
     ));
+
+    let carbon = |kind| HttpSource {
+        kind,
+        instance: "carbon",
+        ..source(origin, "site-a", "fixture")
+    };
+    let rest = || HttpSourceKind::CarbonRest {
+        company: "company-a",
+        project_key: "fixture",
+    };
+    for sources in [
+        [carbon(HttpSourceKind::Carbon), carbon(rest())],
+        [carbon(rest()), carbon(HttpSourceKind::Carbon)],
+    ] {
+        assert!(matches!(
+            ExternalObserve::new(sources),
+            Err(ConfigurationError::DuplicateSource)
+        ));
+    }
 }
 
 #[tokio::test]
