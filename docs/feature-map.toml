@@ -1481,3 +1481,11 @@ spec = "acceptance/P15.md"
 features = ["F02", "F04", "F08", "F14"]
 layers = ["playwright"]
 tests = { playwright = "P15-UI Switch five industry runs without losing work" }
+
+[[case]]
+id = "P15-02"
+phase = "P15"
+spec = "acceptance/P15.md"
+features = ["F01", "F02", "F04", "F08", "F10", "F14"]
+layers = ["agentnexus"]
+tests = { agentnexus = "p15_agentnexus_concurrency_and_compatibility" }

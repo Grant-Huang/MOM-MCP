@@ -715,3 +715,196 @@ async fn verify_harness_release_recovery(session: &mut Session, run: &Value) {
     assert_eq!(status["disposition"]["tests"].as_array().unwrap().len(), 2);
     assert_eq!(status["disposition"]["released"], true);
 }
+
+#[tokio::test]
+async fn p15_agentnexus_concurrency_and_compatibility() {
+    let db = format!(
+        "{}-p15-concurrency.sqlite3",
+        std::env::var("MOM_PROBE_DATABASE").unwrap()
+    );
+    let mut first = public_session(db.clone()).await;
+    let mut second = public_session(db).await;
+    let mut runs = Vec::new();
+    for (scenario, version) in [
+        ("cnc", 49),
+        ("smt", 9),
+        ("assembly", 33),
+        ("sheet-metal", 6),
+        ("wire-harness", 6),
+    ] {
+        let opened = first
+            .call(
+                "open_scenario",
+                json!({"scenario_id":scenario,"version":version}),
+            )
+            .await;
+        assert_eq!(opened["ok"], true, "{opened}");
+        runs.push(opened["run_id"].clone());
+    }
+    let [cnc, smt, assembly, sheet, wire] = runs.as_slice() else {
+        unreachable!()
+    };
+    for (run, order) in [(cnc, "WO-1"), (assembly, "WO-E")] {
+        let request = |priority, key| json!({"work_order":order,"priority":priority,"expected_cursor":0,"idempotency_key":key});
+        let (a, b) = tokio::join!(
+            first.business(run, "set_dispatch_priority", request(4, "left")),
+            second.business(run, "set_dispatch_priority", request(7, "right"))
+        );
+        let (winner, loser, retry) = if a["ok"] == true {
+            (a, b, 7)
+        } else {
+            (b, a, 4)
+        };
+        assert_eq!(winner["cursor"], 1, "{winner}");
+        assert_eq!(loser["code"], "VERSION_CONFLICT", "{loser}");
+        let applied = second
+            .apply(
+                run,
+                "set_dispatch_priority",
+                json!({"work_order":order,"priority":retry}),
+            )
+            .await;
+        assert_eq!(applied["cursor"], 2);
+        assert_eq!(applied["priority"], retry);
+    }
+
+    receive_matrix_stock(&mut first, smt).await;
+    let load = json!({"slot":"F1","reel":"REEL-P15","idempotency_key":"same-load"});
+    let (a, b) = tokio::join!(
+        first.business(smt, "smt_load", load.clone()),
+        second.business(smt, "smt_load", load.clone())
+    );
+    assert_eq!(a, b);
+    assert_eq!(a["load_id"], 1, "{a}");
+    assert_eq!(a["cursor"], 7);
+    let changed = json!({"slot":"F2","reel":"REEL-P15","idempotency_key":"same-load"});
+    assert_eq!(
+        second.business(smt, "smt_load", changed).await["code"],
+        "IDEMPOTENCY_CONFLICT"
+    );
+
+    let (a,b) = tokio::join!(
+        first.business(sheet,"create_sheet_nest",json!({"nest_id":"LEFT","stock":"SHEET-FULL","work_orders":["WO-SHEET-A"],"idempotency_key":"left"})),
+        second.business(sheet,"create_sheet_nest",json!({"nest_id":"RIGHT","stock":"SHEET-FULL","work_orders":["WO-SHEET-B"],"idempotency_key":"right"}))
+    );
+    let (winner, loser) = if a["ok"] == true { (a, b) } else { (b, a) };
+    assert_eq!(winner["cursor"], 1, "{winner}");
+    assert_eq!(loser["code"], "STOCK_RESERVED");
+    let found = second
+        .business(
+            sheet,
+            "get_sheet_nest",
+            json!({"nest_id":winner["nest"]["nest_id"]}),
+        )
+        .await;
+    assert_eq!(found["nest"], winner["nest"]);
+
+    let request = |batch, key| json!({"batch_id":batch,"wire_lot":"WIRE-CU-1","serial_numbers":["WIRE-01"],"idempotency_key":key});
+    let (a, b) = tokio::join!(
+        first.business(wire, "cut_harness_batch", request("LEFT", "left")),
+        second.business(wire, "cut_harness_batch", request("RIGHT", "right"))
+    );
+    let (winner, loser, missing) = if a["ok"] == true {
+        (a, b, "RIGHT")
+    } else {
+        (b, a, "LEFT")
+    };
+    assert_eq!(winner["cursor"], 1, "{winner}");
+    assert_eq!(winner["batch"]["remaining_mm"], 840);
+    assert_eq!(loser["code"], "SERIAL_ALREADY_CUT");
+    assert_eq!(
+        second
+            .business(wire, "get_harness_cut_batch", json!({"batch_id":missing}))
+            .await["code"],
+        "CUT_BATCH_NOT_FOUND"
+    );
+
+    for (scenario, version, legacy_tool, legacy_args, new_tool) in [
+        (
+            "cnc",
+            2,
+            "mes_status",
+            json!({"work_order":"WO-1"}),
+            "get_operation",
+        ),
+        (
+            "smt",
+            2,
+            "smt_status",
+            json!({"work_order":"WO-A"}),
+            "smt_get_recall_impact",
+        ),
+        (
+            "assembly",
+            2,
+            "assembly_kit",
+            json!({"work_order":"WO-E"}),
+            "get_assembly_as_built",
+        ),
+        (
+            "sheet-metal",
+            1,
+            "sheet_trace",
+            json!({"subject":"WO-SHEET"}),
+            "create_sheet_nest",
+        ),
+        (
+            "wire-harness",
+            1,
+            "harness_trace",
+            json!({"subject":"WO-HARNESS"}),
+            "cut_harness_batch",
+        ),
+    ] {
+        let opened = second
+            .call(
+                "open_scenario",
+                json!({"scenario_id":scenario,"version":version}),
+            )
+            .await;
+        assert_eq!(opened["ok"], true, "{opened}");
+        let old = &opened["run_id"];
+        assert!(!runs.contains(old));
+        let described = first
+            .call("describe_tool", json!({"run_id":old,"name":legacy_tool}))
+            .await;
+        assert_eq!(described["tool"]["effect"], "read");
+        let result = first.business(old, legacy_tool, legacy_args).await;
+        assert_eq!(result["ok"], true, "{result}");
+        let unavailable = second
+            .call("describe_tool", json!({"run_id":old,"name":new_tool}))
+            .await;
+        assert_eq!(
+            unavailable["code"], "TOOL_UNAVAILABLE",
+            "{scenario}: {unavailable}"
+        );
+        assert_eq!(
+            first.call("get_run", json!({"run_id":old})).await["cursor"],
+            0
+        );
+        assert_eq!(
+            second.call("close_run", json!({"run_id":old})).await["closed"],
+            true
+        );
+    }
+    for (run, cursor) in [(cnc, 2), (smt, 7), (assembly, 2), (sheet, 1), (wire, 1)] {
+        assert_eq!(
+            first.call("get_run", json!({"run_id":run})).await["cursor"],
+            cursor
+        );
+        assert_eq!(
+            second.call("close_run", json!({"run_id":run})).await["closed"],
+            true
+        );
+    }
+    if let Some(path) = std::env::var_os("MOM_P15_CONCURRENCY_REPORT") {
+        std::fs::write(
+            path,
+            serde_json::to_vec_pretty(&json!({
+                "first_session":first.trace,"second_session":second.trace
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+}

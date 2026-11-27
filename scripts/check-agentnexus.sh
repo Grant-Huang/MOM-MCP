@@ -32,11 +32,13 @@ export MOM_PROBE_DATABASE="$scratch/probe.sqlite3"
       export MOM_P9D_AGENT_REPORT="$project/test-results/p9d-agentnexus-cnc-closure.json"
       if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P15 ]]; then
         export MOM_P15_SESSION_REPORT="$project/test-results/p15-five-industry-session.json"
+        export MOM_P15_CONCURRENCY_REPORT="$project/test-results/p15-concurrency-compatibility.json"
+        rm -f "$MOM_P15_SESSION_REPORT" "$MOM_P15_CONCURRENCY_REPORT"
       fi
       test -s "$MOM_P9D_CNC_INPUT"
       cargo test --locked -p an-agents --test mom_industries
       test -s "$MOM_P9D_AGENT_REPORT"
-      if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P15 ]]; then test -s "$MOM_P15_SESSION_REPORT"; fi
+      if [[ ${MOM_ACCEPTANCE_PHASE:-P0} == P15 ]]; then test -s "$MOM_P15_SESSION_REPORT"; test -s "$MOM_P15_CONCURRENCY_REPORT"; fi
     else
       cargo test --locked -p an-agents --test mom_industries -- --skip p9d_agentnexus_cnc_closure
     fi
