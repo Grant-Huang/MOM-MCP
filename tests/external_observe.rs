@@ -441,9 +441,11 @@ async fn source_failures_keep_their_classification_without_fallback() {
 async fn routes_by_tenant_site_and_instance_when_work_order_ids_are_equal() {
     let (primary, primary_calls, primary_task) = run_source(StatusCode::OK).await;
     let (other_tenant, tenant_calls, tenant_task) = run_source(StatusCode::OK).await;
+    let (other_site, site_calls, site_task) = run_source(StatusCode::OK).await;
     let (other_instance, instance_calls, instance_task) = run_source(StatusCode::OK).await;
     let service = ExternalObserve::new([
         source(&primary, "site-a", "primary"),
+        source(&other_site, "site-b", "other-site"),
         HttpSource {
             tenant: "tenant-b",
             ..source(&other_tenant, "site-a", "other-tenant")
@@ -459,36 +461,38 @@ async fn routes_by_tenant_site_and_instance_when_work_order_ids_are_equal() {
         object_ref: "opaque-ref",
     };
 
-    for (tenant, instance, expected_calls) in [
-        ("tenant-a", "openmes", [1, 0, 0]),
-        ("tenant-b", "openmes", [1, 1, 0]),
-        ("tenant-a", "openmes-secondary", [1, 1, 1]),
-        ("tenant-b", "openmes-secondary", [1, 1, 1]),
+    for (tenant, site, instance, expected_calls) in [
+        ("tenant-a", "site-a", "openmes", [1, 0, 0, 0]),
+        ("tenant-b", "site-a", "openmes", [1, 1, 0, 0]),
+        ("tenant-a", "site-b", "openmes", [1, 1, 1, 0]),
+        ("tenant-a", "site-a", "openmes-secondary", [1, 1, 1, 1]),
+        ("tenant-b", "site-b", "openmes", [1, 1, 1, 1]),
+        ("tenant-b", "site-a", "openmes-secondary", [1, 1, 1, 1]),
     ] {
         let result = service
             .observe(selection, |_| async {
                 Some(AuthorizedWorkOrder {
                     scope: SourceScope {
                         tenant,
-                        site: "site-a",
+                        site,
                         instance,
                     },
                     source_id: "4242",
                 })
             })
             .await;
-        if (tenant, instance) == ("tenant-b", "openmes-secondary") {
+        if tenant == "tenant-b" && (site != "site-a" || instance != "openmes") {
             assert_eq!(result.unwrap_err(), ObserveError::SourceUnavailable);
         } else {
             assert_eq!(result.unwrap().object_ref, "opaque-ref");
         }
         assert_eq!(
-            [&primary_calls, &tenant_calls, &instance_calls]
+            [&primary_calls, &tenant_calls, &site_calls, &instance_calls]
                 .map(|calls| calls.load(Ordering::Relaxed)),
             expected_calls
         );
     }
-    for task in [primary_task, tenant_task, instance_task] {
+    for task in [primary_task, tenant_task, site_task, instance_task] {
         task.abort();
     }
 }
