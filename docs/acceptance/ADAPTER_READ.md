@@ -43,6 +43,8 @@
 
 同一租户、站点和来源实例只允许一条来源配置。给 Carbon 原生接口和社区 REST 使用相同绑定时，候选入口初始化拒绝配置，两种登记顺序结果一致。运行 `cargo test --locked --test external_observe rejects_duplicate_configuration -- --exact` 复跑。
 
+若多站点配置中混入无效来源地址，候选入口拒绝整组配置。回归覆盖远程明文地址、含路径的地址及含查询参数的地址，无论无效项先登记还是后登记都失败。运行 `cargo test --locked --test external_observe invalid_source_configuration_rejects_entire_registry -- --exact` 复跑。
+
 ### PR 自动回归
 
 GitHub Actions 的 `adapter-contracts` 作业在推送与 PR 上运行 Rust 传输、Observe、本体投影及 Odoo 关联测试，同时复跑 Carbon REST、Carbon MCP 和 Odoo 关联的离线探针用例。默认使用本地回环和合成数据。真实来源和正式 Observe 验收使用各自的获批环境，继续按本台账登记。

@@ -498,6 +498,29 @@ async fn routes_by_tenant_site_and_instance_when_work_order_ids_are_equal() {
 }
 
 #[test]
+fn invalid_source_configuration_rejects_entire_registry() {
+    use mom_mcp::external_http::ReadError;
+
+    for invalid_origin in [
+        "http://manufacturing.example",
+        "https://manufacturing.example/api",
+        "https://manufacturing.example/?site=wrong",
+    ] {
+        let valid = || source("https://manufacturing.example", "site-a", "fixture");
+        let invalid = || source(invalid_origin, "site-b", "fixture");
+        for binding in [[valid(), invalid()], [invalid(), valid()]] {
+            assert!(
+                matches!(
+                    ExternalObserve::new(binding),
+                    Err(ConfigurationError::InvalidSource(ReadError::InvalidBinding))
+                ),
+                "{invalid_origin}"
+            );
+        }
+    }
+}
+
+#[test]
 fn rejects_duplicate_configuration() {
     let origin = "https://example.test";
     assert!(matches!(
